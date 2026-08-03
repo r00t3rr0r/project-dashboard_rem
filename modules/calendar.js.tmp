@@ -1,0 +1,237 @@
+/* ========================================
+   Team-Kalender (Feature 11)
+   ======================================== */
+(function(){'use strict';
+
+var currentViewDate = new Date();
+
+function getDaysInMonth(y,m){return new Date(y,m+1,0).getDate();}
+function getFirstDayOfMonth(y,m){return(new Date(y,m,1).getDay()+6)%7;}
+function getISODate(date){
+  if(!date)return '';
+  var d=new Date(date);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function getDisplayDate(dateStr){
+  if(!dateStr)return '';
+  var d=new Date(dateStr+'T12:00:00');
+  return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
+}
+function getMonthLabel(date){
+  var monthNames=['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+  return monthNames[date.getMonth()]+' '+date.getFullYear();
+}
+function getEventTypeMeta(type){
+  var map={meeting:{label:'Meeting',color:'var(--accent-blue)'},deadline:{label:'Deadline',color:'var(--accent-red)'},release:{label:'Release',color:'var(--accent-green)'},holiday:{label:'Urlaub',color:'var(--accent-purple)'},task:{label:'Task',color:'var(--accent-yellow)'}};
+  return map[type]||{label:'Termin',color:'var(--accent-blue)'};
+}
+function getCalendarEvents(){
+  if(window.DataLayer && window.DataLayer.getCalendarEvents) return window.DataLayer.getCalendarEvents() || [];
+  return [];
+}
+function sortEvents(a,b){
+  var aDate=String(a.date||a.startDate||'').trim();
+  var bDate=String(b.date||b.startDate||'').trim();
+  var aTime=String(a.startTime||'').trim();
+  var bTime=String(b.startTime||'').trim();
+  if(aDate!==bDate)return aDate.localeCompare(bDate);
+  if(aTime!==bTime)return aTime.localeCompare(bTime);
+  return String(a.title||'').localeCompare(String(b.title||''));
+}
+function getEventParticipants(event){
+  var attendeeIds=[];
+  if(Array.isArray(event.attendeeIds)) attendeeIds=event.attendeeIds;
+  else if(Array.isArray(event.attendees)) attendeeIds=event.attendees;
+  if(!attendeeIds.length && event.attendeeId) attendeeIds=[event.attendeeId];
+  return attendeeIds;
+}
+function getEmployeeName(id){
+  if(!id)return '';
+  var employees=window.DataLayer && window.DataLayer.getEmployees ? window.DataLayer.getEmployees() : [];
+  var match=employees.find(function(emp){return String(emp.id)===String(id);});
+  return match ? (match.name||match.title||id) : id;
+}
+function getProjectLabel(id){
+  if(!id)return '';
+  var projects=window.DataLayer && window.DataLayer.getProjects ? window.DataLayer.getProjects() : [];
+  var match=projects.find(function(project){return String(project.id)===String(id);});
+  return match ? (match.title||match.name||id) : id;
+}
+
+function renderCalendar(date){
+  try{
+    if(!date)date=currentViewDate||new Date();
+    currentViewDate=new Date(date.getFullYear(), date.getMonth(), 1);
+    var currentYear=currentViewDate.getFullYear();
+    var currentMonth=currentViewDate.getMonth();
+
+    var monthEl=document.getElementById('cal-current-month');
+    if(monthEl)monthEl.textContent=getMonthLabel(currentViewDate);
+
+    var grid=document.getElementById('calendar-grid');
+    if(!grid)return;
+    grid.innerHTML='';
+
+    var dayHeaders=['Mo','Di','Mi','Do','Fr','Sa','So'];
+    dayHeaders.forEach(function(d){var h=document.createElement('div');h.className='calendar-day-header';h.textContent=d;grid.appendChild(h);});
+
+    var startOffset=getFirstDayOfMonth(currentYear,currentMonth);
+    for(var i=0;i<startOffset;i++){var e=document.createElement('div');e.className='calendar-day';e.style.opacity='0.3';grid.appendChild(e);}
+
+    var daysInMonth=getDaysInMonth(currentYear,currentMonth);
+    var today=new Date();
+    var events=getCalendarEvents().slice().sort(sortEvents);
+
+    for(var day=1;day<=daysInMonth;day++){
+      var dateStr=currentYear+'-'+String(currentMonth+1).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+      var cell=document.createElement('div');cell.className='calendar-day';
+      if(today.getFullYear()===currentYear&&today.getMonth()===currentMonth&&today.getDate()===day){cell.classList.add('today');}
+
+      var numEl=document.createElement('div');
+      numEl.className='calendar-day-number';
+      numEl.textContent=day;
+      cell.appendChild(numEl);
+
+      var dayEvents=events.filter(function(evt){return String(evt.date||evt.startDate||'')===dateStr;});
+      var listEl=document.createElement('div');listEl.className='calendar-event-list';
+      dayEvents.slice(0,3).forEach(function(evt){
+        var chip=document.createElement('button');chip.type='button';chip.className='calendar-event-chip';chip.dataset.id=evt.id;chip.dataset.type=evt.type||'meeting';
+        chip.innerHTML='<strong>'+(evt.title||'Termin')+'</strong><span>'+(evt.startTime?evt.startTime:'')+(evt.endTime?(' – '+evt.endTime):'')+'</span>';
+        chip.addEventListener('click',function(e){e.stopPropagation();openEventModal(evt.id);});
+        listEl.appendChild(chip);
+      });
+      if(dayEvents.length>3){var more=document.createElement('div');more.className='calendar-event-more';more.textContent='+'+(dayEvents.length-3)+' mehr';listEl.appendChild(more);} 
+      cell.appendChild(listEl);
+
+      (function(currentDateStr,currentCell){
+        currentCell.addEventListener('dragover',function(e){e.preventDefault();});
+        currentCell.addEventListener('drop',function(e){
+          e.preventDefault();
+          var eventId=e.dataTransfer.getData('text/plain');
+          if(!eventId)return;
+          var evt=events.find(function(ev){return ev.id===eventId;});
+          if(evt){evt.date=currentDateStr;evt.startDate=currentDateStr;window.DataLayer.updateCalendarEvent(evt);renderCalendar(currentViewDate);} 
+        });
+        currentCell.addEventListener('dblclick',function(){openEventModal(null,currentDateStr);});
+      })(dateStr,cell);
+      grid.appendChild(cell);
+    }
+
+    renderEventList(currentViewDate, events);
+  }catch(e){console.error('[Calendar] Error:',e);}
+}
+
+function renderEventList(viewDate, events){
+  var listEl=document.getElementById('calendar-events-list');
+  if(!listEl)return;
+  listEl.innerHTML='';
+
+  var monthEvents=events.filter(function(evt){
+    if(!evt.date && !evt.startDate)return false;
+    var dateValue=evt.date||evt.startDate;
+    var eventDate=new Date(dateValue+'T12:00:00');
+    return eventDate.getFullYear()===viewDate.getFullYear()&&eventDate.getMonth()===viewDate.getMonth();
+  });
+
+  var heading=document.createElement('div');heading.className='calendar-events-list-heading';heading.textContent='Termine im '+getMonthLabel(viewDate);listEl.appendChild(heading);
+  if(!monthEvents.length){var empty=document.createElement('div');empty.className='calendar-empty-state';empty.textContent='Für diesen Monat sind noch keine Termine hinterlegt.';listEl.appendChild(empty);return;}
+
+  monthEvents.sort(sortEvents).forEach(function(evt){
+    var card=document.createElement('article');card.className='calendar-event-card';
+    var meta=getEventTypeMeta(evt.type||'meeting');
+    var participants=getEventParticipants(evt);
+    var projectLabel=getProjectLabel(evt.projectId);
+    var details=[];
+    if(evt.location)details.push('<div><strong>Ort:</strong> '+evt.location+'</div>');
+    if(projectLabel)details.push('<div><strong>Projekt:</strong> '+projectLabel+'</div>');
+    if(participants.length)details.push('<div><strong>Teilnehmer:</strong> '+participants.map(function(p){return getEmployeeName(p);}).join(', ')+'</div>');
+    if(evt.description)details.push('<div><strong>Hinweis:</strong> '+evt.description+'</div>');
+    card.innerHTML='<div class="calendar-event-card-head"><span class="calendar-event-tag" style="border-color:'+meta.color+';color:'+meta.color+'">'+meta.label+'</span><span class="calendar-event-date">'+getDisplayDate(evt.date||evt.startDate)+'</span></div><h3>'+(evt.title||'Termin')+'</h3><div class="calendar-event-meta">'+(evt.startTime?evt.startTime:'')+(evt.endTime?(' – '+evt.endTime):'')+'</div><div class="calendar-event-details">'+details.join('')+'</div>';
+    card.addEventListener('click',function(){openEventModal(evt.id);});
+    listEl.appendChild(card);
+  });
+}
+
+function buildEventModalContent(event, defaultDate){
+  var projects=window.DataLayer && window.DataLayer.getProjects ? window.DataLayer.getProjects() : [];
+  var employees=window.DataLayer && window.DataLayer.getEmployees ? window.DataLayer.getEmployees() : [];
+  var attendeeIds = Array.isArray(event && event.attendeeIds) ? event.attendeeIds : [];
+  if(!attendeeIds.length && event && Array.isArray(event.attendees)) attendeeIds = event.attendees;
+  var projectOptions=projects.map(function(project){var selected=event && String(event.projectId)===String(project.id) ? ' selected' : ''; return '<option value="'+project.id+'"'+selected+'>'+(project.title||project.name||project.id)+'</option>';}).join('');
+  var employeeOptions=employees.map(function(emp){var selected=attendeeIds.indexOf(emp.id)!==-1 ? ' selected' : ''; return '<option value="'+emp.id+'"'+selected+'>'+(emp.name||emp.title||emp.id)+'</option>';}).join('');
+  var editing=!!(event && event.id);
+  return '<h2>'+(editing?'Termin bearbeiten':'Neuer Termin')+'</h2>'+'<div class="calendar-modal-form">'+'<input type="hidden" id="evt-id" value="'+(event&&event.id||'')+'">'+'<div class="calendar-modal-grid">'+'<div class="form-group"><label for="evt-title">Titel *</label><input type="text" id="evt-title" value="'+(event&&event.title?event.title:'')+'" required></div>'+'<div class="form-group"><label for="evt-date">Datum</label><input type="date" id="evt-date" value="'+(event && (event.date||event.startDate) ? (event.date||event.startDate) : (defaultDate||''))+'"></div>'+'</div>'+'<div class="calendar-modal-grid">'+'<div class="form-group"><label for="evt-start-time">Start</label><input type="time" id="evt-start-time" value="'+(event&&event.startTime?event.startTime:'')+'"></div>'+'<div class="form-group"><label for="evt-end-time">Ende</label><input type="time" id="evt-end-time" value="'+(event&&event.endTime?event.endTime:'')+'"></div>'+'</div>'+'<div class="calendar-modal-grid">'+'<div class="form-group"><label for="evt-type">Typ</label><select id="evt-type"><option value="meeting"'+((event&&event.type==='meeting')||(!event)?' selected':'')+'>Meeting</option><option value="deadline"'+((event&&event.type==='deadline')?' selected':'')+'>Deadline</option><option value="release"'+((event&&event.type==='release')?' selected':'')+'>Release</option><option value="holiday"'+((event&&event.type==='holiday')?' selected':'')+'>Urlaub</option><option value="task"'+((event&&event.type==='task')?' selected':'')+'>Task</option></select></div>'+'<div class="form-group"><label for="evt-project">Projekt</label><select id="evt-project"><option value="">-- Kein Projekt --</option>'+projectOptions+'</select></div>'+'</div>'+'<div class="form-group"><label for="evt-location">Ort</label><input type="text" id="evt-location" value="'+(event&&event.location?event.location:'')+'"></div>'+'<div class="form-group"><label for="evt-attendees">Teilnehmende</label><select id="evt-attendees" multiple size="4">'+employeeOptions+'</select></div>'+'<div class="form-group"><label for="evt-description">Beschreibung</label><textarea id="evt-description" rows="3">'+(event&&event.description?event.description:'')+'</textarea></div>'+'<div class="form-group"><label><input type="checkbox" id="evt-all-day" '+((event&&event.allDay)?'checked':'')+'> Ganztägig</label></div>'+'<div class="modal-actions">'+(editing?'<button type="button" class="btn btn-danger" onclick="deleteCalendarEvent()">Löschen</button>':'')+'<button type="button" class="btn btn-secondary" onclick="closeModal()">Abbrechen</button><button type="button" class="btn btn-primary" onclick="saveCalendarEvent()">Speichern</button></div>'+'</div>';
+}
+
+function openEventModal(eventId, defaultDate){
+  var overlay=document.getElementById('modal-overlay');
+  var content=document.getElementById('modal-content');
+  if(!overlay||!content)return;
+  var events=getCalendarEvents();
+  var event=eventId ? events.find(function(evt){return evt.id===eventId;}) : null;
+  content.innerHTML=buildEventModalContent(event, defaultDate);
+  overlay.classList.remove('hidden');
+}
+
+window.saveCalendarEvent=function(){
+  try{
+    var title=document.getElementById('evt-title').value.trim();
+    if(!title)return alert('Titel erforderlich');
+    var date=document.getElementById('evt-date').value;
+    var startTime=document.getElementById('evt-start-time').value;
+    var endTime=document.getElementById('evt-end-time').value;
+    var type=document.getElementById('evt-type').value;
+    var location=document.getElementById('evt-location').value.trim();
+    var description=document.getElementById('evt-description').value.trim();
+    var projectId=document.getElementById('evt-project').value || null;
+    var allDay=document.getElementById('evt-all-day').checked;
+    var attendeeSelect=document.getElementById('evt-attendees');
+    var attendeeIds=[];
+    if(attendeeSelect){Array.prototype.forEach.call(attendeeSelect.options,function(option){if(option.selected)attendeeIds.push(option.value);});}
+    var payload={title:title,date:date,startDate:date,type:type,projectId:projectId,location:location,description:description,startTime:startTime,endTime:endTime,allDay:allDay,attendeeIds:attendeeIds,createdAt:new Date().toISOString()};
+    var existingId=document.getElementById('evt-id').value;
+    if(existingId){payload.id=existingId;window.DataLayer.updateCalendarEvent(payload);} else {window.DataLayer.createCalendarEvent(payload);} 
+    closeModal();
+    renderCalendar(currentViewDate);
+  }catch(e){console.error('[Save Event]',e);}
+};
+
+window.deleteCalendarEvent=function(){
+  try{
+    var existingId=document.getElementById('evt-id').value;
+    if(existingId && window.DataLayer.deleteCalendarEvent){window.DataLayer.deleteCalendarEvent(existingId);} 
+    closeModal();
+    renderCalendar(currentViewDate);
+  }catch(e){console.error('[Delete Event]',e);}
+};
+
+window.closeModal=function(){
+  var overlay=document.getElementById('modal-overlay');var content=document.getElementById('modal-content');if(overlay)overlay.classList.add('hidden');if(content)content.innerHTML='';};
+
+function exportICS(){
+  try{
+    var events=getCalendarEvents();
+    if(!events.length)return alert('Keine Events zum Exportieren.');
+    var ics='BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Projekt-Dashboard//DE\r\n';
+    events.forEach(function(evt){ics+='BEGIN:VEVENT\r\n';if(evt.startDate||evt.date)ics+='DTSTART:'+formatICSDate(evt.startDate||evt.date)+'\r\n';ics+='SUMMARY:'+(evt.title||'Event')+'\r\n';if(evt.type)ics+='CATEGORIES:'+evt.type.toUpperCase()+'\r\n';ics+='END:VEVENT\r\n';});
+    ics+='END:VCALENDAR';
+    var blob=new Blob([ics],{type:'text/calendar'});var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download='kalender.ics';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(url);
+  }catch(e){console.error('[ICS]',e);} 
+}
+
+function formatICSDate(d){var dt=new Date(d+'T00:00:00');return dt.getFullYear()+String(dt.getMonth()+1).padStart(2,'0')+String(dt.getDate()).padStart(2,'0')+'T000000Z';}
+
+function setupCalendarNav(){
+  var prev=document.getElementById('cal-prev-month');
+  if(prev)prev.addEventListener('click',function(){renderCalendar(new Date(currentViewDate.getFullYear(), currentViewDate.getMonth()-1, 1));});
+  var next=document.getElementById('cal-next-month');
+  if(next)next.addEventListener('click',function(){renderCalendar(new Date(currentViewDate.getFullYear(), currentViewDate.getMonth()+1, 1));});
+  var addBtn=document.getElementById('cal-add-event');
+  if(addBtn)addBtn.addEventListener('click',function(){openEventModal(null,getISODate(currentViewDate));});
+  var exportBtn=document.getElementById('cal-export-ics');
+  if(exportBtn)exportBtn.addEventListener('click',exportICS);
+}
+
+document.addEventListener('DOMContentLoaded',function(){setupCalendarNav();renderCalendar(currentViewDate);});
+window.CalendarModule={render:renderCalendar,exportICS:exportICS,openModal:openEventModal};
+})();
