@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Projekt-Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=20260802d">
+<link rel="stylesheet" href="theme-override.css?v=20260802f">
+<!-- Data Layer -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+  <script src="data.js?v=20260802d"></script>
+<script src="modules/auth.js?v=20260802b"></script>
+<!-- Core: App Router, Theme, Export/Import -->
+<script src="modules/app.js?v=20260802b"></script>
+<!-- Feature Modules (alphabetical) -->
+<script src="modules/analytics.js?v=20260730b"></script>
+<script src="modules/calendar.js?v=20260802a"></script>
+<script src="modules/dashboard.js?v=20260802d"></script>
+<script src="modules/documentation.js?v=20260730b"></script>
+<script src="modules/employees.js?v=20260731a"></script>
+<script src="modules/integrations.js?v=20260730b"></script>
+<script src="modules/kanban.js?v=20260730v"></script>
+<script src="modules/labels.js?v=20260730y"></script>
+<script src="modules/notifications.js?v=20260730b"></script>
+<script src="modules/prompt-config.js?v=20260731a"></script>
+  <script src="modules/projects.js?v=20260802g"></script>
+<script src="modules/ki-workflow.js?v=20260731a"></script>
+<script src="modules/meeting.js?v=20260802e"></script>
+<script src="modules/quicktask.js?v=20260802d"></script>
+<script src="modules/releases.js?v=20260730u"></script>
+<script src="modules/search.js?v=20260730k"></script>
+<script src="modules/sharing.js?v=20260730b"></script>
+<script src="modules/standup.js?v=20260730w"></script>
+<script src="modules/templates.js?v=20260730y"></script>
+<!-- Sprint Management -->
+<script src="modules/sprint.js?v=20260730k"></script>
+<!-- Health Check & Timeline -->
+<script src="modules/healthcheck.js?v=20260730c"></script>
+<script src="modules/timeline.js?v=20260730w"></script>
+</head>
+<body>
+  <div class="app-shell-glow app-shell-glow-left"></div>
+  <div class="app-shell-glow app-shell-glow-right"></div>
+  <!-- Sidebar Navigation -->
+  <nav id="sidebar" class="sidebar">
+    <div class="sidebar-top">
+      <button id="mobile-menu-btn" class="toolbar-icon-btn sidebar-toggle-btn" title="Navigation ein- oder ausklappen" aria-label="Navigation ein- oder ausklappen" aria-controls="sidebar" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span></button>
+      <div class="logo-copy">
+        <div class="logo-kicker">Operations Workspace</div>
+        <div class="logo">Projekt-Dashboard</div>
+      </div>
+    </div>
+    <div class="sidebar-status">
+      <span class="status-dot"></span>
+      <span>Systemstatus stabil</span>
+    </div>
+    <ul class="nav-menu">
+      <li><a href="#" data-page="dashboard" data-label="Dashboard" data-kicker="Zentrale Lage" class="active"><span class="nav-icon material-symbols-rounded" aria-hidden="true">dashboard</span><span>Dashboard</span></a></li>
+      <li><a href="#" data-page="projects" data-label="Projekte" data-kicker="Portfolio Steuerung"><span class="nav-icon material-symbols-rounded" aria-hidden="true">folder_managed</span><span>Projekte</span></a></li>
+      <li><a href="#" data-page="meeting" data-label="Meeting Protokoll" data-kicker="Live Mitschrift"><span class="nav-icon material-symbols-rounded" aria-hidden="true">record_voice_over</span><span>Meeting Protokoll</span></a></li>
+      <li><a href="#" data-page="kanban" data-label="Kanban Board" data-kicker="Aufgabenfluss"><span class="nav-icon material-symbols-rounded" aria-hidden="true">view_kanban</span><span>Kanban Board</span></a></li>
+      <li><a href="#" data-page="calendar" data-label="Team-Kalender" data-kicker="Kapazitaeten"><span class="nav-icon material-symbols-rounded" aria-hidden="true">calendar_month</span><span>Team-Kalender</span></a></li>
+      <li><a href="#" data-page="analytics" data-label="Analytics" data-kicker="Kennzahlen"><span class="nav-icon material-symbols-rounded" aria-hidden="true">monitoring</span><span>Analytics</span></a></li>
+      <li><a href="#" data-page="employees" data-label="Mitarbeiter" data-kicker="Teamstruktur"><span class="nav-icon material-symbols-rounded" aria-hidden="true">groups</span><span>Mitarbeiter</span></a></li>
+      <li><a href="#" data-page="labels" data-label="Labels" data-kicker="Taxonomie"><span class="nav-icon material-symbols-rounded" aria-hidden="true">sell</span><span>Labels</span></a></li>
+      <li><a href="#" data-page="quicktask" data-label="QuickTask" data-kicker="Schnellerfassung"><span class="nav-icon material-symbols-rounded" aria-hidden="true">bolt</span><span>QuickTask</span></a></li>
+      <li><a href="#" data-page="healthcheck" data-label="Gesundheits-Check" data-kicker="Risikoanalyse"><span class="nav-icon material-symbols-rounded" aria-hidden="true">health_and_safety</span><span>Gesundheits-Check</span></a></li>
+      <li><a href="#" data-page="timeline" data-label="Timeline" data-kicker="Verlauf"><span class="nav-icon material-symbols-rounded" aria-hidden="true">timeline</span><span>Timeline</span></a></li>
+      <li><a href="#" data-page="releases" data-label="Releases" data-kicker="Auslieferung"><span class="nav-icon material-symbols-rounded" aria-hidden="true">deployed_code</span><span>Releases</span></a></li>
+      <li><a href="#" data-page="standup" data-label="Standup" data-kicker="Team Sync"><span class="nav-icon material-symbols-rounded" aria-hidden="true">forum</span><span>Standup</span></a></li>
+      <li><a href="#" data-page="documentation" data-label="Dokumentation" data-kicker="Wissensbasis"><span class="nav-icon material-symbols-rounded" aria-hidden="true">article</span><span>Dokumentation</span></a></li>
+      <li><a href="#" data-page="notifications" data-label="Benachrichtigungen" data-kicker="Updates"><span class="nav-icon material-symbols-rounded" aria-hidden="true">notifications</span><span>Benachrichtigungen</span></a></li>
+      <li><a href="#" data-page="templates" data-label="Vorlagen" data-kicker="Standards"><span class="nav-icon material-symbols-rounded" aria-hidden="true">inventory_2</span><span>Vorlagen</span></a></li>
+      <li><a href="#" data-page="sharing" data-label="Sharing" data-kicker="Freigaben"><span class="nav-icon material-symbols-rounded" aria-hidden="true">ios_share</span><span>Sharing</span></a></li>
+      <li><a href="#" data-page="integrations" data-label="Integrationen" data-kicker="Systeme"><span class="nav-icon material-symbols-rounded" aria-hidden="true">hub</span><span>Integrationen</span></a></li>
+      <li><a href="#" data-page="sprint" data-label="Sprints" data-kicker="Lieferzyklen"><span class="nav-icon material-symbols-rounded" aria-hidden="true">directions_run</span><span>Sprints</span></a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <div class="sidebar-footer-label">Workspace</div>
+      <div class="sidebar-footer-value">Portfolio Control Surface</div>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main id="main" class="main-content">
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <div class="toolbar-leading">
+        <div class="page-meta">
+          <div id="page-kicker" class="page-kicker">Zentrale Lage</div>
+          <div id="page-title" class="page-title">Dashboard</div>
+        </div>
+      </div>
+      <div class="toolbar-actions">
+        <div class="toolbar-group toolbar-group-muted">
+          <button id="theme-toggle" class="toolbar-icon-btn" title="Dark/Light Mode" aria-label="Theme wechseln"><span class="material-symbols-rounded" aria-hidden="true">contrast</span></button>
+        </div>
+        <div class="toolbar-group" id="toolbar-db-actions">
+          <button id="db-new-btn" title="Neue SQL-Datenbank anlegen">Neue DB</button>
+          <button id="db-open-btn" title="SQL-Datenbankdatei öffnen">Oeffnen</button>
+          <button id="db-save-btn" title="SQL-Datenbankdatei speichern">Speichern</button>
+        </div>
+        <div class="toolbar-group toolbar-group-status">
+          <span id="db-status" class="toolbar-status">SQL-DB: initialisiert</span>
+          <span id="storage-status" class="toolbar-status toolbar-status-secondary">Daten: Pruefung laeuft...</span>
+        </div>
+        <div class="toolbar-group" id="toolbar-data-transfer-actions">
+          <button id="export-btn" title="Daten exportieren (JSON)">Export</button>
+          <button id="import-btn" title="Daten importieren (JSON)">Import</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dashboard -->
+    <section id="dashboard" class="page active">
+      <div class="section-header">
+        <div>
+          <p class="section-kicker">Gesamtueberblick</p>
+          <h1>Dashboard Übersicht</h1>
+          <p class="section-description">Kennzahlen, Fortschritt und Teamlast in einer klaren operativen Sicht.</p>
+        </div>
+      </div>
+      <div class="overview-grid">
+        <div class="stat-card" id="stat-tasks-total"></div>
+        <div class="stat-card" id="stat-tasks-progress"></div>
+        <div class="stat-card" id="stat-employees-active"></div>
+        <div class="stat-card" id="stat-upcoming-deadlines"></div>
+      </div>
+      <div class="dashboard-charts">
+        <div class="chart-container" id="chart-progress-bar"></div>
+        <div class="chart-container" id="chart-task-distribution"></div>
+        <div class="chart-container" id="chart-team-load"></div>
+      </div>
+      <div class="chart-container dashboard-projects-full" id="dashboard-projects-full"></div>
+    </section>
+
+    <!-- Projekte -->
+    <section id="projects" class="page">
+      <div class="section-header projects-header">
+        <div>
+          <p class="section-kicker">Portfolio Control</p>
+          <h1>Projekt-Menü</h1>
+          <p class="section-description">Erstellen, integrieren und steuern von Projekten in einem fokussierten Arbeitsbereich.</p>
+        </div>
+        <div class="section-actions project-header-actions">
+          <button type="button" id="project-focus-create" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">edit_square</span><span>Neues Projekt</span></button>
+          <button type="button" id="project-focus-import" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">file_upload</span><span>Import</span></button>
+        </div>
+      </div>
+
+      <div id="project-create-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="project-create-modal-title" aria-hidden="true">
+        <div class="modal projects-create-modal" id="projects-create-panel">
+          <div class="projects-modal-header">
+            <h2 id="project-create-modal-title">Projekt anlegen / bearbeiten</h2>
+            <button type="button" id="project-modal-close-btn" class="btn btn-secondary" aria-label="Dialog schliessen"><span class="material-symbols-rounded" aria-hidden="true">close</span><span>Schliessen</span></button>
+          </div>
+          <p class="projects-panel-subtitle">Stammdaten, Status und Repository-Verknuepfung zentral verwalten.</p>
+          <form id="project-form" class="project-form" novalidate>
+            <input type="hidden" id="project-id">
+
+            <div class="form-group">
+              <label for="project-title">Projektname *</label>
+              <input type="text" id="project-title" maxlength="200" placeholder="z. B. Kundenportal Relaunch" required>
+            </div>
+
+            <div class="form-group">
+              <label for="project-description">Beschreibung</label>
+              <textarea id="project-description" rows="3" placeholder="Ziel, Scope, Besonderheiten"></textarea>
+            </div>
+
+            <div class="project-form-grid">
+              <div class="form-group">
+                <label for="project-start">Start</label>
+                <input type="date" id="project-start">
+                <p id="project-start-hint" class="project-field-hint text-muted">Optional. Bei GitHub-Verknuepfung wird bei Neuanlage das Repository-Startdatum uebernommen.</p>
+              </div>
+              <div class="form-group">
+                <label for="project-end">Ende</label>
+                <input type="date" id="project-end">
+                <p id="project-end-hint" class="project-field-hint text-muted">Optional. Bei GitHub-Verknuepfung bleibt Ende bei Neuanlage offen.</p>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="project-status">Status</label>
+              <select id="project-status">
+                <option value="planning" selected>Planung</option>
+                <option value="active">Aktiv</option>
+                <option value="blocked">Blockiert</option>
+                <option value="done">Abgeschlossen</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Projektteam</label>
+              <div id="project-team-rows" class="project-team-rows"></div>
+              <div class="project-actions-inline mt-1">
+                <button type="button" id="project-team-add-btn" class="btn btn-secondary">Mitarbeiter + Rolle hinzufuegen</button>
+              </div>
+              <p class="project-field-hint text-muted">Mehrere Mitarbeiter mit individueller Rolle pro Projekt zuweisen.</p>
+            </div>
+
+            <div class="form-group">
+              <label for="project-github-url">GitHub Repository-Link</label>
+              <input type="text" id="project-github-url" placeholder="https://github.com/owner/repo">
+            </div>
+
+            <div class="form-group">
+              <label for="project-github-token">GitHub Token (optional, fuer private Repositories)</label>
+              <input type="password" id="project-github-token" placeholder="ghp_..." autocomplete="off">
+              <p class="project-field-hint text-muted">Wird nur fuer API-Abrufe genutzt und nicht im Projekt gespeichert.</p>
+            </div>
+
+            <div class="project-actions">
+              <button type="submit" class="btn btn-primary"><span class="material-symbols-rounded" aria-hidden="true">save</span><span>Speichern</span></button>
+              <button type="button" id="project-reset-btn" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">replay</span><span>Zuruecksetzen</span></button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div id="project-import-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="project-import-modal-title" aria-hidden="true">
+        <div class="modal projects-import-modal" id="projects-import-panel">
+          <div class="projects-modal-header">
+            <h2 id="project-import-modal-title">Aus GitHub erstellen</h2>
+            <button type="button" id="project-import-modal-close-btn" class="btn btn-secondary" aria-label="Dialog schliessen"><span class="material-symbols-rounded" aria-hidden="true">close</span><span>Schliessen</span></button>
+          </div>
+          <p class="projects-panel-subtitle">Projektstruktur und erste Metriken direkt aus einem Repository uebernehmen.</p>
+          <div class="form-group">
+            <label for="github-bootstrap-url">Repository-Link</label>
+            <input type="text" id="github-bootstrap-url" placeholder="https://github.com/owner/repo">
+          </div>
+          <div class="form-group">
+            <label for="github-bootstrap-token">GitHub Token (optional, fuer private Repositories)</label>
+            <input type="password" id="github-bootstrap-token" placeholder="ghp_..." autocomplete="off">
+          </div>
+          <button id="create-from-github-btn" class="btn btn-primary"><span class="material-symbols-rounded" aria-hidden="true">deployed_code</span><span>Projekt aus GitHub anlegen</span></button>
+          <p class="text-muted mt-1">Legt Projekt, Basisdaten und erste Commit-Metriken automatisch an.</p>
+
+          <hr class="projects-separator">
+
+          <h2>Repository-ZIP hochladen</h2>
+          <p class="text-muted">Nutze ZIP als Projektquelle, falls kein öffentlicher Link verfügbar ist.</p>
+          <div class="form-group">
+            <label for="project-zip-file">ZIP-Datei</label>
+            <input type="file" id="project-zip-file" accept=".zip,application/zip,application/x-zip-compressed">
+          </div>
+          <button id="create-from-zip-btn" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">folder_zip</span><span>Projekt aus ZIP anlegen</span></button>
+          <p class="text-muted mt-1">Für Commit-Analyse zusätzlich einen GitHub-Link am Projekt hinterlegen.</p>
+        </div>
+      </div>
+
+      <div class="projects-overview" id="projects-overview"></div>
+      <div class="project-list" id="project-list"></div>
+      <div class="aria-live-region" id="projects-live-region" aria-live="polite" role="status"></div>
+    </section>
+
+    <!-- Meeting Protokoll -->
+    <section id="meeting" class="page">
+      <div class="section-header section-header-inline">
+        <div>
+          <p class="section-kicker">Meeting Capture</p>
+          <h1>Meeting Protokoll</h1>
+          <p class="section-description">Schnelle, ungefilterte Stichpunkte fuer Projekte mit direkter KI-Aufarbeitung.</p>
+        </div>
+      </div>
+
+      <div id="meeting-root" class="meeting-root"></div>
+    </section>
+
+    <!-- QuickTask -->
+    <section id="quicktask" class="page">
+      <h1>⚡ QuickTask — Schnellaufgabe erstellen</h1>
+
+      <div class="quicktask-form-card">
+        <form id="quicktask-form" class="quicktask-form" novalidate>
+          <div class="form-group">
+            <label for="qt-title">Aufgabenname *</label>
+            <input type="text" id="qt-title" placeholder="Was ist zu tun?" autocomplete="off" aria-label="Aufgabenname eingeben"
+                   required minlength="1" maxlength="200" />
+          </div>
+
+          <div class="form-group">
+            <label for="qt-priority">Priorität</label>
+            <select id="qt-priority" aria-label="Priorität auswählen">
+              <option value="low">Niedrig</option>
+              <option value="medium" selected>Mittel</option>
+              <option value="high">Hoch</option>
+              <option value="blocker">Blocker</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="qt-urgency">Dringlichkeit</label>
+            <select id="qt-urgency" aria-label="Dringlichkeit auswählen">
+              <option value="low">Niedrig</option>
+              <option value="normal" selected>Normal</option>
+              <option value="high">Hoch</option>
+              <option value="critical">Kritisch</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="qt-effort">Aufwand (Stunden)</label>
+            <input type="number" id="qt-effort" min="0" step="0.5" value="0" aria-label="Aufwand in Stunden">
+          </div>
+
+          <div class="form-group">
+            <label for="qt-desc">Beschreibung</label>
+            <textarea id="qt-desc" rows="3" placeholder="Kontext, Ziel, Abnahmekriterien"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="qt-assignee">Mitarbeiter zuweisen</label>
+            <select id="qt-assignee" aria-label="Mitarbeiter auswählen">
+              <option value="">— Nicht zugewiesen —</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="qt-project">Projekt zuordnen</label>
+            <select id="qt-project" aria-label="Projekt auswählen">
+              <option value="">— Kein Projekt —</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="qt-schedule-mode">Terminart</label>
+            <select id="qt-schedule-mode" aria-label="Terminart auswählen">
+              <option value="none" selected>Kein Termin</option>
+              <option value="deadline">Deadline</option>
+              <option value="fixed">Fester Termin</option>
+              <option value="range">Zeitraum</option>
+              <option value="asap">Umgehend</option>
+            </select>
+          </div>
+
+          <div id="qt-schedule-fields"></div>
+
+          <div class="form-group">
+            <label for="qt-subtasks">Teilaufgaben (eine pro Zeile)</label>
+            <textarea id="qt-subtasks" rows="3" placeholder="Analyse durchführen&#10;Implementieren&#10;Review abschließen"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="qt-note">Hinweise / Notizen</label>
+            <textarea id="qt-note" rows="2" placeholder="Besonderheiten, Risiken, offene Punkte"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="qt-attachments">Dateien/Links (optional, eine pro Zeile, Name|URL möglich)</label>
+            <textarea id="qt-attachments" rows="2" placeholder="Spezifikation|https://...&#10;https://..."></textarea>
+          </div>
+
+          <div class="quicktask-actions">
+            <button type="submit" class="btn btn-primary" aria-label="Aufgabe erstellen und speichern">⚡ Erstellen</button>
+            <button type="reset" class="btn btn-secondary" aria-label="Formular zurücksetzen">↺ Zurücksetzen</button>
+          </div>
+
+          <p class="quicktask-hint" id="qt-status">Drücke Enter zum schnellen Speichern.</p>
+        </form>
+      </div>
+
+      <!-- Letzte Tasks -->
+      <div class="quicktask-recent">
+        <h2>Zuletzt erstellte Aufgaben</h2>
+        <div id="quicktask-recent-list" class="recent-task-list"></div>
+      </div>
+    </section>
+
+    <!-- Kanban Board -->
+    <section id="kanban" class="page">
+      <div class="section-header">
+        <div>
+          <p class="section-kicker">Flow Management</p>
+          <h1>Kanban Board</h1>
+          <p class="section-description">Aufgabenfluss mit WIP-Kontrolle, Prioritaeten und Teamfokus.</p>
+        </div>
+      </div>
+      <div id="kanban-filters"></div>
+      <div id="kanban-overview"></div>
+      <div class="kanban-board" id="kanban-board-view">
+        <div class="kanban-column" data-status="backlog">
+          <h2>Backlog</h2>
+          <div class="kanban-cards" id="kanban-backlog"></div>
+        </div>
+        <div class="kanban-column" data-status="todo">
+          <h2>To Do</h2>
+          <div class="kanban-cards" id="kanban-todo"></div>
+        </div>
+        <div class="kanban-column" data-status="in-progress">
+          <h2>In Progress</h2>
+          <div class="kanban-cards" id="kanban-in-progress"></div>
+        </div>
+        <div class="kanban-column" data-status="review">
+          <h2>Review</h2>
+          <div class="kanban-cards" id="kanban-review"></div>
+        </div>
+        <div class="kanban-column" data-status="done">
+          <h2>Done</h2>
+          <div class="kanban-cards" id="kanban-done"></div>
+        </div>
+      </div>
+      <div class="kanban-day-view hidden" id="kanban-day-view"></div>
+    </section>
+
+    <!-- Team-Kalender -->
+    <section id="calendar" class="page">
+      <div class="section-header section-header-inline">
+        <div>
+          <p class="section-kicker">Team Coordination</p>
+          <h1>Team-Kalender</h1>
+          <p class="section-description">Plane Termine oder wechsle in den Arbeitsfluss, um Aufgabenfortschritt und Teamarbeit ueber mehrere Tage sichtbar zu machen.</p>
+        </div>
+        <div class="section-actions">
+          <button id="cal-add-event" class="btn btn-primary"><span class="material-symbols-rounded" aria-hidden="true">add_circle</span><span>Termin anlegen</span></button>
+        </div>
+      </div>
+      <div class="calendar-header">
+        <div class="calendar-toolbar">
+          <div class="calendar-nav-group">
+            <button id="cal-prev-month" class="btn btn-secondary">◀</button>
+            <span id="cal-current-month" class="calendar-month-title"></span>
+            <button id="cal-next-month" class="btn btn-secondary">▶</button>
+          </div>
+          <div class="calendar-actions">
+            <label for="cal-view-mode" class="calendar-filter-label">Ansicht</label>
+            <select id="cal-view-mode" class="calendar-filter-select" aria-label="Kalenderansicht waehlen">
+              <option value="events">Termine</option>
+              <option value="activity">Arbeitsfluss</option>
+            </select>
+            <label for="cal-employee-filter" class="calendar-filter-label">Mitarbeiter</label>
+            <select id="cal-employee-filter" class="calendar-filter-select" aria-label="Kalender nach Mitarbeiter filtern">
+              <option value="">Alle Mitarbeiter</option>
+              <option value="__unassigned__">Ohne Mitarbeiter</option>
+            </select>
+            <button id="cal-toggle-overflow-days" class="btn btn-secondary" type="button" aria-expanded="false">Alle Tage aufklappen</button>
+            <button id="cal-export-ics" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">download</span><span>iCal export</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="calendar-grid" id="calendar-grid"></div>
+      <div class="calendar-events-list" id="calendar-events-list"></div>
+    </section>
+
+    <!-- Analytics -->
+    <section id="analytics" class="page">
+      <h1>Analytics</h1>
+      <div class="analytics-filters">
+        <label for="analytics-range">Zeitraum:</label>
+        <select id="analytics-range">
+          <option value="7">Letzte 7 Tage</option>
+          <option value="30" selected>Letzte 30 Tage</option>
+          <option value="90">Letzte 90 Tage</option>
+          <option value="all">Gesamt</option>
+        </select>
+      </div>
+      <div class="analytics-charts">
+        <div class="chart-container" id="analytics-sprint-trend"></div>
+        <div class="chart-container" id="analytics-burndown"></div>
+        <div class="chart-container" id="analytics-task-types"></div>
+      </div>
+    </section>
+
+    <!-- Mitarbeiter -->
+    <section id="employees" class="page">
+      <div class="section-header section-header-inline">
+        <div>
+          <p class="section-kicker">Team Operations</p>
+          <h1>Mitarbeiterübersicht</h1>
+          <p class="section-description">Aktuelle Tätigkeiten, Arbeitslast und Aufgabenverteilung auf einen Blick.</p>
+        </div>
+        <div class="section-actions">
+          <button id="add-employee-btn" class="btn btn-primary"><span class="material-symbols-rounded" aria-hidden="true">person_add</span><span>Neuer Mitarbeiter</span></button>
+        </div>
+      </div>
+
+      <div class="employee-overview-grid" id="employee-overview-grid">
+        <article class="employee-overview-card" id="employee-kpi-total-load"></article>
+        <article class="employee-overview-card" id="employee-kpi-balanced"></article>
+        <article class="employee-overview-card" id="employee-kpi-overload"></article>
+        <article class="employee-overview-card" id="employee-kpi-unassigned"></article>
+      </div>
+
+      <div class="employee-controls" id="employee-controls">
+        <div class="employee-control-group employee-control-search">
+          <label for="employee-filter-search">Suche</label>
+          <input type="search" id="employee-filter-search" placeholder="Name, Rolle, Tätigkeit oder Aufgabe">
+        </div>
+        <div class="employee-control-group">
+          <label for="employee-filter-role">Rolle</label>
+          <select id="employee-filter-role">
+            <option value="">Alle Rollen</option>
+          </select>
+        </div>
+        <div class="employee-control-group">
+          <label for="employee-filter-availability">Verfügbarkeit</label>
+          <select id="employee-filter-availability">
+            <option value="">Alle Status</option>
+            <option value="Verfügbar">Verfügbar</option>
+            <option value="Belastet">Belastet</option>
+            <option value="Urlaub">Urlaub</option>
+          </select>
+        </div>
+        <div class="employee-control-group">
+          <label for="employee-filter-load">Arbeitslast</label>
+          <select id="employee-filter-load">
+            <option value="all">Alle Lastbänder</option>
+            <option value="low">Niedrig</option>
+            <option value="balanced">Ausgewogen</option>
+            <option value="high">Hoch</option>
+            <option value="overload">Überlast</option>
+          </select>
+        </div>
+        <div class="employee-control-group">
+          <label for="employee-sort">Sortierung</label>
+          <select id="employee-sort">
+            <option value="load-desc">Last: Hoch nach Niedrig</option>
+            <option value="load-asc">Last: Niedrig nach Hoch</option>
+            <option value="name-asc">Name: A bis Z</option>
+            <option value="tasks-desc">Aufgaben: Viele zuerst</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="employee-workspace">
+        <div class="employee-grid" id="employee-list"></div>
+
+        <aside class="employee-insights">
+          <div class="employee-insight-card" id="employee-load-bars"></div>
+          <div class="employee-insight-card" id="employee-distribution"></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- Labels -->
+    <section id="labels" class="page">
+      <h1>Labels verwalten</h1>
+      <button id="add-label-btn" class="btn btn-primary">+ Neues Label</button>
+      <div class="label-manager" id="label-list"></div>
+    </section>
+
+    <!-- Gesundheits-Check -->
+    <section id="healthcheck" class="page">
+      <h1>Gesundheits-Check</h1>
+      <button id="run-healthcheck-btn" class="btn btn-primary">🔍 Check starten</button>
+      <div class="health-results" id="health-results"></div>
+    </section>
+
+    <!-- Releases -->
+    <section id="releases" class="page">
+      <div class="section-header section-header-inline">
+        <div>
+          <p class="section-kicker">Delivery Control</p>
+          <h1>Releases</h1>
+          <p class="section-description">Versionierung, Changelog und Freigabe in einem durchgaengigen Ablauf.</p>
+        </div>
+        <div class="section-actions">
+          <button id="add-release-btn" class="btn btn-primary">Neues Release</button>
+        </div>
+      </div>
+      <div class="release-list" id="release-list"></div>
+    </section>
+
+    <!-- Timeline -->
+    <section id="timeline" class="page">
+      <div class="section-header">
+        <div>
+          <p class="section-kicker">Execution Track</p>
+          <h1>Timeline & Sprint-Übersicht</h1>
+          <p class="section-description">Zeitlicher Verlauf von Tasks und Statusaenderungen fuer operative Transparenz.</p>
+        </div>
+      </div>
+
+      <!-- Zeitraum-Filter -->
+      <div class="timeline-filters" role="search" aria-label="Zeitraum-Filter für Timeline">
+        <label for="timeline-start-date">Von:</label>
+        <input type="date" id="timeline-start-date" aria-label="Startdatum des Zeitraums">
+
+        <label for="timeline-end-date">Bis:</label>
+        <input type="date" id="timeline-end-date" aria-label="Enddatum des Zeitraums">
+
+        <button id="timeline-apply-filter" class="btn btn-primary" aria-label="Filter anwenden">Anwenden</button>
+        <button id="timeline-reset-filter" class="btn btn-secondary" aria-label="Filter zurücksetzen">Zurücksetzen</button>
+      </div>
+
+      <!-- Sprint-Zeiträume -->
+      <div id="sprint-periods" class="chart-container" role="region" aria-label="Sprint-Zeiträume">
+        <h2>Sprints</h2>
+      </div>
+
+      <!-- Tasks als horizontale Bars -->
+      <div id="timeline-bars" class="chart-container" role="region" aria-label="Task-Timeline mit horizontalen Balken">
+        <h2>Task-Timeline</h2>
+      </div>
+
+      <!-- ARIA-live region für dynamisches Feedback -->
+      <div class="aria-live-region" id="timeline-aria-live" aria-live="polite" role="status"></div>
+    </section>
+
+    <!-- Standup -->
+    <section id="standup" class="page">
+      <div class="section-header">
+        <div>
+          <p class="section-kicker">Team Sync</p>
+          <h1>Daily Standup</h1>
+          <p class="section-description">Tagesuebersicht zu erledigten Punkten, Fokusaufgaben und Blockern je Mitarbeiter.</p>
+        </div>
+      </div>
+      <div class="standup-container">
+        <div class="standup-form" id="standup-form"></div>
+        <div class="standup-entries" id="standup-entries"></div>
+      </div>
+    </section>
+
+    <!-- Dokumentation -->
+    <section id="documentation" class="page">
+      <h1>Dokumentation</h1>
+      <button id="add-doc-btn" class="btn btn-primary">+ Neues Dokument</button>
+      <div class="doc-list" id="doc-list"></div>
+    </section>
+
+    <!-- Benachrichtigungen -->
+    <section id="notifications" class="page">
+      <h1>Benachrichtigungen</h1>
+      <div class="notification-settings" id="notification-settings"></div>
+      <div class="notification-list" id="notification-list"></div>
+    </section>
+
+    <!-- Vorlagen -->
+    <section id="templates" class="page">
+      <h1>Vorlagen</h1>
+      <button id="add-template-btn" class="btn btn-primary">+ Neue Vorlage</button>
+      <div class="template-list" id="template-list"></div>
+    </section>
+
+    <!-- Sharing -->
+    <section id="sharing" class="page">
+      <h1>Sharing & Freigaben</h1>
+      <button id="add-share-btn" class="btn btn-primary">+ Neue Freigabe</button>
+      <div class="share-list" id="share-list"></div>
+    </section>
+
+    <!-- Integrationen -->
+    <section id="integrations" class="page">
+      <h1>Integrationen</h1>
+      <div class="integration-grid" id="integration-list"></div>
+    </section>
+
+    <!-- Sprints -->
+    <section id="sprint" class="page">
+      <h1>Sprint-Management</h1>
+
+      <!-- Sprint erstellen -->
+      <div class="sprint-card">
+        <h2>🏁 Sprint erstellen</h2>
+        <form id="sprint-form" class="sprint-form" novalidate>
+          <div class="form-group">
+            <label for="sp-name">Sprint-Name *</label>
+            <input type="text" id="sp-name" placeholder="z. B. Sprint 33" required maxlength="100" aria-label="Sprint-Name eingeben">
+          </div>
+          <div class="form-group form-row">
+            <div>
+              <label for="sp-start">Startdatum *</label>
+              <input type="date" id="sp-start" required aria-label="Start-Datum">
+            </div>
+            <div>
+              <label for="sp-end">Enddatum *</label>
+              <input type="date" id="sp-end" required aria-label="End-Datum">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="sp-goal">Sprint-Ziel *</label>
+            <textarea id="sp-goal" rows="3" placeholder="Was soll in diesem Sprint erreicht werden?" aria-label="Sprint-Ziel"></textarea>
+          </div>
+          <div class="flex-row">
+            <button type="submit" class="btn btn-primary">🏁 Sprint erstellen</button>
+            <button type="button" onclick="window['SprintModule.showCreateModal']()" class="btn btn-secondary">Modal öffnen</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Active Sprint -->
+      <div class="sprint-card">
+        <h2>Sprint-Anzeige</h2>
+        <div id="active-sprint-detail" class="sprint-details">
+          <p class="text-muted">Kein aktiver Sprint bestehend.</p>
+        </div>
+      </div>
+
+      <!-- Sprint Backlog -->
+      <div class="sprint-card">
+        <h2>Sprint-Backlog</h2>
+        <table class="sprint-count-table" id="backlog-stats">
+          <tr><th>Status</th><th>Anzahl</th></tr>
+          <tr><td>Backlog</td><td id="c-backlog">0</td></tr>
+          <tr><td>To Do</td><td id="c-todo">0</td></tr>
+          <tr><td>In Progress</td><td id="c-in-progress">0</td></tr>
+          <tr><td>Review</td><td id="c-review">0</td></tr>
+          <tr><td>Done</td><td id="c-done">0</td></tr>
+        </table>
+        <div class="sprint-task-block" id="sprint-task-list"></div>
+      </div>
+
+      <!-- Sprint Review -->
+      <div class="sprint-card">
+        <h2>Sprint-Review Statistik</h2>
+        <div class="sprint-stats-grid">
+          <div class="stat-card">
+            <h3>Velocity (Issues)</h3>
+            <div id="velocity-value" class="stat-value">0</div>
+          </div>
+          <div class="stat-card">
+            <h3>Task-Fortschritt</h3>
+            <div class="progress-bar-container">
+              <div id="task-progress-bar" class="progress-bar-fill green" style="width:0%"></div>
+            </div>
+            <span id="task-percent" class="text-secondary">0 % | 0 / 0</span>
+          </div>
+          <div class="stat-card">
+            <h3>Completed vs. Planned</h3>
+            <div class="visual-chart">
+              <div id="chart-bar-progress" class="chart-bar-progress"></div>
+              <div id="chart-bar-planned" class="chart-bar-planned"></div>
+            </div>
+            <span class="text-muted">
+              <span style="color:var(--accent-green)">Completed</span> |
+              <span style="color:var(--accent-blue)">Planned</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Retrospective -->
+      <div class="sprint-card">
+        <h2>Sprint-Retrospective</h2>
+        <textarea id="retro-notes" rows="6" placeholder="Was lief gut? Was neu? Was bleibt?" aria-label="Retrospective Notizen"></textarea>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Modal Container -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div id="modal-content" class="modal"></div>
+  </div>
+
+</body>
+</html>
