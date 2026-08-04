@@ -19,7 +19,7 @@ BACKUP_JSON_PATH = os.path.join(ROOT, 'data', 'projekt-dashboard.backup.json')
 BACKUP_STAMP_PATH = os.path.join(ROOT, 'data', 'projekt-dashboard.backup.stamp')
 KNOWLEDGE_DIR = os.path.join(ROOT, 'data', 'project-knowledge')
 MEETINGS_DIR = os.path.join(ROOT, 'data', 'meetings')
-HOST = '127.0.0.1'
+HOST = os.environ.get('PROJECT_DASHBOARD_STORAGE_HOST', '0.0.0.0')
 PORT = int(os.environ.get('PROJECT_DASHBOARD_STORAGE_PORT', '8766'))
 OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')
 OLLAMA_DEFAULT_MODEL = os.environ.get('OLLAMA_MODEL', 'hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M')
@@ -1374,7 +1374,7 @@ class StorageHandler(BaseHTTPRequestHandler):
             'User-Agent': 'projekt-dashboard-storage-server'
         }
         if token:
-            headers['Authorization'] = 'Bearer ' + token
+            headers['Authorization'] = 'token ' + token
 
         request = urllib.request.Request(endpoint, method='GET', headers=headers)
         try:

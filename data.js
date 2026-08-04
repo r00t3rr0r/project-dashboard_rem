@@ -160,6 +160,44 @@
     return String(value);
   }
 
+  function isSensitiveStorageKey(key) {
+    return key === KEYS.employees;
+  }
+
+  function sanitizeEmployeesForLocalStorageValue(value) {
+    if (value === null || value === undefined) return null;
+
+    try {
+      var parsed = JSON.parse(String(value));
+      if (!Array.isArray(parsed)) return String(value);
+
+      var sanitized = parsed.map(function (employee) {
+        var next = employee && typeof employee === 'object'
+          ? JSON.parse(JSON.stringify(employee))
+          : employee;
+
+        if (!next || typeof next !== 'object') return next;
+        if (!next.auth || typeof next.auth !== 'object') return next;
+        if (!next.auth.login || typeof next.auth.login !== 'object') return next;
+
+        var hash = String(next.auth.login.passwordHash || '').trim();
+        next.auth.login.passwordSet = !!(hash || next.auth.login.passwordSet);
+        next.auth.login.passwordHash = '';
+        return next;
+      });
+
+      return JSON.stringify(sanitized);
+    } catch (_err) {
+      return String(value);
+    }
+  }
+
+  function toLocalPersistValue(key, value) {
+    if (value === null || value === undefined) return null;
+    if (!isSensitiveStorageKey(key)) return String(value);
+    return sanitizeEmployeesForLocalStorageValue(value);
+  }
+
   function snapshotLegacyStorage() {
     try {
       var legacyKeys = listNativeManagedKeys();
@@ -169,7 +207,14 @@
       }
       legacyKeys.forEach(function (key) {
         var value = nativeStorageApi.getItem(key);
-        if (value !== null) memoryStorage[normalizeStorageKey(key)] = value;
+        if (value !== null) {
+          var normalizedKey = normalizeStorageKey(key);
+          var localValue = toLocalPersistValue(normalizedKey, value);
+          memoryStorage[normalizedKey] = localValue;
+          if (localValue !== value) {
+            try { nativeStorageApi.setItem(normalizedKey, localValue); } catch (_writeErr) {}
+          }
+        }
       });
     } catch (e) {
       console.warn('[DataLayer] Legacy storage migration failed:', e);
@@ -195,9 +240,10 @@
     var normalizedKey = normalizeStorageKey(key);
     var normalizedValue = normalizeStorageValue(value);
     memoryStorage[normalizedKey] = normalizedValue;
+    var localPersistValue = toLocalPersistValue(normalizedKey, normalizedValue);
     try {
-      if (normalizedValue === null) nativeStorageApi.removeItem(normalizedKey);
-      else nativeStorageApi.setItem(normalizedKey, normalizedValue);
+      if (localPersistValue === null) nativeStorageApi.removeItem(normalizedKey);
+      else nativeStorageApi.setItem(normalizedKey, localPersistValue);
     } catch (_e) {}
     ensureDatabaseReady().then(function () {
       persistValueAsync(normalizedKey, memoryStorage[normalizedKey]);
@@ -322,8 +368,13 @@
 
     return ensureDatabaseReady().then(function () {
       if (!db) return false;
+      var localPersistValue = toLocalPersistValue(key, value);
       try {
-        db.run('INSERT OR REPLACE INTO kv_store(key, value, updatedAt) VALUES (?, ?, ?)', [key, value === null ? '' : value, new Date().toISOString()]);
+        if (localPersistValue === null) {
+          db.run('DELETE FROM kv_store WHERE key = ?', [key]);
+        } else {
+          db.run('INSERT OR REPLACE INTO kv_store(key, value, updatedAt) VALUES (?, ?, ?)', [key, localPersistValue, new Date().toISOString()]);
+        }
         return true;
       } catch (e) {
         console.warn('[DataLayer] Fehler beim Persistieren von ' + key + ':', e);
@@ -363,9 +414,9 @@
     if (!db) return;
     db.run('DELETE FROM kv_store');
     Object.keys(memoryStorage).forEach(function (key) {
-      var value = memoryStorage[key];
-      if (value === null || value === undefined) return;
-      db.run('INSERT OR REPLACE INTO kv_store(key, value, updatedAt) VALUES (?, ?, ?)', [key, String(value), new Date().toISOString()]);
+      var localValue = toLocalPersistValue(key, memoryStorage[key]);
+      if (localValue === null || localValue === undefined) return;
+      db.run('INSERT OR REPLACE INTO kv_store(key, value, updatedAt) VALUES (?, ?, ?)', [key, String(localValue), new Date().toISOString()]);
     });
   }
 
@@ -389,7 +440,9 @@
 
       Object.keys(memoryStorage).forEach(function (key) {
         try {
-          nativeStorageApi.setItem(key, memoryStorage[key]);
+          var localValue = toLocalPersistValue(key, memoryStorage[key]);
+          if (localValue === null) nativeStorageApi.removeItem(key);
+          else nativeStorageApi.setItem(key, localValue);
         } catch (_e) {}
       });
 
@@ -445,6 +498,15 @@
         ok: false,
         status: getStorageStatus()
       };
+    });
+  }
+
+  function refreshFromRemote() {
+    return loadRemoteSnapshot().then(function (loadedFromRemote) {
+      if (!loadedFromRemote) return false;
+      hydrateCollections();
+      emitDataChanged('hydrate', 'all');
+      return true;
     });
   }
 
@@ -2415,6 +2477,7 @@
     },
     getStorageStatus: getStorageStatus,
     checkStorageHealth: checkStorageHealth,
+    refreshFromRemote: refreshFromRemote,
 
     // Event Bus
     on:    on,

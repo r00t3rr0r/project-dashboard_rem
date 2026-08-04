@@ -9,7 +9,7 @@ var STORAGE_PREFIX='meeting_notes_';
 var WORKFLOW_PREFIX='meeting_workflow_';
 var ACTIVE_PROJECT_KEY='meeting_active_project';
 var MEETING_PROTOCOL_DEFAULT_STATUS='open';
-var AI_BACKEND_URL='http://127.0.0.1:8766';
+var AI_BACKEND_URL=(window.location&&/^https?:/i.test(window.location.origin||''))?window.location.origin.replace(/\/$/,''):'';
 var DEFAULT_LABELS=['Entscheidung','Offen','Technisch','Budget'];
 
 var state={
@@ -99,7 +99,7 @@ function openCreateProjectModal(){
 
 function getBackendCandidates(){
   var origin=(window.location&&window.location.origin)?window.location.origin:'';
-  var list=[AI_BACKEND_URL,'http://localhost:8766','http://127.0.0.1:8765'];
+  var list=[origin,AI_BACKEND_URL,'http://localhost:8766','http://127.0.0.1:8766','http://127.0.0.1:8765'];
   if(origin)list.push(origin);
   return list.filter(function(item,idx){return item&&list.indexOf(item)===idx;});
 }

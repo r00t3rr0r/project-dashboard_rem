@@ -8,7 +8,7 @@ var NAMESPACE='ProjectsModule';
 var REPO_URL_RE=/(?:^|\/\/)(?:www\.)?github\.com\/([^\/#?]+)\/([^\/#?]+)(?:[\/#?]|$)/i;
 var MAX_ATTACHMENT_SIZE=1024*1024;
 var MAX_TOTAL_ATTACHMENT_SIZE=6*1024*1024;
-var AI_BACKEND_URL='http://127.0.0.1:8766';
+var AI_BACKEND_URL=(window.location&&/^https?:/i.test(window.location.origin||''))?window.location.origin.replace(/\/$/,''):'';
 var DEFAULT_OLLAMA_MODEL='hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M';
 var GITHUB_TOKEN_SESSION_KEY='projektDashboard.githubApiToken';
 var MEETING_NOTES_PREFIX='meeting_notes_';
@@ -872,10 +872,11 @@ function notify(message,type){
 function getAiBackendCandidates(){
   var origin=(window.location&&window.location.origin)?window.location.origin:'';
   var bases=[];
+  if(origin)bases.push(origin);
   if(AI_BACKEND_URL)bases.push(AI_BACKEND_URL);
   if('http://localhost:8766'!==AI_BACKEND_URL)bases.push('http://localhost:8766');
+  if('http://127.0.0.1:8766'!==AI_BACKEND_URL)bases.push('http://127.0.0.1:8766');
   if('http://127.0.0.1:8765'!==AI_BACKEND_URL)bases.push('http://127.0.0.1:8765');
-  if(origin)bases.push(origin);
   return bases.filter(function(item,idx){return item&&bases.indexOf(item)===idx;});
 }
 
@@ -1621,8 +1622,16 @@ function buildGitHubHeaders(token,includeApiVersion){
   if(includeApiVersion!==false){
     headers['X-GitHub-Api-Version']='2022-11-28';
   }
-  if(token)headers['Authorization']='Bearer '+token;
+  if(token)headers['Authorization']='token '+token;
   return headers;
+}
+
+function getCurrentUserGitHubToken(){
+  var auth=getAuthManager();
+  if(!auth||typeof auth.getCurrentUser!=='function')return '';
+  var user=auth.getCurrentUser();
+  if(!user||!user.github||typeof user.github!=='object')return '';
+  return String(user.github.privateAccessToken||'').trim();
 }
 
 function getGitHubApiToken(){
@@ -1642,7 +1651,29 @@ function getGitHubApiToken(){
   } catch(_err2){
     token='';
   }
+
+  if(token)return token;
+
+  token=getCurrentUserGitHubToken();
+  if(token){
+    try { window.sessionStorage.setItem(GITHUB_TOKEN_SESSION_KEY,token); } catch(_err3){}
+  }
   return token;
+}
+
+function hasGitHubApiToken(){
+  return !!getGitHubApiToken();
+}
+
+function buildPrivateRepoTokenHint(){
+  return hasGitHubApiToken()
+    ? ''
+    : ' Fuer private Repositories bitte einen gueltigen GitHub Token setzen (Projektformular, Import-Dialog oder im Mitarbeiterprofil).';
+}
+
+function isGitHubEmptyRepoError(err){
+  var message=String(err&&err.message||'').toLowerCase();
+  return message.indexOf('repository is empty')!==-1||message.indexOf('git repository is empty')!==-1;
 }
 
 function setGitHubApiToken(token){
@@ -1736,6 +1767,9 @@ function fetchCommits(owner,repo,limit){
         return fetchCommitPage(currentPage+1,nextCollected);
       }
       return maxItems?nextCollected.slice(0,maxItems):nextCollected;
+    }).catch(function(err){
+      if(isGitHubEmptyRepoError(err)) return collected;
+      throw err;
     });
   }
 
@@ -2703,6 +2737,15 @@ function upsertProjectFromForm(){
             linkedAt:new Date().toISOString(),
             defaultBranch:repo&&repo.default_branch?repo.default_branch:'main'
           },
+          githubRepoMeta:{
+            stars:repo&&repo.stargazers_count?repo.stargazers_count:0,
+            forks:repo&&repo.forks_count?repo.forks_count:0,
+            openIssues:repo&&repo.open_issues_count?repo.open_issues_count:0,
+            language:repo&&repo.language?repo.language:'unknown',
+            visibility:repo&&repo.private?'private':'public',
+            htmlUrl:repo&&repo.html_url?repo.html_url:parsed.url,
+            pushedAt:repo&&repo.pushed_at?repo.pushed_at:null
+          },
           githubCommits:[],
           githubMetrics:null,
           infoHub:{
@@ -2735,7 +2778,7 @@ function upsertProjectFromForm(){
         closeProjectCreateDialog();
         render();
       }).catch(function(err){
-        throw new Error('GitHub-Metadaten konnten nicht geladen werden: '+err.message);
+        throw new Error('GitHub-Metadaten konnten nicht geladen werden: '+err.message+buildPrivateRepoTokenHint());
       });
     }
 
@@ -3036,12 +3079,12 @@ function createProjectFromGitHub(){
 
   notify('GitHub-Repository wird gelesen...','info');
 
-  Promise.all([
-    fetchRepoMeta(parsed.owner,parsed.repo),
-    fetchCommits(parsed.owner,parsed.repo)
-  ]).then(function(result){
-    var repo=result[0]||{};
-    var commits=result[1]||[];
+  fetchRepoMeta(parsed.owner,parsed.repo).then(function(repo){
+    var commitWarning='';
+    return fetchCommits(parsed.owner,parsed.repo).catch(function(err){
+      commitWarning=String(err&&err.message||'').trim();
+      return [];
+    }).then(function(commits){
     var metrics=calculateGitHubMetrics(commits);
 
     var project={
@@ -3099,11 +3142,16 @@ function createProjectFromGitHub(){
 
     window.DataLayer.createProject(project);
     byId('github-bootstrap-url').value='';
-    notify('Projekt aus GitHub erfolgreich angelegt.','info');
+    if(commitWarning){
+      notify('Projekt aus GitHub angelegt. Commits konnten nicht geladen werden: '+commitWarning,'info');
+    } else {
+      notify('Projekt aus GitHub erfolgreich angelegt.','info');
+    }
     closeProjectImportDialog();
     render();
+    });
   }).catch(function(err){
-    notify('GitHub-Import fehlgeschlagen: '+err.message,'error');
+    notify('GitHub-Import fehlgeschlagen: '+err.message+buildPrivateRepoTokenHint(),'error');
   });
 }
 

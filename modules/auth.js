@@ -51,8 +51,13 @@
   };
   var GUEST_PAGES = ['dashboard', 'calendar', 'kanban'];
   var EMPLOYEE_DEFAULT_PAGES = ['dashboard', 'projects', 'kanban', 'calendar', 'quicktask', 'employees'];
+  var PASSWORD_SCHEME = 'pbkdf2';
+  var PASSWORD_PBKDF2_ITERATIONS = 180000;
+  var PASSWORD_PBKDF2_BYTES = 32;
+  var AUTH_REFRESH_INTERVAL_MS = 15000;
   var wrapped = false;
   var originalMethods = {};
+  var authRefreshTimer = null;
 
   function readSession() {
     try {
@@ -137,7 +142,8 @@
       login: {
         enabled: !!login.enabled,
         username: username,
-        passwordHash: passwordHash
+        passwordHash: passwordHash,
+        passwordSet: !!(passwordHash || login.passwordSet)
       },
       permissions: {
         pages: pages
@@ -583,19 +589,122 @@
     return Promise.resolve('fallback:' + String(hash >>> 0));
   }
 
-  function hashPassword(password) {
+  function bytesToHex(bytes) {
+    return Array.from(bytes).map(function (byte) {
+      return byte.toString(16).padStart(2, '0');
+    }).join('');
+  }
+
+  function hexToBytes(hex) {
+    var text = String(hex || '').trim().toLowerCase();
+    if (!text || text.length % 2 !== 0 || /[^0-9a-f]/.test(text)) return null;
+    var out = new Uint8Array(text.length / 2);
+    for (var i = 0; i < text.length; i += 2) {
+      out[i / 2] = parseInt(text.slice(i, i + 2), 16);
+    }
+    return out;
+  }
+
+  function constantTimeEquals(a, b) {
+    var left = String(a || '');
+    var right = String(b || '');
+    if (left.length !== right.length) return false;
+    var mismatch = 0;
+    for (var i = 0; i < left.length; i += 1) mismatch |= left.charCodeAt(i) ^ right.charCodeAt(i);
+    return mismatch === 0;
+  }
+
+  function hashPasswordLegacy(password) {
     var text = String(password || '');
     if (!window.crypto || !window.crypto.subtle || typeof window.TextEncoder !== 'function') {
       return createHashFallback(text);
     }
 
     return window.crypto.subtle.digest('SHA-256', new window.TextEncoder().encode(text)).then(function (buffer) {
-      return Array.from(new Uint8Array(buffer)).map(function (byte) {
-        return byte.toString(16).padStart(2, '0');
-      }).join('');
+      return bytesToHex(new Uint8Array(buffer));
     }).catch(function () {
       return createHashFallback(text);
     });
+  }
+
+  function derivePbkdf2Hash(password, saltHex, iterations) {
+    if (!window.crypto || !window.crypto.subtle || typeof window.TextEncoder !== 'function') {
+      return Promise.reject(new Error('PBKDF2 nicht verfuegbar'));
+    }
+
+    var saltBytes = hexToBytes(saltHex);
+    if (!saltBytes) return Promise.reject(new Error('Ungueltiger Salt'));
+
+    return window.crypto.subtle.importKey(
+      'raw',
+      new window.TextEncoder().encode(String(password || '')),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveBits']
+    ).then(function (key) {
+      return window.crypto.subtle.deriveBits({
+        name: 'PBKDF2',
+        salt: saltBytes,
+        iterations: iterations,
+        hash: 'SHA-256'
+      }, key, PASSWORD_PBKDF2_BYTES * 8);
+    }).then(function (bits) {
+      return bytesToHex(new Uint8Array(bits));
+    });
+  }
+
+  function hashPasswordForStorage(password) {
+    if (!window.crypto || !window.crypto.subtle || typeof window.crypto.getRandomValues !== 'function') {
+      return hashPasswordLegacy(password);
+    }
+
+    var saltBytes = new Uint8Array(16);
+    window.crypto.getRandomValues(saltBytes);
+    var saltHex = bytesToHex(saltBytes);
+
+    return derivePbkdf2Hash(password, saltHex, PASSWORD_PBKDF2_ITERATIONS).then(function (hashHex) {
+      return [PASSWORD_SCHEME, String(PASSWORD_PBKDF2_ITERATIONS), saltHex, hashHex].join('$');
+    }).catch(function () {
+      return hashPasswordLegacy(password);
+    });
+  }
+
+  function verifyPasswordAgainstStoredHash(password, storedHash) {
+    var value = String(storedHash || '').trim();
+    if (!value) return Promise.resolve(false);
+
+    if (value.indexOf(PASSWORD_SCHEME + '$') === 0) {
+      var parts = value.split('$');
+      if (parts.length !== 4) return Promise.resolve(false);
+      var iterations = parseInt(parts[1], 10);
+      var saltHex = parts[2];
+      var hashHex = parts[3];
+      if (!iterations || iterations < 10000 || !hashHex) return Promise.resolve(false);
+
+      return derivePbkdf2Hash(password, saltHex, iterations).then(function (candidate) {
+        return constantTimeEquals(candidate, hashHex);
+      }).catch(function () {
+        return false;
+      });
+    }
+
+    return hashPasswordLegacy(password).then(function (legacyHash) {
+      return constantTimeEquals(legacyHash, value);
+    });
+  }
+
+  function syncAuthStateFromServer() {
+    if (!window.DataLayer || typeof window.DataLayer.refreshFromRemote !== 'function') {
+      return Promise.resolve(false);
+    }
+
+    return window.DataLayer.refreshFromRemote().catch(function () {
+      return false;
+    });
+  }
+
+  function hashPassword(password) {
+    return hashPasswordLegacy(password);
   }
 
   function buildEmployeeAuth(existingEmployee, patch) {
@@ -617,7 +726,7 @@
     var password = String(input.password || '').trim();
     var hashPromise = Promise.resolve(next.login.passwordHash || '');
     if (password) {
-      hashPromise = hashPassword(password);
+      hashPromise = hashPasswordForStorage(password);
     }
 
     return hashPromise.then(function (passwordHash) {
@@ -630,23 +739,25 @@
   }
 
   function login(username, password) {
-    if (isSetupMode()) return Promise.resolve({ ok: false, message: 'Bitte zuerst einen Administrator im Mitarbeiterbereich anlegen.' });
+    return syncAuthStateFromServer().then(function () {
+      if (isSetupMode()) return { ok: false, message: 'Bitte zuerst einen Administrator im Mitarbeiterbereich anlegen.' };
 
-    var targetUser = normalizeUsername(username, 'mitarbeiter');
-    var employee = getLoginEmployees().find(function (item) {
-      return normalizeUsername(item.auth.login.username, item.name) === targetUser;
-    });
+      var targetUser = normalizeUsername(username, 'mitarbeiter');
+      var employee = getLoginEmployees().find(function (item) {
+        return normalizeUsername(item.auth.login.username, item.name) === targetUser;
+      });
 
-    if (!employee) return Promise.resolve({ ok: false, message: 'Login nicht gefunden.' });
+      if (!employee) return { ok: false, message: 'Login nicht gefunden.' };
 
-    return hashPassword(password).then(function (hash) {
-      if (hash !== employee.auth.login.passwordHash) {
-        return { ok: false, message: 'Passwort ist nicht korrekt.' };
-      }
-      writeSession({ employeeId: employee.id, loggedInAt: new Date().toISOString() });
-      emitAuthChanged();
-      refreshUi();
-      return { ok: true, user: employee };
+      return verifyPasswordAgainstStoredHash(password, employee.auth.login.passwordHash).then(function (isValid) {
+        if (!isValid) {
+          return { ok: false, message: 'Passwort ist nicht korrekt.' };
+        }
+        writeSession({ employeeId: employee.id, loggedInAt: new Date().toISOString() });
+        emitAuthChanged();
+        refreshUi();
+        return { ok: true, user: employee };
+      });
     });
   }
 
@@ -663,7 +774,14 @@
     if (content) content.innerHTML = '';
   }
 
-  function openLoginModal() {
+  function openLoginModal(skipSync) {
+    if (!skipSync) {
+      syncAuthStateFromServer().then(function () {
+        openLoginModal(true);
+      });
+      return;
+    }
+
     var overlay = document.getElementById('modal-overlay');
     var content = document.getElementById('modal-content');
     if (!overlay || !content) return;
@@ -888,10 +1006,31 @@
     };
   }
 
+  function startAuthRefreshLoop() {
+    if (authRefreshTimer || !window.DataLayer || typeof window.DataLayer.refreshFromRemote !== 'function') return;
+
+    authRefreshTimer = window.setInterval(function () {
+      window.DataLayer.refreshFromRemote().then(function (updated) {
+        if (updated) refreshUi();
+      }).catch(function () {});
+    }, AUTH_REFRESH_INTERVAL_MS);
+  }
+
   function init() {
     wrapDataLayer();
     refreshUi();
+    startAuthRefreshLoop();
+    syncAuthStateFromServer().then(function () {
+      refreshUi();
+    });
     window.addEventListener('authChanged', refreshUi);
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') {
+        syncAuthStateFromServer().then(function () {
+          refreshUi();
+        });
+      }
+    });
     if (window.DataLayer && typeof window.DataLayer.on === 'function') {
       window.DataLayer.on('dataChanged', function (event) {
         if (event && event.entity === 'employees') refreshUi();
