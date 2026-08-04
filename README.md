@@ -17,6 +17,21 @@ Die Anwendung wurde umfassend modernisiert:
 
 ### Empfohlen: Storage-Server (All-in-One)
 
+macOS / Linux (LAN-ready):
+
+```bash
+cd /Users/DNS/Projects/projekt-dashboard
+./scripts/start-lan-server.sh
+```
+
+Optional mit eigenen Werten:
+
+```bash
+PROJECT_DASHBOARD_STORAGE_HOST=0.0.0.0 PROJECT_DASHBOARD_STORAGE_PORT=8766 ./scripts/start-lan-server.sh
+```
+
+Direktstart (ohne Skript):
+
 ```bash
 cd C:\Users\r00t3\.openclaw\workspace\projekt-dashboard
 python storage_server.py
@@ -25,6 +40,10 @@ python storage_server.py
 Danach im Browser:
 
 - [http://127.0.0.1:8766/app.html](http://127.0.0.1:8766/app.html)
+
+Aus dem lokalen Netzwerk:
+
+- Beispiel: http://192.168.1.50:8766/app.html
 
 Beim Start werden automatisch vorbereitet:
 
