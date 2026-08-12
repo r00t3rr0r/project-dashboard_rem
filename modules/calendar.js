@@ -602,6 +602,7 @@
 
     content.innerHTML = buildEventDetailsHtml(event);
     overlay.classList.remove('hidden');
+    setSharedModalClosePolicy({ preventAccidentalClose: false, owner: 'calendar-details' });
 
     var closeBtn = document.getElementById('calendar-modal-close');
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
@@ -614,7 +615,7 @@
     }
   }
 
-  function openEventEditorModal(eventId, defaultDate) {
+  function openEventEditorModal(eventId, defaultDate, modalOptions) {
     var overlay = document.getElementById('modal-overlay');
     var content = document.getElementById('modal-content');
     if (!overlay || !content) return;
@@ -631,6 +632,7 @@
     }
     content.innerHTML = buildEventEditorHtml(event, defaultDate);
     overlay.classList.remove('hidden');
+    setSharedModalClosePolicy(modalOptions || { preventAccidentalClose: false, owner: 'calendar-editor' });
 
     var saveBtn = document.getElementById('calendar-save-btn');
     if (saveBtn) saveBtn.addEventListener('click', window.saveCalendarEvent);
@@ -643,6 +645,39 @@
 
     var titleField = document.getElementById('evt-title');
     if (titleField && titleField.focus) titleField.focus();
+  }
+
+  function setSharedModalClosePolicy(options) {
+    var overlay = document.getElementById('modal-overlay');
+    var content = document.getElementById('modal-content');
+    if (!overlay || !content) return;
+
+    var owner = options && options.owner ? String(options.owner) : 'calendar';
+    var prevent = !!(options && options.preventAccidentalClose);
+
+    content.setAttribute('data-modal-owner', owner);
+    if (prevent) {
+      content.setAttribute('data-prevent-overlay-close', 'true');
+      content.setAttribute('data-prevent-escape-close', 'true');
+      return;
+    }
+
+    content.removeAttribute('data-prevent-overlay-close');
+    content.removeAttribute('data-prevent-escape-close');
+  }
+
+  function canCloseSharedModal(reason) {
+    var overlay = document.getElementById('modal-overlay');
+    var content = document.getElementById('modal-content');
+    if (!overlay || !content) return true;
+    if (overlay.classList.contains('hidden')) return false;
+
+    var preventOverlay = content.getAttribute('data-prevent-overlay-close') === 'true';
+    var preventEscape = content.getAttribute('data-prevent-escape-close') === 'true';
+
+    if (reason === 'overlay' && preventOverlay) return false;
+    if (reason === 'escape' && preventEscape) return false;
+    return true;
   }
 
   function attachEventDayInteractions(cell, dateStr) {
@@ -1061,7 +1096,12 @@
     var overlay = document.getElementById('modal-overlay');
     var content = document.getElementById('modal-content');
     if (overlay) overlay.classList.add('hidden');
-    if (content) content.innerHTML = '';
+    if (content) {
+      content.removeAttribute('data-modal-owner');
+      content.removeAttribute('data-prevent-overlay-close');
+      content.removeAttribute('data-prevent-escape-close');
+      content.innerHTML = '';
+    }
   };
 
   function closeModal() {
@@ -1165,17 +1205,21 @@
     var overlay = document.getElementById('modal-overlay');
     if (overlay) {
       overlay.addEventListener('click', function (event) {
-        if (event.target === overlay) closeModal();
+        if (event.target !== overlay) return;
+        if (!canCloseSharedModal('overlay')) return;
+        closeModal();
       });
     }
 
     document.addEventListener('keydown', function (event) {
-      if (event.key === 'Escape') closeModal();
+      if (event.key !== 'Escape') return;
+      if (!canCloseSharedModal('escape')) return;
+      closeModal();
     });
   }
 
-  function openEventModal(eventId, defaultDate) {
-    openEventEditorModal(eventId, defaultDate);
+  function openEventModal(eventId, defaultDate, modalOptions) {
+    openEventEditorModal(eventId, defaultDate, modalOptions);
   }
 
   document.addEventListener('DOMContentLoaded', function () {

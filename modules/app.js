@@ -32,6 +32,24 @@ function getAuthorizedPage(page){
 }
 
 var SIDEBAR_EXPANDED_KEY='pd_sidebar_expanded';
+var ACTIVE_PAGE_STORAGE_KEY='pd_active_page';
+
+function saveActivePage(page){
+  try {
+    if(window.localStorage){
+      window.localStorage.setItem(ACTIVE_PAGE_STORAGE_KEY, String(page || 'dashboard'));
+    }
+  } catch(_err) {}
+}
+
+function readActivePage(){
+  try {
+    if(!window.localStorage) return '';
+    return window.localStorage.getItem(ACTIVE_PAGE_STORAGE_KEY) || '';
+  } catch(_err) {
+    return '';
+  }
+}
 
 function isDesktopViewport(){
   return window.innerWidth>1024;
@@ -95,6 +113,10 @@ function toggleSidebar(){
 function navigateTo(page){
   page = getAuthorizedPage(page);
 
+  if(!document.getElementById(page)){
+    page = 'dashboard';
+  }
+
   // Hide all pages
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
   
@@ -108,6 +130,7 @@ function navigateTo(page){
   if(link)link.classList.add('active');
 
   updatePageMeta(page);
+  saveActivePage(page);
 
   var sidebar=document.querySelector('.sidebar');
   if(sidebar&&window.innerWidth<=1024){
@@ -125,9 +148,10 @@ function setupNavigation(){
       e.preventDefault();
       var page=this.dataset.page;
       navigateTo(page);
-      
+
       // Update URL hash without scrolling
       history.pushState(null,null,'#page='+page);
+      saveActivePage(page);
     });
   });
   
@@ -138,14 +162,22 @@ function setupNavigation(){
     return raw;
   }
 
-  // Handle initial hash
-  var initialPage=parseHashToPage(location.hash)||'dashboard';
-  if(document.getElementById(initialPage))navigateTo(initialPage);
+  var initialPage=parseHashToPage(location.hash) || readActivePage() || 'dashboard';
+  if(document.getElementById(initialPage)){
+    navigateTo(initialPage);
+  } else {
+    navigateTo('dashboard');
+  }
 
   window.addEventListener('hashchange',function(){
     var pageFromHash=parseHashToPage(location.hash);
     if(pageFromHash&&document.getElementById(pageFromHash)){
       navigateTo(pageFromHash);
+    } else {
+      var savedPage=readActivePage();
+      if(savedPage&&document.getElementById(savedPage)){
+        navigateTo(savedPage);
+      }
     }
   });
 }
@@ -344,10 +376,12 @@ function setupExportImport(){
 }
 
 // ---- Module Refresh System ----
-function refreshAllModules(){
+function refreshAllModules(options){
+  var config=options&&typeof options==='object'?options:{};
+  var skipProjects=!!config.skipProjects;
   try{
     if(window.DashboardManager&&window.DashboardManager.refresh)window.DashboardManager.refresh();
-    if(window.ProjectsModule&&window.ProjectsModule.render)window.ProjectsModule.render();
+    if(!skipProjects&&window.ProjectsModule&&window.ProjectsModule.render)window.ProjectsModule.render();
     if(window.KanbanBoard&&window.KanbanBoard.renderAllColumns)window.KanbanBoard.renderAllColumns();
     if(window.CalendarModule&&window.CalendarModule.render)window.CalendarModule.render();
     if(window.AnalyticsModule&&window.AnalyticsModule.render)window.AnalyticsModule.render();
@@ -367,6 +401,61 @@ function refreshAllModules(){
     if(window.MeetingModule&&window.MeetingModule.render)window.MeetingModule.render();
     if(window.AuthManager&&window.AuthManager.refreshUi)window.AuthManager.refreshUi();
   }catch(e){console.error('[Refresh]',e);}
+}
+
+function getActivePageId(){
+  var active=document.querySelector('.page.active');
+  return active&&active.id?active.id:'dashboard';
+}
+
+function refreshActivePageModule(options){
+  var config=options&&typeof options==='object'?options:{};
+  var skipProjects=!!config.skipProjects;
+  var page=getActivePageId();
+
+  try{
+    if(page==='dashboard'){
+      if(window.DashboardManager&&window.DashboardManager.refresh)window.DashboardManager.refresh();
+    }else if(page==='projects'){
+      if(!skipProjects&&window.ProjectsModule&&window.ProjectsModule.render)window.ProjectsModule.render();
+    }else if(page==='kanban'){
+      if(window.KanbanBoard&&window.KanbanBoard.renderAllColumns)window.KanbanBoard.renderAllColumns();
+    }else if(page==='calendar'){
+      if(window.CalendarModule&&window.CalendarModule.render)window.CalendarModule.render();
+    }else if(page==='analytics'){
+      if(window.AnalyticsModule&&window.AnalyticsModule.render)window.AnalyticsModule.render();
+    }else if(page==='employees'){
+      if(window.EmployeesModule&&window.EmployeesModule.render)window.EmployeesModule.render();
+    }else if(page==='labels'){
+      if(window.LabelsModule&&window.LabelsModule.render)window.LabelsModule.render();
+    }else if(page==='healthcheck'){
+      if(window.HealthCheckModule&&window.HealthCheckModule.render)window.HealthCheckModule.render();
+    }else if(page==='releases'){
+      if(window.ReleasesModule&&window.ReleasesModule.render)window.ReleasesModule.render();
+    }else if(page==='standup'){
+      if(window.StandupModule&&window.StandupModule.render)window.StandupModule.render();
+    }else if(page==='templates'){
+      if(window.TemplatesModule&&window.TemplatesModule.render)window.TemplatesModule.render();
+    }else if(page==='search'){
+      if(window.SearchModule&&window.SearchModule.render)window.SearchModule.render();
+    }else if(page==='sharing'){
+      if(window.SharingModule&&window.SharingModule.render)window.SharingModule.render();
+    }else if(page==='integrations'){
+      if(window.IntegrationsModule&&window.IntegrationsModule.render)window.IntegrationsModule.render();
+    }else if(page==='documentation'){
+      if(window.DocumentationModule&&window.DocumentationModule.render)window.DocumentationModule.render();
+    }else if(page==='sprint'){
+      if(window.SprintModule&&window.SprintModule.render)window.SprintModule.render();
+    }else if(page==='quicktask'){
+      if(window.QuickTaskModule&&window.QuickTaskModule.renderRecentTasks)window.QuickTaskModule.renderRecentTasks();
+    }else if(page==='timeline'){
+      if(window.TimelineModule&&window.TimelineModule.render)window.TimelineModule.render();
+    }else if(page==='meeting'){
+      if(window.MeetingModule&&window.MeetingModule.render)window.MeetingModule.render();
+    }
+
+    if(window.AuthManager&&window.AuthManager.refreshUi)window.AuthManager.refreshUi();
+  }catch(e){console.error('[Refresh Active]',e);}
 }
 
 // ---- Mobile Menu Toggle (for responsive) ----
@@ -455,14 +544,14 @@ function init(){
     // Listen for data changes and refresh current page's module
     if(window.DataLayer.on){
       window.DataLayer.on('dataChanged',function(){
-        refreshAllModules();
+        refreshActivePageModule({skipProjects:true});
         updateDatabaseStatusLabel();
         updateStorageStatusLabel();
       });
     }
 
     window.addEventListener('authChanged', function(){
-      refreshAllModules();
+      refreshActivePageModule({skipProjects:true});
     });
 
     var initialRefresh=Promise.resolve(true);

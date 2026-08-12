@@ -18,7 +18,29 @@ function getAuthManager(){
   return window.AuthManager || null;
 }
 
+function setSharedModalCloseGuard(owner){
+  var overlay=document.getElementById('modal-overlay');
+  var content=document.getElementById('modal-content');
+  if(!overlay||!content)return;
+  overlay.setAttribute('data-close-guard-owner',owner||'quicktask');
+  content.setAttribute('data-modal-owner',owner||'quicktask');
+  content.setAttribute('data-prevent-overlay-close','true');
+  content.setAttribute('data-prevent-escape-close','true');
+}
+
+function clearSharedModalCloseGuard(){
+  var overlay=document.getElementById('modal-overlay');
+  var content=document.getElementById('modal-content');
+  if(overlay)overlay.removeAttribute('data-close-guard-owner');
+  if(content){
+    content.removeAttribute('data-modal-owner');
+    content.removeAttribute('data-prevent-overlay-close');
+    content.removeAttribute('data-prevent-escape-close');
+  }
+}
+
 function closeSharedModal(){
+  clearSharedModalCloseGuard();
   if(typeof window.closeModal==='function'){
     window.closeModal();
     return;
@@ -204,6 +226,7 @@ function openQuickTaskModal(){
     }
 
     overlay.classList.remove('hidden');
+    setSharedModalCloseGuard('quicktask-task');
 
     var cancelBtn=document.getElementById('qt-cancel');
     if(cancelBtn){
@@ -262,7 +285,7 @@ function openQuickCalendarModal(){
       return;
     }
     if(window.CalendarModule&&typeof window.CalendarModule.openModal==='function'){
-      window.CalendarModule.openModal(null,getDateKey(0));
+      window.CalendarModule.openModal(null,getDateKey(0),{preventAccidentalClose:true,source:'quicktask'});
       return;
     }
     alert('Kalender-Modul ist aktuell nicht verfuegbar.');
@@ -319,6 +342,7 @@ function openBlockerModal(){
       +'</div>';
 
     overlay.classList.remove('hidden');
+  setSharedModalCloseGuard('quicktask-blocker');
 
     var targetTypeEl=document.getElementById('qbm-target-type');
     var taskWrap=document.getElementById('qbm-task-wrap');
@@ -463,6 +487,7 @@ function openDepartmentNoticeModal(){
       +'</div>';
 
     overlay.classList.remove('hidden');
+  setSharedModalCloseGuard('quicktask-notice');
 
     var cancelBtn=document.getElementById('qnm-cancel');
     if(cancelBtn)cancelBtn.addEventListener('click',closeSharedModal);
@@ -555,6 +580,7 @@ function openTaskChainModal(){
       +'</div>';
 
     overlay.classList.remove('hidden');
+  setSharedModalCloseGuard('quicktask-chain');
 
     var rowsWrap=document.getElementById('qcm-rows');
 
