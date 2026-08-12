@@ -23,6 +23,24 @@
 
   // --- Current Page State ---
   var currentPage = null;
+  var ACTIVE_PAGE_STORAGE_KEY = 'pd_active_page';
+
+  function saveActivePage(page) {
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(ACTIVE_PAGE_STORAGE_KEY, String(page || 'dashboard'));
+      }
+    } catch (_err) {}
+  }
+
+  function readActivePage() {
+    try {
+      if (!window.localStorage) return '';
+      return window.localStorage.getItem(ACTIVE_PAGE_STORAGE_KEY) || '';
+    } catch (_err) {
+      return '';
+    }
+  }
 
   /* ============================================================
      ROUTER — Switch zwischen Seiten per Hash oder Nav-Klick
@@ -52,6 +70,7 @@
     newSection.classList.add('active');
 
     currentPage = page;
+    saveActivePage(page);
 
     // Nav-Links aktualisieren
     var navLinks = document.querySelectorAll('.nav-menu a[data-page]');
@@ -115,10 +134,14 @@
       }
     });
 
-    // Initiale Seite aus Hash oder default 'dashboard'
+    // Initiale Seite aus Hash oder zuletzt gespeicherter Ansicht
     var initialHash = window.location.hash;
-    if (initialHash && initialHash.indexOf('page=') === 0) {
-      navigateTo(initialHash.substring(5));
+    var initialPage = (initialHash && initialHash.indexOf('page=') === 0)
+      ? initialHash.substring(5)
+      : readActivePage() || 'dashboard';
+
+    if (document.getElementById(initialPage)) {
+      navigateTo(initialPage);
     } else {
       navigateTo('dashboard');
     }

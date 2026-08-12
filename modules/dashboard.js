@@ -7,6 +7,38 @@
     projectId: 'all',
     sort: 'newest'
   };
+  var BLOCKER_FILTER_STORAGE_KEY = 'pd_dashboard_blocker_filters';
+
+  function readSavedBlockerFilterState() {
+    try {
+      if (!window.localStorage) return null;
+      var raw = window.localStorage.getItem(BLOCKER_FILTER_STORAGE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed;
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function writeSavedBlockerFilterState() {
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(BLOCKER_FILTER_STORAGE_KEY, JSON.stringify(blockerFilterState));
+      }
+    } catch (_err) {}
+  }
+
+  function restoreBlockerFilterState() {
+    var saved = readSavedBlockerFilterState();
+    if (!saved) return;
+    Object.keys(blockerFilterState).forEach(function(key) {
+      if (Object.prototype.hasOwnProperty.call(saved, key)) {
+        blockerFilterState[key] = String(saved[key] || '');
+      }
+    });
+  }
 
   function ensureDepartmentNoticeHost() {
     var dashboardPage = document.getElementById('dashboard');
@@ -80,6 +112,110 @@
     return projects;
   }
 
+  function clampProjectProgress(value, fallback) {
+    var number = Number(value);
+    if (!isFinite(number)) number = Number(fallback);
+    if (!isFinite(number)) number = 0;
+    number = Math.round(number);
+    if (number < 0) number = 0;
+    if (number > 100) number = 100;
+    return number;
+  }
+
+  function getProjectProgressPercent(project) {
+    var tasks = (window.DataLayer && typeof window.DataLayer.getTasks === 'function' ? window.DataLayer.getTasks() : []).filter(function(task) {
+      return task && task.projectId === project.id;
+    });
+
+    var doneCount = tasks.filter(function(task) {
+      return String(task.status || '').toLowerCase() === 'done';
+    }).length;
+    var totalCount = tasks.length;
+    var ratio = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
+
+    if (typeof project.progress === 'number' && !isNaN(project.progress)) {
+      return clampProjectProgress(project.progress, ratio);
+    }
+
+    var status = String(project && project.status || '').toLowerCase();
+    if (status === 'done') return 100;
+    if (status === 'blocked') return Math.max(0, Math.min(100, Math.round(ratio * 0.7)));
+    return ratio;
+  }
+
+  function getProjectContactEmployee(project) {
+    var employees = (window.DataLayer && typeof window.DataLayer.getEmployees === 'function' ? window.DataLayer.getEmployees() : []) || [];
+    var employeesById = {};
+    employees.forEach(function(employee) {
+      if (employee && employee.id) employeesById[String(employee.id)] = employee;
+    });
+
+    var tasks = (window.DataLayer && typeof window.DataLayer.getTasks === 'function' ? window.DataLayer.getTasks() : []).filter(function(task) {
+      return task && task.projectId === project.id;
+    });
+
+    var contactId = project && (project.contactEmployeeId || project.contactId || '');
+    if (contactId && employeesById[String(contactId)]) {
+      return employeesById[String(contactId)];
+    }
+
+    var teamMembers = Array.isArray(project && project.teamMembers) ? project.teamMembers : [];
+    for (var i = 0; i < teamMembers.length; i++) {
+      var member = teamMembers[i];
+      var memberId = member && (member.employeeId || member.id);
+      if (memberId && employeesById[String(memberId)]) {
+        return employeesById[String(memberId)];
+      }
+    }
+
+    var activeTasks = tasks.filter(function(task) {
+      return String(task.status || '').toLowerCase() === 'in-progress';
+    }).sort(function(a, b) {
+      return new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime();
+    });
+
+    if (activeTasks.length) {
+      var activeAssigneeId = activeTasks[0].assigneeId || activeTasks[0].employeeId;
+      if (activeAssigneeId && employeesById[String(activeAssigneeId)]) {
+        return employeesById[String(activeAssigneeId)];
+      }
+    }
+
+    var nextTask = tasks.filter(function(task) {
+      return String(task.status || '').toLowerCase() !== 'done';
+    }).sort(function(a, b) {
+      return (new Date(a.dueDate || a.createdAt || 0).getTime() || 0) - (new Date(b.dueDate || b.createdAt || 0).getTime() || 0);
+    })[0];
+
+    if (nextTask) {
+      var assigneeId = nextTask.assigneeId || nextTask.employeeId;
+      if (assigneeId && employeesById[String(assigneeId)]) {
+        return employeesById[String(assigneeId)];
+      }
+    }
+
+    return null;
+  }
+
+  function renderProjectContactAvatar(project) {
+    var employee = getProjectContactEmployee(project);
+    if (!employee) {
+      return '<span class="project-progress-contact-avatar project-progress-contact-avatar-fallback" title="Kein Ansprechpartner">N</span>';
+    }
+
+    var name = String(employee.name || 'Mitarbeiter').trim() || 'Mitarbeiter';
+    var initials = name.split(/\s+/).slice(0, 2).map(function(part) {
+      return part ? part.charAt(0).toUpperCase() : '';
+    }).join('').trim() || 'M';
+
+    var avatarUrl = getEmployeeAvatarUrl(employee);
+    if (avatarUrl) {
+      return '<span class="project-progress-contact-avatar" title="' + escapeHtml(name) + '"><img src="' + escapeHtml(avatarUrl) + '" alt="' + escapeHtml(name) + '" /></span>';
+    }
+
+    return '<span class="project-progress-contact-avatar project-progress-contact-avatar-fallback" title="' + escapeHtml(name) + '">' + escapeHtml(initials) + '</span>';
+  }
+
   function getStatusLabel(project) {
     var status = String(project && project.status || '').toLowerCase();
     if (status === 'planning') return 'Planung';
@@ -95,6 +231,101 @@
     if (status === 'done') return 'badge-green';
     if (status === 'active') return 'badge-blue';
     return 'badge-yellow';
+  }
+
+  function setHtmlIfChanged(node, html) {
+    if (!node) return false;
+    var next = String(html || '');
+    if (node.innerHTML === next) return false;
+    node.innerHTML = next;
+    return true;
+  }
+
+  function captureDashboardUiState() {
+    var dashboard = document.getElementById('dashboard');
+    var active = document.activeElement;
+    var focusState = null;
+    if (dashboard && active && active !== document.body && dashboard.contains(active)) {
+      var key = null;
+      if (active.id) {
+        key = { kind: 'id', value: String(active.id) };
+      } else if (active.hasAttribute('data-blocker-filter')) {
+        key = { kind: 'blocker-filter', value: String(active.getAttribute('data-blocker-filter') || '') };
+      } else if (active.name) {
+        key = {
+          kind: 'named',
+          value: String(active.name),
+          tag: String(active.tagName || '').toLowerCase()
+        };
+      }
+
+      focusState = {
+        key: key,
+        tag: String(active.tagName || '').toLowerCase(),
+        value: (typeof active.value === 'string') ? active.value : null,
+        selectionStart: (typeof active.selectionStart === 'number') ? active.selectionStart : null,
+        selectionEnd: (typeof active.selectionEnd === 'number') ? active.selectionEnd : null
+      };
+    }
+
+    var docEl = document.scrollingElement || document.documentElement || document.body;
+    var mainContent = document.querySelector('.main-content');
+    return {
+      focus: focusState,
+      docScrollTop: docEl ? docEl.scrollTop : 0,
+      docScrollLeft: docEl ? docEl.scrollLeft : 0,
+      mainScrollTop: mainContent ? mainContent.scrollTop : null,
+      mainScrollLeft: mainContent ? mainContent.scrollLeft : null
+    };
+  }
+
+  function restoreDashboardUiState(state) {
+    if (!state) return;
+
+    var docEl = document.scrollingElement || document.documentElement || document.body;
+    if (docEl) {
+      docEl.scrollTop = Number(state.docScrollTop) || 0;
+      docEl.scrollLeft = Number(state.docScrollLeft) || 0;
+    }
+
+    var mainContent = document.querySelector('.main-content');
+    if (mainContent && state.mainScrollTop !== null) {
+      mainContent.scrollTop = Number(state.mainScrollTop) || 0;
+      mainContent.scrollLeft = Number(state.mainScrollLeft) || 0;
+    }
+
+    if (!state.focus || !state.focus.key) return;
+
+    var dashboard = document.getElementById('dashboard');
+    if (!dashboard) return;
+
+    var target = null;
+    if (state.focus.key.kind === 'id') {
+      var byId = document.getElementById(state.focus.key.value);
+      if (byId && dashboard.contains(byId)) target = byId;
+    } else if (state.focus.key.kind === 'blocker-filter') {
+      target = dashboard.querySelector('[data-blocker-filter="' + state.focus.key.value + '"]');
+    } else if (state.focus.key.kind === 'named') {
+      target = dashboard.querySelector(state.focus.key.tag + '[name="' + state.focus.key.value + '"]');
+    }
+
+    if (!target || typeof target.focus !== 'function') return;
+
+    if (state.focus.value !== null && typeof target.value === 'string' && !target.disabled) {
+      target.value = state.focus.value;
+    }
+
+    try {
+      target.focus({ preventScroll: true });
+    } catch (_errFocus) {
+      target.focus();
+    }
+
+    if (typeof target.setSelectionRange === 'function' && typeof state.focus.selectionStart === 'number' && typeof state.focus.selectionEnd === 'number') {
+      try {
+        target.setSelectionRange(state.focus.selectionStart, state.focus.selectionEnd);
+      } catch (_errSelection) {}
+    }
   }
 
   function buildDashboardProjectMirrorHtml() {
@@ -195,17 +426,21 @@
     var container = document.getElementById('dashboard-projects-full');
     if (!container) return;
 
-    if (window.ProjectsModule && typeof window.ProjectsModule.render === 'function') {
+    var projectsPage = document.getElementById('projects');
+    var projectsPageIsActive = !!(projectsPage && projectsPage.classList.contains('active'));
+
+    // Avoid collapsing expanded project details while the user works on the projects page.
+    if (!projectsPageIsActive && window.ProjectsModule && typeof window.ProjectsModule.render === 'function') {
       window.ProjectsModule.render();
     }
 
     var mirrorHtml = buildDashboardProjectMirrorHtml();
     if (!mirrorHtml.trim()) {
-      container.innerHTML = '<h3>Projekte</h3><p class="chart-empty">Keine freigegebenen Projekte vorhanden.</p>';
+      setHtmlIfChanged(container, '<h3>Projekte</h3><p class="chart-empty">Keine freigegebenen Projekte vorhanden.</p>');
       return;
     }
 
-    container.innerHTML = '<h3>Projekte</h3>' + buildDashboardProjectOverviewLayout(mirrorHtml);
+    setHtmlIfChanged(container, '<h3>Projekte</h3>' + buildDashboardProjectOverviewLayout(mirrorHtml));
   }
 
   function askResolutionText(message, defaultValue) {
@@ -450,7 +685,7 @@
     var activeRows = allRows.filter(function(row) { return !!row.active; });
     if (!activeRows.length) {
       host.classList.add('hidden');
-      host.innerHTML = '';
+      setHtmlIfChanged(host, '');
       return;
     }
 
@@ -486,7 +721,7 @@
     if (!blockers.length) {
       html += '<p class="text-muted">Keine Eintraege fuer den gewaehlten Filter.</p>';
       host.classList.remove('hidden');
-      host.innerHTML = html;
+      setHtmlIfChanged(host, html);
       return;
     }
 
@@ -524,12 +759,13 @@
     html += '</div>';
 
     host.classList.remove('hidden');
-    host.innerHTML = html;
+    setHtmlIfChanged(host, html);
   }
 
   function updateBlockerFilter(filterName, value) {
     if (!Object.prototype.hasOwnProperty.call(blockerFilterState, filterName)) return;
     blockerFilterState[filterName] = String(value || '');
+    writeSavedBlockerFilterState();
     renderDashboardBlockers();
   }
 
@@ -551,7 +787,7 @@
     var notices = getDepartmentNotices();
     if (!notices.length) {
       host.classList.add('hidden');
-      host.innerHTML = '';
+      setHtmlIfChanged(host, '');
       return;
     }
 
@@ -582,7 +818,7 @@
     });
 
     html += '</div>';
-    host.innerHTML = html;
+    setHtmlIfChanged(host, html);
   }
 
   function dismissDepartmentNotice(id) {
@@ -630,14 +866,14 @@
     // Gesamt Tasks
     var elTotal = document.getElementById('stat-tasks-total');
     if (elTotal) {
-      elTotal.innerHTML = '<h3>Gesamt Tasks</h3><div class="stat-value">' + tasks.length + '</div>';
+      setHtmlIfChanged(elTotal, '<h3>Gesamt Tasks</h3><div class="stat-value">' + tasks.length + '</div>');
     }
 
     // In Progress Count
     var inProgress = tasks.filter(function(t) { return t.status === 'in-progress'; }).length;
     var elProgress = document.getElementById('stat-tasks-progress');
     if (elProgress) {
-      elProgress.innerHTML = '<h3>In Progress</h3><div class="stat-value">' + inProgress + '</div>';
+      setHtmlIfChanged(elProgress, '<h3>In Progress</h3><div class="stat-value">' + inProgress + '</div>');
     }
 
     // Aktive Mitarbeiter
@@ -646,7 +882,7 @@
     }).length;
     var elActive = document.getElementById('stat-employees-active');
     if (elActive) {
-      elActive.innerHTML = '<h3>Aktive Mitarbeiter</h3><div class="stat-value">' + activeEmps + '</div>';
+      setHtmlIfChanged(elActive, '<h3>Aktive Mitarbeiter</h3><div class="stat-value">' + activeEmps + '</div>');
     }
 
     // Upcoming Deadlines (nächste 7 Tage)
@@ -659,7 +895,7 @@
     }).length;
     var elDeadlines = document.getElementById('stat-upcoming-deadlines');
     if (elDeadlines) {
-      elDeadlines.innerHTML = '<h3>Deadlines (7d)</h3><div class="stat-value">' + upcoming + '</div>';
+      setHtmlIfChanged(elDeadlines, '<h3>Deadlines (7d)</h3><div class="stat-value">' + upcoming + '</div>');
     }
   }
 
@@ -669,103 +905,526 @@
     var container = document.getElementById('chart-progress-bar');
     if (!container) return;
 
+    if (!container.dataset.progressCollapsed) {
+      container.dataset.progressCollapsed = 'true';
+    }
+
+    if (!container.dataset.progressBound) {
+      container.addEventListener('click', function(event) {
+        var toggle = event.target.closest('[data-progress-toggle]');
+        if (!toggle || !toggle.closest('#chart-progress-bar')) return;
+        container.dataset.progressCollapsed = container.dataset.progressCollapsed === 'true' ? 'false' : 'true';
+        renderProjectProgress();
+      });
+      container.dataset.progressBound = 'true';
+    }
+
+    var isCollapsed = container.dataset.progressCollapsed === 'true';
+
     if (projects.length === 0) {
-      container.innerHTML = '<h3>Projekt-Fortschritt</h3><p class="chart-empty">Keine Projekte vorhanden.</p>';
+      setHtmlIfChanged(container, '<h3>Projekt-Fortschritt</h3><p class="chart-empty">Keine Projekte vorhanden.</p>');
       return;
     }
 
-    var html = '';
+    container.classList.toggle('project-progress-compact', isCollapsed);
+    container.classList.toggle('project-progress-expanded', !isCollapsed);
+
+    var html = '<h3>Projekt-Fortschritt</h3>';
+    html += '<button type="button" class="project-progress-toggle" data-progress-toggle="true" aria-expanded="' + (isCollapsed ? 'false' : 'true') + '">' + (isCollapsed ? 'Volle Ansicht' : 'Kompakt') + '</button>';
+    html += '<div class="project-progress-list">';
     projects.forEach(function(project) {
-      var tasks = window.DataLayer.getTasks().filter(function(t) { return t.projectId === project.id; });
-      var done = tasks.filter(function(t) { return t.status === 'done'; }).length;
-      var percent = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
+      var tasks = (window.DataLayer && typeof window.DataLayer.getTasks === 'function' ? window.DataLayer.getTasks() : []).filter(function(task) {
+        return task && task.projectId === project.id;
+      });
+      var percent = getProjectProgressPercent(project);
+      var activeTask = tasks.some(function(task) {
+        return String(task.status || '').toLowerCase() === 'in-progress';
+      });
+      var toneClass = percent >= 75 ? 'is-strong' : (percent >= 40 ? 'is-mid' : 'is-low');
+      var stateClass = activeTask ? 'is-running' : 'is-idle';
 
-      // Status-Farbe bestimmen
-      var colorClass = 'green';
-      if (percent < 40 || !project.startDate) colorClass = 'red';
-      else if (percent < 80) colorClass = 'yellow';
-
-      html += '<div class="project-progress-item">';
+      html += '<article class="project-progress-item">';
       html += '<div class="project-progress-head">';
+      html += '<div class="project-progress-head-main">';
       html += '<span class="project-progress-title">' + escapeHtml(project.title || project.name) + '</span>';
-      html += '<span class="project-progress-percent">' + percent + '%</span></div>';
-      html += '<div class="progress-bar-container">';
-      html += '<div class="progress-bar-fill ' + colorClass + '" style="width:' + percent + '%;"></div>';
-      html += '</div></div>';
+      html += renderProjectContactAvatar(project);
+      html += '</div>';
+      html += '<span class="project-progress-percent">' + percent + '%</span>';
+      html += '</div>';
+      html += '<div class="project-head-progress ' + toneClass + ' ' + stateClass + '">';
+      html += '<span class="project-head-progress-label">Aktueller Fortschritt</span>';
+      html += '<div class="project-head-progress-track" aria-hidden="true"><span class="project-head-progress-fill" style="--project-progress:' + percent + '%;"></span></div>';
+      html += '<div class="project-head-progress-meta">';
+      html += '<span class="project-head-progress-value">' + percent + '%</span>';
+      if (activeTask) {
+        html += '<span class="project-head-progress-live-dot" aria-label="Aktive Bearbeitung"></span><span class="project-head-progress-live-text">In Arbeit</span>';
+      }
+      html += '</div>';
+      html += '</div>';
+      html += '</article>';
     });
+    html += '</div>';
 
-    container.innerHTML = '<h3>Projekt-Fortschritt</h3>' + html;
+    setHtmlIfChanged(container, html);
   }
 
-  // --- Task-Status-Distribution (CSS conic-gradient) ---
+  function getDateKeyFromValue(value) {
+    if (!value) return '';
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+
+    var parsed = new Date(value);
+    if (isNaN(parsed.getTime())) return '';
+
+    return parsed.getFullYear() + '-' +
+      String(parsed.getMonth() + 1).padStart(2, '0') + '-' +
+      String(parsed.getDate()).padStart(2, '0');
+  }
+
+  function getCurrentWeekStartDate(today) {
+    var start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    var day = (start.getDay() + 6) % 7;
+    start.setDate(start.getDate() - day);
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }
+
+  function getCurrentWeekDays() {
+    var labels = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+    var today = new Date();
+    var start = getCurrentWeekStartDate(today);
+    var days = [];
+
+    for (var i = 0; i < 7; i++) {
+      var dayDate = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      days.push({
+        label: labels[i],
+        date: dayDate,
+        dateKey: getDateKeyFromValue(dayDate),
+        isToday: getDateKeyFromValue(dayDate) === getDateKeyFromValue(today)
+      });
+    }
+
+    return days;
+  }
+
+  function getEventParticipants(event) {
+    var attendeeIds = [];
+    if (Array.isArray(event && event.attendeeIds)) attendeeIds = event.attendeeIds.slice();
+    else if (Array.isArray(event && event.attendees)) attendeeIds = event.attendees.slice();
+    if (!attendeeIds.length && event && event.attendeeId) attendeeIds = [event.attendeeId];
+
+    var seen = {};
+    return attendeeIds.map(function(id) {
+      return String(id || '').trim();
+    }).filter(function(id) {
+      if (!id || seen[id]) return false;
+      seen[id] = true;
+      return true;
+    });
+  }
+
+  function getEventTypeLabel(type) {
+    var map = {
+      meeting: 'Meeting',
+      deadline: 'Deadline',
+      release: 'Release',
+      holiday: 'Urlaub',
+      task: 'Task'
+    };
+    return map[String(type || '').toLowerCase()] || 'Termin';
+  }
+
+  function getEventTimeLabel(event) {
+    var startTime = String(event && event.startTime || '').trim();
+    if (startTime) return startTime;
+
+    var fromDateTime = event && (event.startDate || event.date || '');
+    if (typeof fromDateTime === 'string' && /T/.test(fromDateTime)) {
+      var parsed = new Date(fromDateTime);
+      if (!isNaN(parsed.getTime())) {
+        return parsed.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      }
+    }
+
+    return '';
+  }
+
+  function getEmployeeDisplayNameById(employeeById, id) {
+    if (!id) return '';
+    var employee = employeeById[String(id)] || null;
+    return employee ? String(employee.name || employee.title || id) : String(id);
+  }
+
+  function getProjectDisplayNameById(projectById, id) {
+    if (!id) return '';
+    var project = projectById[String(id)] || null;
+    return project ? String(project.title || project.name || id) : String(id);
+  }
+
+  // --- Team-Wochenkalender ---
   function renderTaskDistribution() {
-    var tasks = window.DataLayer.getTasks();
+    var dataLayer = window.DataLayer || null;
+    var employees = (dataLayer && typeof dataLayer.getEmployees === 'function' ? dataLayer.getEmployees() : []) || [];
+    var projects = (dataLayer && typeof dataLayer.getProjects === 'function' ? dataLayer.getProjects() : []) || [];
+    var tasks = (dataLayer && typeof dataLayer.getTasks === 'function' ? dataLayer.getTasks() : []) || [];
+    var events = (dataLayer && typeof dataLayer.getCalendarEvents === 'function' ? dataLayer.getCalendarEvents() : []) || [];
     var container = document.getElementById('chart-task-distribution');
     if (!container) return;
 
-    if (tasks.length === 0) {
-      container.innerHTML = '<h3>Task-Verteilung nach Status</h3><p class="chart-empty">Keine Tasks vorhanden.</p>';
-      return;
+    var weekDays = getCurrentWeekDays();
+    var weekDayMap = {};
+    weekDays.forEach(function(day) {
+      weekDayMap[day.dateKey] = [];
+    });
+
+    var employeeById = {};
+    employees.forEach(function(employee) {
+      if (employee && employee.id) employeeById[String(employee.id)] = employee;
+    });
+
+    var taskById = {};
+    tasks.forEach(function(task) {
+      if (task && task.id) taskById[String(task.id)] = task;
+    });
+
+    var projectById = {};
+    projects.forEach(function(project) {
+      if (project && project.id) projectById[String(project.id)] = project;
+    });
+
+    var sortedEmployees = employees.slice().sort(function(a, b) {
+      var nameA = String(a && (a.name || a.title) || '').trim();
+      var nameB = String(b && (b.name || b.title) || '').trim();
+      return nameA.localeCompare(nameB, 'de');
+    });
+
+    var UNASSIGNED_ROW_ID = '__unassigned__';
+    var rowMeta = [];
+    sortedEmployees.forEach(function(employee) {
+      rowMeta.push({
+        id: String(employee.id || ''),
+        name: String(employee.name || employee.title || 'Unbekannter Mitarbeiter')
+      });
+    });
+    rowMeta.push({ id: UNASSIGNED_ROW_ID, name: 'Ohne Zuordnung' });
+
+    var gridMap = {};
+    rowMeta.forEach(function(row) {
+      gridMap[row.id] = {};
+      weekDays.forEach(function(day) {
+        gridMap[row.id][day.dateKey] = [];
+      });
+    });
+
+    events.forEach(function(evt) {
+      if (!evt) return;
+      var dateKey = getDateKeyFromValue(evt.date || evt.startDate || '');
+      if (!dateKey || !weekDayMap[dateKey]) return;
+
+      var participantIds = getEventParticipants(evt);
+      if (!participantIds.length && evt.taskId && taskById[String(evt.taskId)] && taskById[String(evt.taskId)].assigneeId) {
+        participantIds = [String(taskById[String(evt.taskId)].assigneeId)];
+      }
+
+      var participantNames = participantIds.map(function(id) {
+        return getEmployeeDisplayNameById(employeeById, id);
+      }).filter(Boolean);
+
+      var eventItem = {
+        title: evt.title || 'Ohne Titel',
+        type: evt.type || 'meeting',
+        projectLabel: getProjectDisplayNameById(projectById, evt.projectId || ''),
+        timeLabel: getEventTimeLabel(evt),
+        participantsLabel: participantNames.length ? participantNames.join(', ') : 'Ohne Zuordnung'
+      };
+
+      weekDayMap[dateKey].push(eventItem);
+
+      if (!participantIds.length) {
+        participantIds = [UNASSIGNED_ROW_ID];
+      }
+
+      var seenRow = {};
+      participantIds.forEach(function(participantId) {
+        var rowId = String(participantId || '').trim();
+        if (!rowId) rowId = UNASSIGNED_ROW_ID;
+        if (!gridMap[rowId]) rowId = UNASSIGNED_ROW_ID;
+        if (seenRow[rowId]) return;
+        seenRow[rowId] = true;
+        gridMap[rowId][dateKey].push(eventItem);
+      });
+    });
+
+    weekDays.forEach(function(day) {
+      weekDayMap[day.dateKey].sort(function(a, b) {
+        var tA = String(a.timeLabel || '99:99');
+        var tB = String(b.timeLabel || '99:99');
+        if (tA !== tB) return tA.localeCompare(tB);
+        return String(a.title || '').localeCompare(String(b.title || ''), 'de');
+      });
+    });
+
+    var weekEventsTotal = weekDays.reduce(function(sum, day) {
+      return sum + weekDayMap[day.dateKey].length;
+    }, 0);
+
+    var rangeStart = weekDays[0].date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+    var rangeEnd = weekDays[6].date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+
+    weekDays.forEach(function(day) {
+      weekDayMap[day.dateKey].sort(function(a, b) {
+        var tA = String(a.timeLabel || '99:99');
+        var tB = String(b.timeLabel || '99:99');
+        if (tA !== tB) return tA.localeCompare(tB);
+        return String(a.title || '').localeCompare(String(b.title || ''), 'de');
+      });
+
+      rowMeta.forEach(function(row) {
+        gridMap[row.id][day.dateKey].sort(function(a, b) {
+          var tA = String(a.timeLabel || '99:99');
+          var tB = String(b.timeLabel || '99:99');
+          if (tA !== tB) return tA.localeCompare(tB);
+          return String(a.title || '').localeCompare(String(b.title || ''), 'de');
+        });
+      });
+    });
+
+    var columnHeadersHtml = weekDays.map(function(day) {
+      var dayDateLabel = day.date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+      var totalForDay = weekDayMap[day.dateKey].length;
+      return '<div class="team-week-col-head' + (day.isToday ? ' is-today' : '') + '">' +
+        '<span class="team-week-col-label">' + escapeHtml(day.label) + '</span>' +
+        '<span class="team-week-col-date">' + escapeHtml(dayDateLabel) + '</span>' +
+        '<span class="team-week-col-count">' + String(totalForDay) + '</span>' +
+      '</div>';
+    }).join('');
+
+    var rowsHtml = rowMeta.map(function(row) {
+      var cellsHtml = weekDays.map(function(day) {
+        var dayEvents = gridMap[row.id][day.dateKey] || [];
+        if (!dayEvents.length) {
+          return '<div class="team-week-cell"><span class="team-week-cell-empty">-</span></div>';
+        }
+
+        var itemsHtml = dayEvents.map(function(eventItem) {
+          var timeCell = eventItem.timeLabel ? '<span class="team-week-event-time">' + escapeHtml(eventItem.timeLabel) + '</span>' : '<span class="team-week-event-time team-week-event-time-empty">Ganztagig</span>';
+          var projectCell = eventItem.projectLabel ? '<span class="team-week-event-project">' + escapeHtml(String(eventItem.projectLabel)) + '</span>' : '';
+          return '<li class="team-week-event-item">' +
+            '<div class="team-week-event-head">' +
+            timeCell +
+            '<span class="team-week-event-type">' + escapeHtml(getEventTypeLabel(eventItem.type)) + '</span>' +
+            '</div>' +
+            '<div class="team-week-event-title">' + escapeHtml(eventItem.title) + '</div>' +
+            projectCell +
+          '</li>';
+        }).join('');
+
+        return '<div class="team-week-cell"><ul class="team-week-event-list">' + itemsHtml + '</ul></div>';
+      }).join('');
+
+      return '<div class="team-week-row">' +
+        '<div class="team-week-row-employee">' + escapeHtml(row.name) + '</div>' +
+        cellsHtml +
+      '</div>';
+    }).join('');
+
+    setHtmlIfChanged(container,
+      '<h3>Wochenkalender Team-Termine</h3>' +
+      '<div class="team-week-calendar-header">' +
+      '<span class="team-week-calendar-range">Diese Woche: ' + escapeHtml(rangeStart) + ' - ' + escapeHtml(rangeEnd) + '</span>' +
+      '<span class="team-week-calendar-summary">Mitarbeitende: ' + String(employees.length) + ' | Termine: ' + String(weekEventsTotal) + '</span>' +
+      '</div>' +
+      '<div class="team-week-matrix-wrap">' +
+      '<div class="team-week-row team-week-row-header">' +
+      '<div class="team-week-row-employee team-week-row-employee-header">Mitarbeiter</div>' +
+      columnHeadersHtml +
+      '</div>' +
+      rowsHtml +
+      '</div>'
+    );
+  }
+
+  function getEmployeeAvatarUrl(employee) {
+    var github = employee && employee.github ? employee.github : null;
+    if (!github) return '';
+
+    if (github.avatarUrl) {
+      return String(github.avatarUrl).trim();
     }
 
-    var statusCounts = {};
-    tasks.forEach(function(t) {
-      statusCounts[t.status] = (statusCounts[t.status] || 0) + 1;
+    var username = String(github.username || '').trim();
+    if (!username && github.profileUrl) {
+      var match = String(github.profileUrl).match(/github\.com\/([^\/#?]+)/i);
+      if (match && match[1]) username = match[1];
+    }
+
+    username = username.replace(/^@+/, '').replace(/\/$/, '').replace(/[^A-Za-z0-9-]/g, '');
+    return username ? 'https://github.com/' + encodeURIComponent(username) + '.png?size=96' : '';
+  }
+
+  function getTaskProgressValue(task) {
+    var progress = typeof task.progress === 'number' && !isNaN(task.progress) ? task.progress : null;
+    if (progress === null) {
+      if (task.status === 'done') return 100;
+      if (task.status === 'review') return 85;
+      if (task.status === 'in-progress') return 55;
+      if (task.status === 'todo') return 10;
+      return 0;
+    }
+
+    if (progress < 0) return 0;
+    if (progress > 100) return 100;
+    return Math.round(progress);
+  }
+
+  function normalizeTaskStatus(task) {
+    var status = String(task && task.status || '').trim().toLowerCase();
+    if (status === 'in progress' || status === 'in arbeit' || status === 'inarbeit') return 'in-progress';
+    return status;
+  }
+
+  function getTeamLoadProgressAccent(progress) {
+    if (progress >= 80) return '#58d39b';
+    if (progress >= 40) return '#4fa9ff';
+    return '#ffa85a';
+  }
+
+  function getEmployeeTeamLoadTasks(employee, tasks) {
+    var employeeId = String(employee && employee.id || '');
+    var employeeName = String(employee && employee.name || '').trim().toLowerCase();
+
+    return (tasks || []).filter(function(task) {
+      if (!task) return false;
+      if (normalizeTaskStatus(task) !== 'in-progress') return false;
+      if (String(task.assigneeId || '') === employeeId) return true;
+      if (task.employeeName && String(task.employeeName).trim().toLowerCase() === employeeName) return true;
+      return false;
+    }).sort(function(a, b) {
+      var diff = getTaskProgressValue(b) - getTaskProgressValue(a);
+      if (diff !== 0) return diff;
+
+      if (a.status === 'in-progress' && b.status !== 'in-progress') return -1;
+      if (b.status === 'in-progress' && a.status !== 'in-progress') return 1;
+
+      return String(a.title || '').localeCompare(String(b.title || ''), 'de');
     });
+  }
 
-    // conic-gradient berechnen
-    var gradientParts = [];
-    var colors = {'backlog':'#9b59b6','todo':'#4a9eff','in-progress':'#f1c40f','review':'#e74c3c','done':'#2ecc71'};
-    var total = tasks.length;
-    var cumulative = 0;
-
-    Object.keys(statusCounts).forEach(function(status) {
-      var pct = (statusCounts[status] / total) * 100;
-      gradientParts.push((colors[status] || '#666') + ' ' + cumulative + '% ' + (cumulative + pct) + '%');
-      cumulative += pct;
-    });
-
-    container.innerHTML = '<h3>Task-Verteilung nach Status</h3>' +
-      '<div class="task-distribution-wrap">' +
-      '<div class="task-distribution-donut" style="background:conic-gradient(' +
-      gradientParts.join(',') + ');flex-shrink:0;"></div>' +
-      '<div class="task-distribution-legend">' + Object.keys(statusCounts).map(function(s) {
-        return '<div class="task-distribution-legend-item"><span class="task-distribution-dot" style="color:' + (colors[s]||'#666') + ';">&#9679;</span><span>' + escapeHtml(s || 'unbekannt') + ': ' + statusCounts[s] + '</span></div>';
-      }).join('') + '</div></div>';
+  function getTaskProjectLabel(task, projectsById) {
+    var project = task && task.projectId ? projectsById[String(task.projectId)] : null;
+    if (project) return String(project.title || project.name || '').trim();
+    return String(task && (task.projectTitle || task.projectName) || '').trim();
   }
 
   // --- Team-Load Donut-Chart ---
   function renderTeamLoad() {
-    var employees = window.DataLayer.getEmployees();
-    var tasks = window.DataLayer.getTasks();
+    var employees = window.DataLayer.getEmployees() || [];
+    var tasks = window.DataLayer.getTasks() || [];
+    var projects = window.DataLayer.getProjects() || [];
     var container = document.getElementById('chart-team-load');
     if (!container) return;
 
-    if (employees.length === 0 || tasks.length === 0) {
-      container.innerHTML = '<h3>Aufgabenverteilung</h3><p class="chart-empty">Nicht genügend Daten für Chart.</p>';
+    if (employees.length === 0) {
+      setHtmlIfChanged(container, '<h3>Aufgabenverteilung</h3><p class="chart-empty">Nicht genügend Daten für Chart.</p>');
       return;
     }
 
-    // Tasks pro Mitarbeiter zählen
-    var empLoad = {};
-    employees.forEach(function(e) { empLoad[e.id] = { name: e.name, count: 0 }; });
-    tasks.filter(function(t) { return t.assigneeId; }).forEach(function(t) {
-      if (empLoad[t.assigneeId]) empLoad[t.assigneeId].count++;
+    var projectsById = {};
+    projects.forEach(function(project) {
+      if (!project || !project.id) return;
+      projectsById[String(project.id)] = project;
     });
 
     var html = '<h3>Aufgabenverteilung</h3>';
     html += '<div class="team-load-grid">';
 
-    Object.values(empLoad).forEach(function(emp) {
-      if (emp.count > 0) {
-        html += '<div class="team-load-card">' +
-          '<div class="team-load-name">' + escapeHtml(emp.name) + '</div>' +
-          '<div class="team-load-count">' + emp.count + ' Tasks</div></div>';
-      }
+    var employeeRows = employees.slice().map(function(employee) {
+      return {
+        employee: employee,
+        activeTasks: getEmployeeTeamLoadTasks(employee, tasks)
+      };
+    }).sort(function(a, b) {
+      if (b.activeTasks.length !== a.activeTasks.length) return b.activeTasks.length - a.activeTasks.length;
+      return String(a.employee.name || '').localeCompare(String(b.employee.name || ''), 'de');
     });
 
+    employeeRows.forEach(function(row) {
+      var employee = row.employee || {};
+      var activeTasks = row.activeTasks || [];
+      var avatarUrl = getEmployeeAvatarUrl(employee);
+      var profileUrl = employee.github && employee.github.profileUrl ? String(employee.github.profileUrl).trim() : '';
+      var githubLabel = employee.github && employee.github.username ? '@' + String(employee.github.username).replace(/^@+/, '') : '';
+      var currentActivity = String(employee.currentActivity || '').trim();
+      var activeLabel = activeTasks.length === 1 ? '1 aktiv' : activeTasks.length + ' aktiv';
+
+      html += '<article class="team-load-card">';
+      if (avatarUrl) {
+        if (profileUrl) {
+          html += '<a class="team-load-avatar-link" href="' + escapeHtml(profileUrl) + '" target="_blank" rel="noopener noreferrer" aria-label="GitHub Profil von ' + escapeHtml(employee.name || 'Mitarbeiter') + '">';
+        } else {
+          html += '<span class="team-load-avatar-link" aria-hidden="true">';
+        }
+        html += '<img class="team-load-avatar" src="' + escapeHtml(avatarUrl) + '" alt="' + escapeHtml(employee.name || 'Mitarbeiter') + '">';
+        html += (profileUrl ? '</a>' : '</span>');
+      } else {
+        html += '<span class="team-load-avatar team-load-avatar-fallback" aria-hidden="true">' + escapeHtml(String(employee.name || '?').charAt(0).toUpperCase()) + '</span>';
+      }
+
+      html += '<div class="team-load-main">';
+      html += '<div class="team-load-header">';
+      html += '<div class="team-load-headcopy">';
+      html += '<div class="team-load-name">' + escapeHtml(employee.name || 'Mitarbeiter') + '</div>';
+      html += '<div class="team-load-meta">';
+      if (githubLabel) {
+        html += '<span>' + escapeHtml(githubLabel) + '</span>';
+      }
+      if (currentActivity) {
+        if (githubLabel) html += '<span>·</span>';
+        html += '<span>' + escapeHtml(currentActivity) + '</span>';
+      }
+      if (!githubLabel && !currentActivity) {
+        html += '<span>Keine GitHub-Verknüpfung</span>';
+      }
+      html += '</div></div>';
+      html += '<span class="team-load-count' + (activeTasks.length ? ' is-active' : ' is-idle') + '">' + escapeHtml(activeLabel) + '</span>';
+      html += '</div>';
+
+      if (activeTasks.length) {
+        html += '<div class="team-load-tasks">';
+        activeTasks.forEach(function(task) {
+          var progress = getTaskProgressValue(task);
+          var accent = getTeamLoadProgressAccent(progress);
+          var projectLabel = getTaskProjectLabel(task, projectsById);
+          var taskLabel = String(task.title || 'Aufgabe').trim();
+          var title = projectLabel ? taskLabel + ' · ' + projectLabel : taskLabel;
+
+          html += '<div class="team-load-task-progress" style="--team-progress:' + progress + '%;--team-progress-accent:' + accent + ';">';
+          html += '<div class="team-load-task-topline">';
+          html += '<span class="team-load-task-label" title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</span>';
+          html += '<span class="team-load-task-value">' + progress + '%</span>';
+          html += '</div>';
+          html += '<span class="team-load-task-track" aria-hidden="true"><span class="team-load-task-fill"></span></span>';
+          html += '</div>';
+        });
+
+        if (activeTasks.length > 2) {
+          html += '<div class="team-load-more">+' + (activeTasks.length - 2) + ' weitere aktive Aufgaben</div>';
+        }
+
+        html += '</div>';
+      } else {
+        html += '<div class="team-load-empty">' + escapeHtml(currentActivity || 'Derzeit keine Aufgabe in Arbeit') + '</div>';
+      }
+
+      html += '</div></article>';
+    });
+
+    if (!employeeRows.some(function(row) { return row.activeTasks.length > 0; })) {
+      html += '<p class="team-load-empty team-load-empty-global">Keine aktiven Aufgaben vorhanden.</p>';
+    }
+
     html += '</div>';
-    container.innerHTML = html;
+    setHtmlIfChanged(container, html);
   }
 
   // --- escapeHtml helper ---
@@ -778,6 +1437,7 @@
 
   // --- Main Render Function ---
   function renderDashboard() {
+    var uiState = captureDashboardUiState();
     try {
       renderDashboardBlockers();
       renderDepartmentNotices();
@@ -787,10 +1447,26 @@
       renderTaskDistribution();
       renderTeamLoad();
     } catch(e) { console.error('[Dashboard] Error:', e); }
+    restoreDashboardUiState(uiState);
+  }
+
+  var dashboardRenderQueued = false;
+  function scheduleDashboardRender() {
+    if (dashboardRenderQueued) return;
+    dashboardRenderQueued = true;
+    var runner = (typeof window.requestAnimationFrame === 'function')
+      ? window.requestAnimationFrame
+      : function(cb) { return window.setTimeout(cb, 16); };
+    runner(function() {
+      dashboardRenderQueued = false;
+      renderDashboard();
+    });
   }
 
   // --- Init ---
   document.addEventListener('DOMContentLoaded', function() {
+    restoreBlockerFilterState();
+
     var dashboardPage = document.getElementById('dashboard');
     if (dashboardPage) {
       dashboardPage.addEventListener('click', function(event) {
@@ -815,12 +1491,14 @@
     }
 
     renderDashboard();
-    window.DataLayer.on('dataChanged', renderDashboard);
+    if (window.DataLayer && typeof window.DataLayer.on === 'function') {
+      window.DataLayer.on('dataChanged', scheduleDashboardRender);
+    }
   });
 
   // --- Public API ---
   window.DashboardManager = {
-    refresh: renderDashboard,
+    refresh: scheduleDashboardRender,
     dismissDepartmentNotice: dismissDepartmentNotice,
     renderStatsCards: renderStatsCards,
     renderProjectProgress: renderProjectProgress,

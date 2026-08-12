@@ -22,10 +22,15 @@
   var filterProjectId = '';
   var currentKanbanView = 'board';
   var currentCardMode = 'full';
+  var currentBoardGroupingMode = 'stacked';
+  var assigneeStackExpansionState = Object.create(null);
+  var ASSIGNEE_STACK_COLLAPSE_THRESHOLD = 6;
+  var ASSIGNEE_STACK_VISIBLE_CARDS = 2;
 
   var currentTaskDraft = null;
   var currentTaskChainDraft = null;
   var UNASSIGNED_FILTER_VALUE = '__unassigned__';
+  var ASSIGNEE_FILTER_STORAGE_KEY = 'pd_kanban_filter_assignee';
   var LIVE_REFRESH_INTERVAL_MS = 30000;
   var liveRefreshHandle = null;
   var pauseDialogState = null;
@@ -99,6 +104,48 @@
 
   function getTodayDateKey() {
     return new Date().toISOString().slice(0, 10);
+  }
+
+  function normalizeComparableId(value) {
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
+  }
+
+  function loadPersistedAssigneeFilter() {
+    try {
+      if (!window.localStorage) return '';
+      return normalizeComparableId(window.localStorage.getItem(ASSIGNEE_FILTER_STORAGE_KEY));
+    } catch (_err) {
+      return '';
+    }
+  }
+
+  function persistAssigneeFilter() {
+    try {
+      if (!window.localStorage) return;
+      window.localStorage.setItem(ASSIGNEE_FILTER_STORAGE_KEY, normalizeComparableId(filterAssigneeId));
+    } catch (_err) {}
+  }
+
+  function setAssigneeFilter(value, shouldRender) {
+    filterAssigneeId = normalizeComparableId(value);
+    persistAssigneeFilter();
+    if (shouldRender) renderAllColumns();
+  }
+
+  function getAssigneeStackStateKey(status, assigneeId) {
+    return String(status || '') + '::' + normalizeComparableId(assigneeId || 'unassigned');
+  }
+
+  function isAssigneeStackExpanded(status, assigneeId, taskCount) {
+    if (taskCount <= ASSIGNEE_STACK_COLLAPSE_THRESHOLD) return true;
+    return !!assigneeStackExpansionState[getAssigneeStackStateKey(status, assigneeId)];
+  }
+
+  function toggleAssigneeStack(status, assigneeId) {
+    var key = getAssigneeStackStateKey(status, assigneeId);
+    assigneeStackExpansionState[key] = !assigneeStackExpansionState[key];
+    renderColumn(status);
   }
 
   function getNowIsoString() {
@@ -599,14 +646,118 @@
 
   function getAssignee(task) {
     if (!task || !task.assigneeId) return null;
+    var taskAssigneeId = normalizeComparableId(task.assigneeId);
+    if (!taskAssigneeId) return null;
     return (window.DataLayer.getEmployees() || []).find(function (employee) {
-      return employee.id === task.assigneeId;
+      return normalizeComparableId(employee && employee.id) === taskAssigneeId;
     }) || null;
   }
 
   function getAssigneeName(task) {
     var assignee = getAssignee(task);
     return assignee ? assignee.name : 'Nicht zugewiesen';
+  }
+
+  function getAssigneeGroupInfo(task) {
+    var assignee = getAssignee(task);
+    if (!assignee) {
+      return {
+        id: 'unassigned',
+        name: 'Nicht zugewiesen',
+        initials: getAssigneeInitials('Nicht zugewiesen'),
+        isUnassigned: true
+      };
+    }
+
+    return {
+      id: normalizeComparableId(assignee.id) || 'unassigned',
+      name: assignee.name || 'Mitarbeiter',
+      initials: getAssigneeInitials(assignee.name || ''),
+      isUnassigned: false
+    };
+  }
+
+  function isTaskOverdue(task) {
+    return !!(task && task.dueDate && toDateOnly(task.dueDate) < getTodayDateKey() && task.status !== 'done');
+  }
+
+  function buildAssigneeStacks(tasks) {
+    var grouped = Object.create(null);
+
+    (tasks || []).forEach(function (task) {
+      if (!task) return;
+      var info = getAssigneeGroupInfo(task);
+      var groupId = info.id;
+      if (!grouped[groupId]) {
+        grouped[groupId] = {
+          id: groupId,
+          name: info.name,
+          initials: info.initials,
+          isUnassigned: info.isUnassigned,
+          taskCount: 0,
+          overdueCount: 0,
+          blockerCount: 0,
+          tasks: []
+        };
+      }
+
+      grouped[groupId].tasks.push(task);
+      grouped[groupId].taskCount += 1;
+      if (isTaskOverdue(task)) grouped[groupId].overdueCount += 1;
+      if (task.priority === 'blocker') grouped[groupId].blockerCount += 1;
+    });
+
+    return Object.keys(grouped).map(function (key) {
+      return grouped[key];
+    }).sort(function (left, right) {
+      if (right.taskCount !== left.taskCount) return right.taskCount - left.taskCount;
+      if (left.isUnassigned !== right.isUnassigned) return left.isUnassigned ? 1 : -1;
+      return String(left.name || '').localeCompare(String(right.name || ''), 'de');
+    });
+  }
+
+  function renderAssigneeStacks(status, tasks) {
+    var stacks = buildAssigneeStacks(tasks);
+    if (stacks.length === 0) return { html: '', assigneeCount: 0 };
+
+    var html = '';
+    stacks.forEach(function (stack) {
+      var isExpanded = isAssigneeStackExpanded(status, stack.id, stack.taskCount);
+      var hasOverflow = stack.taskCount > ASSIGNEE_STACK_COLLAPSE_THRESHOLD;
+      var visibleCount = isExpanded ? stack.taskCount : Math.min(stack.taskCount, ASSIGNEE_STACK_VISIBLE_CARDS);
+      var hiddenCount = Math.max(0, stack.taskCount - visibleCount);
+
+      html += '<section class="kanban-assignee-stack' + (isExpanded ? ' is-expanded' : ' is-collapsed') + '" data-assignee-stack="' + escapeHtml(stack.id) + '">';
+      html += '<button type="button" class="kanban-assignee-stack-head" data-assignee-stack-toggle="true" data-stack-status="' + escapeHtml(status) + '" data-stack-assignee="' + escapeHtml(stack.id) + '" aria-expanded="' + (isExpanded ? 'true' : 'false') + '">';
+      html += '<span class="kanban-assignee-stack-avatar">' + escapeHtml(stack.initials) + '</span>';
+      html += '<span class="kanban-assignee-stack-head-main">';
+      html += '<span class="kanban-assignee-stack-name">' + escapeHtml(stack.name) + '</span>';
+      html += '<span class="kanban-assignee-stack-meta">' + stack.taskCount + ' Aufgaben';
+      if (stack.blockerCount > 0) html += ' · ' + stack.blockerCount + ' Blocker';
+      if (stack.overdueCount > 0) html += ' · ' + stack.overdueCount + ' ueberfaellig';
+      html += '</span>';
+      html += '</span>';
+      if (hasOverflow) {
+        html += '<span class="kanban-assignee-stack-toggle-label">' + (isExpanded ? 'Weniger' : ('+' + hiddenCount + ' mehr')) + '</span>';
+      }
+      html += '</button>';
+
+      html += '<div class="kanban-assignee-stack-cards">';
+      stack.tasks.slice(0, visibleCount).forEach(function (task) {
+        html += createTaskCard(task);
+      });
+      html += '</div>';
+
+      if (hasOverflow) {
+        html += '<button type="button" class="kanban-assignee-stack-footer-btn" data-assignee-stack-toggle="true" data-stack-status="' + escapeHtml(status) + '" data-stack-assignee="' + escapeHtml(stack.id) + '" aria-expanded="' + (isExpanded ? 'true' : 'false') + '">';
+        html += isExpanded ? 'Weniger Aufgaben anzeigen' : (hiddenCount + ' weitere Aufgaben anzeigen');
+        html += '</button>';
+      }
+
+      html += '</section>';
+    });
+
+    return { html: html, assigneeCount: stacks.length };
   }
 
   function sanitizeGitHubUsername(value) {
@@ -698,12 +849,79 @@
   function matchesCurrentFilters(task, status) {
     if (!task) return false;
     if (status && task.status !== status) return false;
-    if (filterAssigneeId === UNASSIGNED_FILTER_VALUE && task.assigneeId) return false;
-    if (filterAssigneeId && filterAssigneeId !== UNASSIGNED_FILTER_VALUE && task.assigneeId !== filterAssigneeId) return false;
+    var taskAssigneeId = normalizeComparableId(task.assigneeId);
+    var selectedAssigneeId = normalizeComparableId(filterAssigneeId);
+    if (selectedAssigneeId === UNASSIGNED_FILTER_VALUE && taskAssigneeId) return false;
+    if (selectedAssigneeId && selectedAssigneeId !== UNASSIGNED_FILTER_VALUE && taskAssigneeId !== selectedAssigneeId) return false;
     if (filterPriority && task.priority !== filterPriority) return false;
     if (filterUrgency && task.urgency !== filterUrgency) return false;
     if (filterProjectId && task.projectId !== filterProjectId) return false;
     return true;
+  }
+
+  function refreshFilterOptionLists() {
+    var assigneeSelect = document.getElementById('filter-assignee');
+    var projectSelect = document.getElementById('filter-project');
+    if (!assigneeSelect && !projectSelect) return;
+
+    var employees = window.DataLayer.getEmployees() || [];
+    var tasks = window.DataLayer.getTasks() || [];
+    var projects = window.DataLayer.getProjects() || [];
+
+    if (assigneeSelect) {
+      var previousAssigneeSelection = normalizeComparableId(filterAssigneeId);
+      var assigneeById = Object.create(null);
+      var assigneeList = [];
+
+      employees.forEach(function (employee) {
+        var employeeId = normalizeComparableId(employee && employee.id);
+        if (!employeeId || assigneeById[employeeId]) return;
+        var name = String((employee && employee.name) || employeeId).trim() || employeeId;
+        assigneeById[employeeId] = true;
+        assigneeList.push({ id: employeeId, name: name });
+      });
+
+      tasks.forEach(function (task) {
+        var taskAssigneeId = normalizeComparableId(task && task.assigneeId);
+        if (!taskAssigneeId || assigneeById[taskAssigneeId]) return;
+        assigneeById[taskAssigneeId] = true;
+        assigneeList.push({ id: taskAssigneeId, name: 'Mitarbeiter ' + taskAssigneeId });
+      });
+
+      assigneeList.sort(function (left, right) {
+        return String(left.name || '').localeCompare(String(right.name || ''), 'de');
+      });
+
+      var assigneeHtml = '<option value="">Alle</option>';
+      assigneeHtml += '<option value="' + UNASSIGNED_FILTER_VALUE + '">Nicht zugewiesen</option>';
+      assigneeList.forEach(function (entry) {
+        assigneeHtml += '<option value="' + escapeHtml(entry.id) + '">' + escapeHtml(entry.name) + '</option>';
+      });
+      assigneeSelect.innerHTML = assigneeHtml;
+
+      var assigneeSelectionExists = previousAssigneeSelection === '' || previousAssigneeSelection === UNASSIGNED_FILTER_VALUE || !!assigneeById[previousAssigneeSelection];
+      if (!assigneeSelectionExists && previousAssigneeSelection) {
+        assigneeSelect.innerHTML += '<option value="' + escapeHtml(previousAssigneeSelection) + '">Mitarbeiter ' + escapeHtml(previousAssigneeSelection) + ' (nicht verfuegbar)</option>';
+      }
+    }
+
+    if (projectSelect) {
+      var previousProjectSelection = normalizeComparableId(filterProjectId);
+      var projectById = Object.create(null);
+      var projectHtml = '<option value="">Alle</option>';
+
+      projects.forEach(function (project) {
+        var projectId = normalizeComparableId(project && project.id);
+        if (!projectId || projectById[projectId]) return;
+        projectById[projectId] = true;
+        projectHtml += '<option value="' + escapeHtml(projectId) + '">' + escapeHtml(project.title || project.name || 'Projekt') + '</option>';
+      });
+      projectSelect.innerHTML = projectHtml;
+
+      if (previousProjectSelection && !projectById[previousProjectSelection]) filterProjectId = '';
+    }
+
+    syncFilterControls();
   }
 
   function getVisibleTasks() {
@@ -1275,6 +1493,12 @@
       button.classList.toggle('is-active', isActive);
       button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
+
+    Array.prototype.slice.call(document.querySelectorAll('[data-kanban-group-mode]')).forEach(function (button) {
+      var isActive = button.getAttribute('data-kanban-group-mode') === currentBoardGroupingMode;
+      button.classList.toggle('is-active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
   }
 
   function updateViewVisibility() {
@@ -1296,17 +1520,29 @@
 
     var tasks = getFilteredTasks(status);
     var html = '';
-    tasks.forEach(function(task) {
-      html += createTaskCard(task);
-    });
+    var assigneeCount = 0;
+
+    if (currentBoardGroupingMode === 'stacked') {
+      var groupedRender = renderAssigneeStacks(status, tasks);
+      html = groupedRender.html;
+      assigneeCount = groupedRender.assigneeCount;
+    } else {
+      tasks.forEach(function(task) {
+        html += createTaskCard(task);
+      });
+    }
 
     container.innerHTML = html;
 
     var column = container.closest('.kanban-column');
     var header = column ? column.querySelector('h2') : null;
     if (header) {
+      var metaLabel = tasks.length + ' sichtbar';
+      if (currentBoardGroupingMode === 'stacked') {
+        metaLabel += ' · ' + assigneeCount + ' Mitarbeiter';
+      }
       header.innerHTML = '<span class="kanban-column-title">' + escapeHtml(getStatusLabel(status)) + '</span>' +
-        '<span class="kanban-column-meta"><span>' + tasks.length + ' sichtbar</span></span>';
+        '<span class="kanban-column-meta"><span>' + metaLabel + '</span></span>';
     }
   }
 
@@ -2420,8 +2656,7 @@
       var dayAssigneeBtn = e.target.closest('[data-day-assignee]');
       if (dayAssigneeBtn) {
         var assigneeId = dayAssigneeBtn.getAttribute('data-day-assignee');
-        filterAssigneeId = assigneeId === 'unassigned' ? UNASSIGNED_FILTER_VALUE : assigneeId;
-        renderAllColumns();
+        setAssigneeFilter(assigneeId === 'unassigned' ? UNASSIGNED_FILTER_VALUE : assigneeId, true);
         return;
       }
 
@@ -2440,6 +2675,22 @@
         return;
       }
 
+      var groupModeBtn = e.target.closest('[data-kanban-group-mode]');
+      if (groupModeBtn) {
+        currentBoardGroupingMode = groupModeBtn.getAttribute('data-kanban-group-mode') || 'stacked';
+        renderAllColumns();
+        return;
+      }
+
+      var stackToggleBtn = e.target.closest('[data-assignee-stack-toggle]');
+      if (stackToggleBtn) {
+        toggleAssigneeStack(
+          stackToggleBtn.getAttribute('data-stack-status'),
+          stackToggleBtn.getAttribute('data-stack-assignee')
+        );
+        return;
+      }
+
       var openBtn = e.target.closest('[data-task-open]');
       if (openBtn) {
         openTaskControlModal(openBtn.getAttribute('data-task-open'));
@@ -2454,6 +2705,9 @@
   }
 
   function handleDataChanged(event) {
+    if (event && (event.entity === 'employees' || event.entity === 'projects' || event.entity === 'tasks' || event.entity === 'all')) {
+      refreshFilterOptionLists();
+    }
     if (skipNextTaskRender && event && event.entity === 'tasks' && event.action === 'update') {
       skipNextTaskRender = false;
       refreshLiveTaskMetrics();
@@ -2468,9 +2722,6 @@
     var filterBar = document.getElementById('kanban-filters');
     if (!filterBar) return;
 
-    var employees = window.DataLayer.getEmployees();
-    var projects = window.DataLayer.getProjects();
-
     var html = '<div class="kanban-filter-bar">';
     html += '<div class="kanban-filter-group kanban-view-switch" role="group" aria-label="Kanban Ansicht">';
     html += '<button type="button" class="kanban-view-btn is-active" data-kanban-view="board" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">view_kanban</span><span>Board</span></button>';
@@ -2480,14 +2731,15 @@
     html += '<button type="button" class="kanban-view-btn is-active" data-kanban-card-mode="full" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">view_agenda</span><span>Voll</span></button>';
     html += '<button type="button" class="kanban-view-btn" data-kanban-card-mode="compact" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span><span>Kompakt</span></button>';
     html += '</div>';
+    html += '<div class="kanban-filter-group kanban-view-switch" role="group" aria-label="Board Gruppierung">';
+    html += '<button type="button" class="kanban-view-btn is-active" data-kanban-group-mode="stacked" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">groups</span><span>Pro Mitarbeiter</span></button>';
+    html += '<button type="button" class="kanban-view-btn" data-kanban-group-mode="plain" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">stacks</span><span>Nur Karten</span></button>';
+    html += '</div>';
     html += '<div class="kanban-filter-group">';
     html += '<label for="filter-assignee">Mitarbeiter</label>';
     html += '<select id="filter-assignee">';
     html += '<option value="">Alle</option>';
     html += '<option value="' + UNASSIGNED_FILTER_VALUE + '">Nicht zugewiesen</option>';
-    employees.forEach(function(emp) {
-      html += '<option value="' + escapeHtml(emp.id) + '">' + escapeHtml(emp.name) + '</option>';
-    });
     html += '</select>';
     html += '</div>';
     html += '<div class="kanban-filter-group">';
@@ -2514,9 +2766,6 @@
     html += '<label for="filter-project">Projekt</label>';
     html += '<select id="filter-project">';
     html += '<option value="">Alle</option>';
-    projects.forEach(function(project) {
-      html += '<option value="' + escapeHtml(project.id) + '">' + escapeHtml(project.title || project.name || 'Projekt') + '</option>';
-    });
     html += '</select>';
     html += '</div>';
     html += '<div class="kanban-filter-group kanban-filter-actions">';
@@ -2529,8 +2778,7 @@
 
     // Event-Handler für Filter-Dropdowns
     document.getElementById('filter-assignee').addEventListener('change', function(e) {
-      filterAssigneeId = e.target.value;
-      renderAllColumns();
+      setAssigneeFilter(e.target.value, true);
     });
 
     document.getElementById('filter-priority').addEventListener('change', function(e) {
@@ -2551,7 +2799,7 @@
     var resetBtn = document.getElementById('filter-reset');
     if (resetBtn) {
       resetBtn.addEventListener('click', function() {
-        filterAssigneeId = '';
+        setAssigneeFilter('', false);
         filterPriority = '';
         filterUrgency = '';
         filterProjectId = '';
@@ -2559,12 +2807,13 @@
       });
     }
 
-    syncFilterControls();
+    refreshFilterOptionLists();
   }
 
   // --- Main Render Function ---
   function initKanban() {
     try {
+      setAssigneeFilter(loadPersistedAssigneeFilter(), false);
       setupFilters();
       renderAllColumns();
       setupDragAndDrop();
@@ -2585,7 +2834,7 @@
     window.KanbanBoard = {
       renderAllColumns: renderAllColumns,
       getFilteredTasks: getFilteredTasks,
-      setFilterAssigneeId: function(id) { filterAssigneeId = id; renderAllColumns(); },
+      setFilterAssigneeId: function(id) { setAssigneeFilter(id, true); },
       setFilterPriority: function(p) { filterPriority = p; renderAllColumns(); }
     };
 

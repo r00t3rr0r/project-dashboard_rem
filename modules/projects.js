@@ -15,6 +15,8 @@ var MEETING_NOTES_PREFIX='meeting_notes_';
 var MEETING_WORKFLOW_PREFIX='meeting_workflow_';
 var MEETING_ACTIVE_PROJECT_KEY='meeting_active_project';
 var MEETING_PROTOCOL_DEFAULT_STATUS='open';
+var PROJECT_PAGE_DRAFT_KEY='projektDashboard.projectPageDraft';
+var PROJECT_PAGE_STATE_KEY='projektDashboard.projectPageState';
 var SECRET_VIEW_STATE={};
 var AI_HEALTH_STATE={
   backendStatus:'unknown',
@@ -319,7 +321,10 @@ function renderProjectGitHubMatrixHeader(project){
       return '<span class="employee-github-cell lvl-'+level+'" title="'+escapeHtml(day.label+': '+day.count+' Commits')+'"></span>';
     }).join('')+'</div>';
   }).join('');
-  return '<div class="project-card-head-matrix"><div class="employee-github-matrix">'+matrixHtml+'</div></div>';
+  return '<div class="project-card-head-matrix">'
+    +'<span class="project-card-head-matrix-label">GitHub Matrix</span>'
+    +'<div class="employee-github-matrix" aria-label="GitHub Matrix">'+matrixHtml+'</div>'
+    +'</div>';
 }
 
 function renderProjectGitHubMatrix(project){
@@ -1052,6 +1057,28 @@ function getTasksForProject(projectId){
   return window.DataLayer.getTasks().filter(function(task){return task.projectId===projectId;});
 }
 
+function hasEmployeeActiveTask(projectId){
+  return getTasksForProject(projectId).some(function(task){
+    if(!task)return false;
+    if(String(task.status||'').toLowerCase()!=='in-progress')return false;
+    var assigneeId=String(task.assigneeId||task.employeeId||'').trim();
+    return !!assigneeId;
+  });
+}
+
+function getLatestEmployeeActiveTaskTimestamp(projectId){
+  var latest=0;
+  getTasksForProject(projectId).forEach(function(task){
+    if(!task)return;
+    if(String(task.status||'').toLowerCase()!=='in-progress')return;
+    var assigneeId=String(task.assigneeId||task.employeeId||'').trim();
+    if(!assigneeId)return;
+    var ts=Date.parse(task.updatedAt||task.createdAt||task.startedAt||'');
+    if(!isNaN(ts)&&ts>latest)latest=ts;
+  });
+  return latest;
+}
+
 function getEventsForProject(projectId){
   if(!window.DataLayer.getCalendarEvents)return [];
   return window.DataLayer.getCalendarEvents().filter(function(evt){return evt.projectId===projectId;});
@@ -1188,15 +1215,32 @@ function getProjectTimelineCompactTitle(title){
   return text.slice(0,23).trim()+'...';
 }
 
+function renderProjectTimelineDayPopover(entries){
+  if(!entries.length){
+    return '<div class="project-head-timeline-week-day-popover" aria-hidden="true">'
+      +'<p class="project-head-timeline-week-day-popover-empty">Keine Termine</p>'
+    +'</div>';
+  }
+
+  var items=entries.map(function(item){
+    return '<li class="project-head-timeline-week-day-popover-item'+(item.isThisWeek?' is-highlight':'')+'">'
+      +'<span class="project-head-timeline-week-day-popover-time">'+escapeHtml(item.startTime||'Ganztags')+'</span>'
+      +'<span class="project-head-timeline-week-day-popover-title">'+escapeHtml(getProjectTimelineCompactTitle(item.title))+'</span>'
+    +'</li>';
+  });
+
+  return '<div class="project-head-timeline-week-day-popover" aria-hidden="true">'
+    +'<ul class="project-head-timeline-week-day-popover-list">'+items.join('')+'</ul>'
+  +'</div>';
+}
+
 function renderProjectTimelineWeekCalendar(preview){
   var merged=Array.isArray(preview&&preview.allItems)?preview.allItems:[];
-  if(!merged.length)return '';
-
   var now=Date.now();
   var todayStart=getStartOfDayTimestamp(now);
   var upcoming=merged.filter(function(item){return item.dayDelta>=0;});
-  var anchorItem=upcoming[0]||merged[0];
-  var weekStart=getStartOfWeekTimestamp(anchorItem.timestamp);
+  var anchorTimestamp=upcoming[0]?upcoming[0].timestamp:(merged[0]?merged[0].timestamp:now);
+  var weekStart=getStartOfWeekTimestamp(anchorTimestamp);
   var agendaItems=[];
   var dayCells=[];
 
@@ -1208,19 +1252,23 @@ function renderProjectTimelineWeekCalendar(preview){
     }).sort(function(a,b){return a.timestamp-b.timestamp;});
     var isToday=dayStart===todayStart;
     var badgeHtml=entries.length?'<span class="project-head-timeline-week-count">'+entries.length+'</span>':'';
+    var dayLabel=getProjectTimelineWeekdayShort(dayIndex);
     var dateLabel=new Date(dayTs).toLocaleDateString('de-DE',{day:'2-digit'});
+    var popoverHtml=renderProjectTimelineDayPopover(entries);
+    var dayAria=dayLabel+' '+dateLabel+'. '+(entries.length?(entries.length+' Termin'+(entries.length===1?'':'e')):'Keine Termine');
     dayCells.push(
-      '<div class="project-head-timeline-week-day'+(entries.length?' has-entry':'')+(isToday?' is-today':'')+'">'
-        +'<span class="project-head-timeline-weekday">'+getProjectTimelineWeekdayShort(dayIndex)+'</span>'
+      '<div class="project-head-timeline-week-day'+(entries.length?' has-entry':'')+(isToday?' is-today':'')+'" tabindex="0" aria-label="'+escapeHtml(dayAria)+'">'
+        +'<span class="project-head-timeline-weekday">'+dayLabel+'</span>'
         +'<span class="project-head-timeline-weekdate">'+dateLabel+'</span>'
         +badgeHtml
+        +popoverHtml
       +'</div>'
     );
 
     entries.forEach(function(item){
       agendaItems.push(
         '<li class="project-head-timeline-week-agenda-item'+(item.isThisWeek?' is-highlight':'')+'">'
-          +'<span class="project-head-timeline-week-agenda-day">'+getProjectTimelineWeekdayShort(dayIndex)+'</span>'
+          +'<span class="project-head-timeline-week-agenda-day">'+dayLabel+'</span>'
           +'<span class="project-head-timeline-week-agenda-time">'+escapeHtml(item.startTime||'Ganztags')+'</span>'
           +'<span class="project-head-timeline-week-agenda-title">'+escapeHtml(getProjectTimelineCompactTitle(item.title))+'</span>'
         +'</li>'
@@ -1309,23 +1357,26 @@ function buildProjectTimelinePreview(project, limit){
 
 function renderProjectCardHeadTimeline(project){
   var preview=buildProjectTimelinePreview(project,3);
-  if(!preview.totalCount)return '';
-
   var summaryParts=[];
   if(preview.upcomingCount)summaryParts.push(preview.upcomingCount+' anstehend');
   if(preview.thisWeekCount)summaryParts.push(preview.thisWeekCount+' diese Woche');
-  var summaryText=summaryParts.join(' · ')||'Zuletzt geplant';
-  var itemsHtml=preview.items.map(function(item){
-    var toneClass=item.dayDelta<0?'is-past':(item.isThisWeek?'is-this-week':(item.dayDelta<=14?'is-upcoming':''));
-    return '<li class="project-head-timeline-item '+toneClass+'">'
-      +'<span class="project-head-timeline-type">'+escapeHtml(item.typeLabel)+'</span>'
-      +'<strong class="project-head-timeline-title">'+escapeHtml(item.title)+'</strong>'
-      +'<div class="project-head-timeline-meta">'
-      +'<span class="project-head-timeline-date">'+escapeHtml(formatProjectTimelineDateLabel(item))+'</span>'
-      +'<span class="project-head-timeline-countdown">'+escapeHtml(item.relativeLabel)+'</span>'
-      +'</div>'
-      +'</li>';
-  }).join('');
+  var summaryText=preview.totalCount?(summaryParts.join(' · ')||'Zuletzt geplant'):'Keine Termine geplant';
+  var itemsHtml='';
+  if(preview.items.length){
+    itemsHtml=preview.items.map(function(item){
+      var toneClass=item.dayDelta<0?'is-past':(item.isThisWeek?'is-this-week':(item.dayDelta<=14?'is-upcoming':''));
+      return '<li class="project-head-timeline-item '+toneClass+'">'
+        +'<span class="project-head-timeline-type">'+escapeHtml(item.typeLabel)+'</span>'
+        +'<strong class="project-head-timeline-title">'+escapeHtml(item.title)+'</strong>'
+        +'<div class="project-head-timeline-meta">'
+        +'<span class="project-head-timeline-date">'+escapeHtml(formatProjectTimelineDateLabel(item))+'</span>'
+        +'<span class="project-head-timeline-countdown">'+escapeHtml(item.relativeLabel)+'</span>'
+        +'</div>'
+        +'</li>';
+    }).join('');
+  }else{
+    itemsHtml='<li class="project-head-timeline-empty">Keine Termine oder Meilensteine geplant.</li>';
+  }
 
   return '<aside class="project-head-timeline" aria-label="Projekttermine">'
     +'<div class="project-head-timeline-head">'
@@ -1483,6 +1534,7 @@ function renderProjectHeadProgress(project, summary){
 
 function renderProjectCardHeadSummary(project){
   var summary=buildProjectHeadTaskSummary(project);
+  var matrixHtml=renderProjectGitHubMatrixHeader(project);
   var taskListHtml=''
     +renderProjectHeadTaskRow('Zuletzt erledigt',summary.lastDoneTask,'done','Keine erledigte Aufgabe')
     +renderProjectHeadTaskRow('Aktive Aufgabe',summary.activeTask,'active','Keine aktive Aufgabe')
@@ -1490,6 +1542,7 @@ function renderProjectCardHeadSummary(project){
 
   return '<div class="project-card-head-summary">'
     +'<ul class="project-head-task-list">'+taskListHtml+'</ul>'
+    +'<div class="project-head-matrix-slot">'+matrixHtml+'</div>'
     +'<div class="project-head-side">'
     +renderProjectHeadContact(summary)
     +renderProjectHeadProgress(project,summary)
@@ -1845,7 +1898,161 @@ function ensureProjectAiKnowledge(project){
   if(typeof project.aiKnowledge.lastModel!=='string')project.aiKnowledge.lastModel='';
   if(typeof project.aiKnowledge.sourceCommitSha!=='string')project.aiKnowledge.sourceCommitSha='';
   if(typeof project.aiKnowledge.lastKnowledgeSize!=='number')project.aiKnowledge.lastKnowledgeSize=0;
+  if(typeof project.aiKnowledge.lastTaskDraftAt!=='string')project.aiKnowledge.lastTaskDraftAt='';
+  if(typeof project.aiKnowledge.lastTaskDraftCount!=='number')project.aiKnowledge.lastTaskDraftCount=0;
   return project.aiKnowledge;
+}
+
+function resolveLabelIdsByNames(names){
+  var labels=window.DataLayer&&window.DataLayer.getLabels?window.DataLayer.getLabels():[];
+  if(!Array.isArray(names)||!names.length)return [];
+  var lowerMap={};
+  labels.forEach(function(label){
+    var key=String((label&&label.name)||'').trim().toLowerCase();
+    if(key)lowerMap[key]=label.id;
+  });
+
+  return names.map(function(name){
+    var key=String(name||'').trim().toLowerCase();
+    return lowerMap[key]||null;
+  }).filter(function(id,idx,list){
+    return !!id&&list.indexOf(id)===idx;
+  });
+}
+
+function getAssignableEmployeesForProject(project){
+  var employees=window.DataLayer&&window.DataLayer.getEmployees?window.DataLayer.getEmployees():[];
+  var projectTeam=normalizeProjectTeamMembers(project);
+  var byId={};
+  var list=[];
+
+  projectTeam.forEach(function(member){
+    var employeeId=String(member&&member.employeeId||'').trim();
+    if(!employeeId||byId[employeeId])return;
+    var found=employees.find(function(emp){return String(emp&&emp.id||'')===employeeId;});
+    if(found){
+      byId[employeeId]=true;
+      list.push(found);
+    }
+  });
+
+  employees.forEach(function(emp){
+    var employeeId=String(emp&&emp.id||'').trim();
+    if(!employeeId||byId[employeeId])return;
+    byId[employeeId]=true;
+    list.push(emp);
+  });
+
+  return list;
+}
+
+function buildAssigneeOptionsHtml(employees,selectedId){
+  var options=['<option value="">Nicht zugewiesen</option>'];
+  (employees||[]).forEach(function(emp){
+    var id=String(emp&&emp.id||'').trim();
+    if(!id)return;
+    var isSelected=id===String(selectedId||'');
+    var label=(emp.name||'Unbekannt')+(emp.role?' ('+emp.role+')':'');
+    options.push('<option value="'+escapeHtml(id)+'"'+(isSelected?' selected':'')+'>'+escapeHtml(label)+'</option>');
+  });
+  return options.join('');
+}
+
+function fetchKnowledgeMarkdownSnippet(filePath,maxLength){
+  var path=String(filePath||'').trim();
+  if(!path||typeof fetch!=='function')return Promise.resolve('');
+  var limit=Math.max(1200,Number(maxLength)||6000);
+  return fetch(path,{method:'GET'}).then(function(res){
+    if(!res.ok)return '';
+    return res.text();
+  }).then(function(text){
+    var clean=String(text||'').trim();
+    if(clean.length<=limit)return clean;
+    return clean.slice(0,limit)+'\n\n[... gekuerzt ...]';
+  }).catch(function(){
+    return '';
+  });
+}
+
+function normalizeAiKnowledgeTaskDraft(draft){
+  var source=draft&&typeof draft==='object'?draft:{};
+  var task=source.task&&typeof source.task==='object'?source.task:{};
+  var suggestions=Array.isArray(source.taskSuggestions)?source.taskSuggestions:[];
+
+  function toItem(item,index,isMain){
+    var entry=item&&typeof item==='object'?item:{};
+    var titleDe=String(entry.titleDe||'').trim();
+    var titleEn=String(entry.titleEn||'').trim();
+    var descriptionDe=String(entry.descriptionDe||'').trim();
+    var descriptionEn=String(entry.descriptionEn||'').trim();
+    var description='';
+    if(descriptionDe&&descriptionEn&&descriptionDe!==descriptionEn){
+      description='DE: '+descriptionDe+'\n\nEN: '+descriptionEn;
+    }else{
+      description=descriptionDe||descriptionEn;
+    }
+
+    var seq=Number(entry.sequenceIndex||0)||0;
+    if(!seq)seq=index+1;
+    return {
+      title:titleDe||titleEn,
+      description:description,
+      priority:String(entry.priority||'medium').toLowerCase(),
+      urgency:String(entry.urgency||'normal').toLowerCase(),
+      effortHours:Number(entry.effortHours||0)||0,
+      labels:Array.isArray(entry.labels)?entry.labels.map(function(label){return String(label||'').trim();}).filter(function(label){return !!label;}):[],
+      sequenceIndex:seq,
+      dependsOnPrevious:!!entry.dependsOnPrevious,
+      note:String(entry.note||'').trim(),
+      subtasks:Array.isArray(entry.subtasksDe)?entry.subtasksDe.map(function(line){return String(line||'').trim();}).filter(function(line){return !!line;}):[],
+      assigneeId:String(entry.assigneeId||'').trim(),
+      isMain:!!isMain
+    };
+  }
+
+  var items=[];
+  var mainItem=toItem(task,0,true);
+  if(mainItem.title)items.push(mainItem);
+
+  suggestions.forEach(function(item,idx){
+    var next=toItem(item,idx+1,false);
+    if(next.title)items.push(next);
+  });
+
+  items.sort(function(a,b){
+    var aSeq=Number(a.sequenceIndex||0)||0;
+    var bSeq=Number(b.sequenceIndex||0)||0;
+    if(aSeq&&!bSeq)return -1;
+    if(!aSeq&&bSeq)return 1;
+    if(aSeq!==bSeq)return aSeq-bSeq;
+    if(a.isMain&&!b.isMain)return -1;
+    if(!a.isMain&&b.isMain)return 1;
+    return 0;
+  });
+
+  return {
+    summaryMarkdown:String(source.summaryMarkdown||'').trim(),
+    items:items
+  };
+}
+
+function buildAiKnowledgeDraftInput(project,aiState,focusText,knowledgeSnippet){
+  var flow=calculateProjectFlowMetrics(project);
+  var focus=String(focusText||'').trim();
+  var lines=[];
+  lines.push('Bitte leite aus dem zuletzt generierten Projektwissen konkrete naechste Aufgaben fuer das Projekt ab.');
+  lines.push('Projekt: '+getProjectTitle(project));
+  lines.push('Projektstatus: '+String(project.status||'planning'));
+  lines.push('KI-Wissensdatei: '+String(aiState.filePath||'n/a'));
+  lines.push('KI-Lauf: '+String(aiState.lastGeneratedAt||'n/a'));
+  lines.push('Offene Aufgaben: '+(flow.tasksTotal-flow.statusCounts.done)+', In Progress: '+flow.statusCounts['in-progress']+', Due soon: '+flow.dueSoon+', Overdue: '+flow.overdue);
+  if(focus)lines.push('Fokus fuer diesen Lauf: '+focus);
+  lines.push('Erzeuge bevorzugt mehrere umsetzbare Aufgabenpakete mit klaren Prioritaeten und realistischem Aufwand.');
+  if(knowledgeSnippet){
+    lines.push('Auszug aus dem generierten Projektwissen:');
+    lines.push(knowledgeSnippet);
+  }
+  return lines.join('\n\n');
 }
 
 function buildProjectKnowledgeSnapshot(project){
@@ -2177,7 +2384,7 @@ function renderInfoHub(project,flow){
   var modelState=modelAvailable===null?'unknown':(modelAvailable?'ok':'error');
 
   return ''
-    +'<details class="project-infohub">'
+    +'<details class="project-infohub" data-project-state-key="project-infohub-'+escapeHtml(project.id)+'">'
     +'<summary>Projektwissen verwalten (Anhange, Secrets, Notizen, Links)</summary>'
     +'<div class="infohub-grid">'
 
@@ -2260,8 +2467,10 @@ function renderInfoHub(project,flow){
     +'<div class="project-actions-inline mt-1">'
     +'<button class="btn btn-secondary" data-action="check-ai-health" data-id="'+escapeHtml(project.id)+'">Verbindung pruefen</button>'
     +'<button class="btn btn-primary" data-action="generate-ai-knowledge" data-id="'+escapeHtml(project.id)+'" '+(hasGithubLink?'':'disabled')+'>Projektwissen KI erzeugen</button>'
+    +'<button class="btn btn-secondary" data-action="generate-ai-tasks" data-id="'+escapeHtml(project.id)+'" '+(aiState.filePath?'':'disabled')+'>Aufgaben aus KI-Wissen</button>'
     +'</div>'
     +'<p class="text-muted mt-1">Status: '+escapeHtml(aiState.lastStatus||'idle')+(aiState.lastGeneratedAt?' · Letzter Lauf: '+formatDateTime(aiState.lastGeneratedAt):'')+'</p>'
+    +(aiState.lastTaskDraftAt?'<p class="text-muted">Aufgaben abgeleitet: '+formatDateTime(aiState.lastTaskDraftAt)+' · Anzahl: '+Number(aiState.lastTaskDraftCount||0)+'</p>':'')
     +(aiState.filePath?'<p class="text-muted">Datei: <a href="'+escapeHtml(aiState.filePath)+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(aiState.filePath)+'</a> ('+formatBytes(aiState.lastKnowledgeSize||0)+')</p>':'')
     +(AI_HEALTH_STATE.loading?'<p class="text-muted">Health-Check laeuft ...</p>':'')
     +(AI_HEALTH_STATE.error?'<p class="ai-status-error">Health: '+escapeHtml(AI_HEALTH_STATE.error)+'</p>':'')
@@ -2283,12 +2492,30 @@ function renderProjectList(){
     return;
   }
 
-  projects.sort(function(a,b){
-    return Date.parse(b.createdAt||0)-Date.parse(a.createdAt||0);
+  var projectsWithMeta=projects.map(function(project){
+    return {
+      project:project,
+      hasEmployeeActiveTask:hasEmployeeActiveTask(project.id),
+      latestEmployeeActiveTaskTs:getLatestEmployeeActiveTaskTimestamp(project.id)
+    };
+  });
+
+  projectsWithMeta.sort(function(a,b){
+    if(a.hasEmployeeActiveTask!==b.hasEmployeeActiveTask){
+      return a.hasEmployeeActiveTask?-1:1;
+    }
+
+    if(a.latestEmployeeActiveTaskTs!==b.latestEmployeeActiveTaskTs){
+      return b.latestEmployeeActiveTaskTs-a.latestEmployeeActiveTaskTs;
+    }
+
+    return Date.parse(b.project.createdAt||0)-Date.parse(a.project.createdAt||0);
   });
 
   var html='';
-  projects.forEach(function(project){
+  projectsWithMeta.forEach(function(entry){
+    var project=entry.project;
+    var hasEmployeeWork=entry.hasEmployeeActiveTask;
     var canEdit=!(auth&&typeof auth.canEditProject==='function')||auth.canEditProject(project);
     var canSetProgress=canEdit&&canAdjustProjectProgress(project);
     var flow=calculateProjectFlowMetrics(project);
@@ -2318,15 +2545,17 @@ function renderProjectList(){
       targetId:project.id
     });
 
-    html+='<article class="project-card" data-project-id="'+escapeHtml(project.id)+'" data-project-editable="'+(canEdit?'true':'false')+'">';
+    html+='<article class="project-card'+(hasEmployeeWork?' project-card-active-work':'')+'" data-project-id="'+escapeHtml(project.id)+'" data-project-editable="'+(canEdit?'true':'false')+'" data-has-active-work="'+(hasEmployeeWork?'true':'false')+'">';
     html+='<div class="project-card-head">';
     html+='<div class="project-card-head-main"><h3>'+escapeHtml(getProjectTitle(project))+'</h3>';
     html+='<p class="text-muted">'+escapeHtml(project.description||'Keine Beschreibung')+'</p>';
+    if(hasEmployeeWork){
+      html+='<p class="project-active-work-note">Mitarbeiter arbeitet aktuell an einer Aufgabe.</p>';
+    }
     html+=renderProjectCardHeadSummary(project);
     html+='</div>';
     html+='<div class="project-card-head-rail">';
     html+=renderProjectCardHeadTimeline(project);
-    html+=renderProjectGitHubMatrixHeader(project);
     html+='</div>';
     html+='<div class="project-card-head-actions">';
     html+='<details class="project-card-menu">';
@@ -2343,7 +2572,7 @@ function renderProjectList(){
     html+='</details>';
     html+='</div></div>';
 
-    html+='<details class="project-card-sections">';
+    html+='<details class="project-card-sections" data-project-state-key="project-card-sections-'+escapeHtml(project.id)+'">';
     html+='<summary class="project-card-sections-toggle">Projektdetails</summary>';
     html+='<div class="project-card-grid">';
     html+='<div class="project-meta-block">';
@@ -2424,7 +2653,7 @@ function renderProjectList(){
     }else{
       html+='<p class="text-muted project-meta-empty">Kein aktiver Blocker.</p>';
     }
-    html+='<details class="project-commit-details" style="margin-top:0.7rem;">';
+    html+='<details class="project-commit-details" data-project-state-key="project-blocker-history-'+escapeHtml(project.id)+'" style="margin-top:0.7rem;">';
     html+='<summary>Blocker-Historie</summary>';
     html+=renderBlockerHistory(project);
     html+='</details>';
@@ -2455,7 +2684,7 @@ function renderProjectList(){
     html+='<button class="btn btn-secondary" data-action="open-meeting" data-id="'+escapeHtml(project.id)+'">Weiter bearbeiten</button>';
     html+='<button class="btn btn-secondary" data-action="toggle-meeting-status" data-id="'+escapeHtml(project.id)+'" '+(canEdit?'':'disabled')+'>'+ (meetingIsClosed?'Wieder oeffnen':'Als Closed markieren') +'</button>';
     html+='</div>';
-    html+='<details class="project-commit-details" style="margin-top:0.7rem;">';
+    html+='<details class="project-commit-details" data-project-state-key="project-meeting-details-'+escapeHtml(project.id)+'" style="margin-top:0.7rem;">';
     html+='<summary>Protokoll einsehen</summary>';
     if(!meeting.entries.length&&!meeting.concept&&!meeting.plan&&!meeting.tasks){
       html+='<p class="text-muted">Noch kein Meeting-Protokoll vorhanden.</p>';
@@ -2477,7 +2706,7 @@ function renderProjectList(){
     html+='</div>';
     html+='</details>';
 
-    html+='<details class="project-commit-details">';
+    html+='<details class="project-commit-details" data-project-state-key="project-last-commits-'+escapeHtml(project.id)+'">';
     html+='<summary>Letzte Commits anzeigen</summary>';
     if(commitPreview.length===0){
       html+='<p class="text-muted">Noch keine Commit-Daten vorhanden.</p>';
@@ -2500,8 +2729,18 @@ function renderProjectList(){
 }
 
 function render(){
+  var config=arguments[0]&&typeof arguments[0]==='object'?arguments[0]:{};
   renderOverview();
   renderProjectList();
+
+  if(config.restoreState===false)return;
+
+  var projectsPage=byId('projects');
+  if(!projectsPage||!projectsPage.classList.contains('active'))return;
+
+  window.setTimeout(function(){
+    restoreProjectPageState();
+  },0);
 }
 
 function getProjectCreateModal(){
@@ -2544,6 +2783,7 @@ function openProjectCreateDialog(options){
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden','false');
   syncProjectsModalBodyState();
+  saveProjectPageDraftState();
 
   var focusId=config.focusId||'project-title';
   window.setTimeout(function(){
@@ -2559,6 +2799,7 @@ function closeProjectCreateDialog(){
   modal.classList.add('hidden');
   modal.setAttribute('aria-hidden','true');
   syncProjectsModalBodyState();
+  saveProjectPageDraftState();
 }
 
 function openProjectImportDialog(options){
@@ -2574,6 +2815,7 @@ function openProjectImportDialog(options){
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden','false');
   syncProjectsModalBodyState();
+  saveProjectPageDraftState();
 
   var config=options&&typeof options==='object'?options:{};
   var focusId=config.focusId||'github-bootstrap-url';
@@ -2590,6 +2832,147 @@ function closeProjectImportDialog(){
   modal.classList.add('hidden');
   modal.setAttribute('aria-hidden','true');
   syncProjectsModalBodyState();
+  saveProjectPageDraftState();
+}
+
+function saveProjectPageDraftState(){
+  var form=byId('project-form');
+  if(!form)return;
+
+  var draft={
+    project: {
+      id:(byId('project-id').value||'').trim(),
+      title:(byId('project-title').value||'').trim(),
+      description:(byId('project-description').value||'').trim(),
+      startDate:(byId('project-start').value||'').trim(),
+      endDate:(byId('project-end').value||'').trim(),
+      status:(byId('project-status').value||'planning').trim(),
+      githubUrl:(byId('project-github-url').value||'').trim(),
+      teamRows: readProjectTeamRowsFromForm()
+    },
+    import: {
+      githubUrl:(byId('github-bootstrap-url').value||'').trim()
+    },
+    createModalOpen:isProjectCreateModalOpen(),
+    importModalOpen:isProjectImportModalOpen()
+  };
+
+  try {
+    window.localStorage.setItem(PROJECT_PAGE_DRAFT_KEY, JSON.stringify(draft));
+  } catch(_err) {}
+}
+
+function saveProjectPageState(){
+  var form=byId('project-form');
+  var projectList=byId('project-list');
+  var details=[];
+  var detailEls=document.querySelectorAll('[data-project-state-key]');
+  detailEls.forEach(function(detail){
+    details.push({
+      key:detail.getAttribute('data-project-state-key')||'',
+      open:!!detail.open
+    });
+  });
+
+  var snapshot={
+    page: window.location.hash || readActivePage() || 'projects',
+    listScrollTop: projectList ? projectList.scrollTop : 0,
+    pageScrollTop: window.scrollY || document.documentElement.scrollTop || 0,
+    details:details,
+    form: form ? {
+      id:(byId('project-id').value||'').trim(),
+      title:(byId('project-title').value||'').trim(),
+      description:(byId('project-description').value||'').trim(),
+      startDate:(byId('project-start').value||'').trim(),
+      endDate:(byId('project-end').value||'').trim(),
+      status:(byId('project-status').value||'planning').trim(),
+      githubUrl:(byId('project-github-url').value||'').trim(),
+      teamRows: readProjectTeamRowsFromForm(),
+      githubBootstrapUrl:(byId('github-bootstrap-url').value||'').trim()
+    } : null,
+    modals:{
+      createOpen:isProjectCreateModalOpen(),
+      importOpen:isProjectImportModalOpen()
+    }
+  };
+
+  try {
+    window.localStorage.setItem(PROJECT_PAGE_STATE_KEY, JSON.stringify(snapshot));
+  } catch(_err) {}
+}
+
+function restoreProjectPageState(){
+  var snapshot=readJsonFromLocalStorage(PROJECT_PAGE_STATE_KEY,null);
+  if(!snapshot||typeof snapshot!=='object')return;
+
+  if(snapshot.form && byId('project-form')){
+    if(byId('project-id'))byId('project-id').value=String(snapshot.form.id||'');
+    if(byId('project-title'))byId('project-title').value=String(snapshot.form.title||'');
+    if(byId('project-description'))byId('project-description').value=String(snapshot.form.description||'');
+    if(byId('project-start'))byId('project-start').value=String(snapshot.form.startDate||'');
+    if(byId('project-end'))byId('project-end').value=String(snapshot.form.endDate||'');
+    if(byId('project-status'))byId('project-status').value=String(snapshot.form.status||'planning');
+    if(byId('project-github-url'))byId('project-github-url').value=String(snapshot.form.githubUrl||'');
+    if(byId('github-bootstrap-url'))byId('github-bootstrap-url').value=String(snapshot.form.githubBootstrapUrl||'');
+
+    var teamRows=Array.isArray(snapshot.form.teamRows)?snapshot.form.teamRows:[];
+    renderProjectTeamRows(teamRows.length?teamRows:[{employeeId:'',role:''}]);
+    updateProjectDateFieldState();
+  }
+
+  if(Array.isArray(snapshot.details)){
+    snapshot.details.forEach(function(entry){
+      if(!entry||!entry.key)return;
+      var detail=document.querySelector('[data-project-state-key="'+String(entry.key).replace(/"/g,'\\\"')+'"]');
+      if(detail){ detail.open=!!entry.open; }
+    });
+  }
+
+  var projectList=byId('project-list');
+  if(projectList && typeof snapshot.listScrollTop==='number'){
+    window.setTimeout(function(){
+      if(projectList){ projectList.scrollTop=snapshot.listScrollTop; }
+    },0);
+  }
+  if(typeof snapshot.pageScrollTop==='number'){
+    window.setTimeout(function(){
+      window.scrollTo(0, snapshot.pageScrollTop);
+    },0);
+  }
+
+  if(snapshot.modals&&snapshot.modals.createOpen){
+    openProjectCreateDialog({reset:false});
+  } else if(snapshot.modals&&snapshot.modals.importOpen){
+    openProjectImportDialog({focusId:'github-bootstrap-url'});
+  }
+}
+
+function restoreProjectPageDraftState(){
+  var draft=readJsonFromLocalStorage(PROJECT_PAGE_DRAFT_KEY,null);
+  if(!draft||typeof draft!=='object')return;
+
+  var projectDraft=draft.project&&typeof draft.project==='object'?draft.project:{};
+  var importDraft=draft.import&&typeof draft.import==='object'?draft.import:{};
+
+  if(byId('project-id'))byId('project-id').value=String(projectDraft.id||'');
+  if(byId('project-title'))byId('project-title').value=String(projectDraft.title||'');
+  if(byId('project-description'))byId('project-description').value=String(projectDraft.description||'');
+  if(byId('project-start'))byId('project-start').value=String(projectDraft.startDate||'');
+  if(byId('project-end'))byId('project-end').value=String(projectDraft.endDate||'');
+  if(byId('project-status'))byId('project-status').value=String(projectDraft.status||'planning');
+  if(byId('project-github-url'))byId('project-github-url').value=String(projectDraft.githubUrl||'');
+  if(byId('github-bootstrap-url'))byId('github-bootstrap-url').value=String(importDraft.githubUrl||'');
+
+  var teamRows=Array.isArray(projectDraft.teamRows)?projectDraft.teamRows:[];
+  renderProjectTeamRows(teamRows.length?teamRows:[{employeeId:'',role:''}]);
+
+  updateProjectDateFieldState();
+
+  if(draft.createModalOpen){
+    openProjectCreateDialog({reset:false});
+  } else if(draft.importModalOpen){
+    openProjectImportDialog({focusId:'github-bootstrap-url'});
+  }
 }
 
 function resetForm(){
@@ -2600,6 +2983,7 @@ function resetForm(){
   byId('project-status').value='planning';
   renderProjectTeamRows([]);
   updateProjectDateFieldState();
+  saveProjectPageDraftState();
 }
 
 function updateProjectDateFieldState(){
@@ -2992,6 +3376,287 @@ function importCommitsForProject(projectId){
   });
 }
 
+function openAiKnowledgeTaskDialog(projectId,options){
+  var project=window.DataLayer.getProjectById(projectId);
+  if(!project)return;
+
+  var aiState=ensureProjectAiKnowledge(project);
+  if(!aiState.filePath){
+    notify('Bitte zuerst Projektwissen erzeugen, danach koennen Aufgaben abgeleitet werden.','error');
+    return;
+  }
+
+  var employees=getAssignableEmployeesForProject(project);
+  var defaultAssignee=employees.length?String(employees[0].id||'').trim():'';
+  var dialog=document.createElement('dialog');
+  var state={loading:false,items:[],summary:''};
+  dialog.className='resolution-dialog';
+  dialog.innerHTML=''
+    +'<form method="dialog" class="resolution-form">'
+      +'<h3>Aufgaben aus KI-Projektwissen erzeugen</h3>'
+      +'<p class="text-muted">Projekt: '+escapeHtml(getProjectTitle(project))+' · Wissen: '+escapeHtml(aiState.filePath||'n/a')+'</p>'
+      +'<label class="form-group"><span>Fokus (optional)</span><textarea id="ai-task-focus" rows="2" placeholder="z. B. nur naechste 7 Tage, hohes Risiko zuerst, Team gleichmaessig auslasten"></textarea></label>'
+      +'<div class="project-actions-inline mt-1">'
+        +'<button type="button" class="btn btn-secondary" data-action="cancel">Schliessen</button>'
+        +'<button type="button" class="btn btn-secondary" data-action="generate">KI-Vorschlaege erstellen</button>'
+        +'<button type="button" class="btn btn-primary" data-action="create" disabled>In Startvorlage speichern</button>'
+      +'</div>'
+      +'<div id="ai-task-draft-result" class="mt-1"><p class="text-muted">Noch keine Vorschlaege erstellt.</p></div>'
+    +'</form>';
+
+  document.body.appendChild(dialog);
+
+  function closeWith(){
+    try{dialog.close();}catch(_errClose){}
+    if(dialog.parentNode)dialog.parentNode.removeChild(dialog);
+  }
+
+  function renderItems(){
+    var host=dialog.querySelector('#ai-task-draft-result');
+    var createBtn=dialog.querySelector('[data-action="create"]');
+    if(!host)return;
+
+    if(!state.items.length){
+      host.innerHTML='<p class="text-muted">Keine verwertbaren Aufgabenvorschlaege erhalten. Fokus anpassen und erneut versuchen.</p>';
+      if(createBtn)createBtn.disabled=true;
+      return;
+    }
+
+    var cards=state.items.map(function(item,idx){
+      var priority=item.priority||'medium';
+      var urgency=item.urgency||'normal';
+      var labelsText=Array.isArray(item.labels)?item.labels.join(', '):'';
+      var subtasksText=Array.isArray(item.subtasks)?item.subtasks.join('\n'):'';
+      var assigneeId=item.assigneeId||defaultAssignee;
+      return ''
+        +'<article class="infohub-card" data-ai-task-row="'+idx+'">'
+          +'<div class="project-actions-inline">'
+            +'<label><input type="checkbox" data-field="include" checked> Uebernehmen</label>'
+            +(item.isMain?'<span class="text-muted">Hauptvorschlag</span>':'')
+          +'</div>'
+          +'<label class="form-group"><span>Titel</span><input type="text" data-field="title" value="'+escapeHtml(item.title||'')+'"></label>'
+          +'<label class="form-group"><span>Beschreibung</span><textarea rows="3" data-field="description">'+escapeHtml(item.description||'')+'</textarea></label>'
+          +'<div class="project-form-grid">'
+            +'<label class="form-group"><span>Prioritaet</span><select data-field="priority">'
+              +'<option value="low" '+(priority==='low'?'selected':'')+'>low</option>'
+              +'<option value="medium" '+(priority==='medium'?'selected':'')+'>medium</option>'
+              +'<option value="high" '+(priority==='high'?'selected':'')+'>high</option>'
+              +'<option value="blocker" '+(priority==='blocker'?'selected':'')+'>blocker</option>'
+            +'</select></label>'
+            +'<label class="form-group"><span>Dringlichkeit</span><select data-field="urgency">'
+              +'<option value="low" '+(urgency==='low'?'selected':'')+'>low</option>'
+              +'<option value="normal" '+(urgency==='normal'?'selected':'')+'>normal</option>'
+              +'<option value="high" '+(urgency==='high'?'selected':'')+'>high</option>'
+              +'<option value="critical" '+(urgency==='critical'?'selected':'')+'>critical</option>'
+            +'</select></label>'
+          +'</div>'
+          +'<div class="project-form-grid">'
+            +'<label class="form-group"><span>Aufwand (h)</span><input type="number" min="0" step="0.5" data-field="effortHours" value="'+escapeHtml(item.effortHours||0)+'"></label>'
+            +'<label class="form-group"><span>Zuweisung</span><select data-field="assigneeId">'+buildAssigneeOptionsHtml(employees,assigneeId)+'</select></label>'
+          +'</div>'
+          +'<label class="form-group"><span>Labels (Komma-getrennt)</span><input type="text" data-field="labels" value="'+escapeHtml(labelsText)+'"></label>'
+          +'<label class="form-group"><span>Subtasks (eine pro Zeile)</span><textarea rows="2" data-field="subtasks">'+escapeHtml(subtasksText)+'</textarea></label>'
+          +'<label class="form-group"><span>Notiz</span><input type="text" data-field="note" value="'+escapeHtml(item.note||'')+'"></label>'
+          +'<input type="hidden" data-field="sequenceIndex" value="'+escapeHtml(item.sequenceIndex||idx+1)+'">'
+          +'<input type="hidden" data-field="dependsOnPrevious" value="'+(item.dependsOnPrevious?'1':'0')+'">'
+        +'</article>';
+    }).join('');
+
+    var summaryHtml=state.summary?'<p class="text-muted">'+escapeHtml(state.summary)+'</p>':'';
+    host.innerHTML=summaryHtml+cards;
+    if(createBtn)createBtn.disabled=false;
+  }
+
+  function readDialogRows(){
+    var rows=dialog.querySelectorAll('[data-ai-task-row]');
+    var list=[];
+    rows.forEach(function(row){
+      var includeEl=row.querySelector('[data-field="include"]');
+      if(!includeEl||!includeEl.checked)return;
+      var title=String((row.querySelector('[data-field="title"]')||{}).value||'').trim();
+      if(!title)return;
+      var labelsInput=String((row.querySelector('[data-field="labels"]')||{}).value||'').trim();
+      var labels=labelsInput?labelsInput.split(',').map(function(label){return label.trim();}).filter(function(label){return !!label;}):[];
+      var subtasksText=String((row.querySelector('[data-field="subtasks"]')||{}).value||'').trim();
+      var subtasks=subtasksText?subtasksText.split(/\r?\n/).map(function(line){return line.trim();}).filter(function(line){return !!line;}):[];
+
+      list.push({
+        title:title,
+        description:String((row.querySelector('[data-field="description"]')||{}).value||'').trim(),
+        priority:String((row.querySelector('[data-field="priority"]')||{}).value||'medium').trim(),
+        urgency:String((row.querySelector('[data-field="urgency"]')||{}).value||'normal').trim(),
+        effortHours:Number((row.querySelector('[data-field="effortHours"]')||{}).value||0)||0,
+        assigneeId:String((row.querySelector('[data-field="assigneeId"]')||{}).value||'').trim(),
+        labels:labels,
+        subtasks:subtasks,
+        note:String((row.querySelector('[data-field="note"]')||{}).value||'').trim(),
+        sequenceIndex:Number((row.querySelector('[data-field="sequenceIndex"]')||{}).value||0)||0,
+        dependsOnPrevious:String((row.querySelector('[data-field="dependsOnPrevious"]')||{}).value||'')==='1'
+      });
+    });
+
+    list.sort(function(a,b){
+      var aSeq=Number(a.sequenceIndex||0)||0;
+      var bSeq=Number(b.sequenceIndex||0)||0;
+      if(aSeq&&!bSeq)return -1;
+      if(!aSeq&&bSeq)return 1;
+      if(aSeq!==bSeq)return aSeq-bSeq;
+      return 0;
+    });
+
+    return list;
+  }
+
+  function createTasksFromSelection(){
+    var selected=readDialogRows();
+    if(!selected.length){
+      notify('Bitte mindestens einen Vorschlag auswaehlen.','error');
+      return;
+    }
+
+    var baseProject=window.DataLayer.getProjectById(projectId);
+    if(!baseProject){
+      notify('Projekt wurde nicht gefunden.','error');
+      return;
+    }
+
+    var draft=ensureProjectExecutionPlan(baseProject);
+    var queuedCount=0;
+    var sourceNote='';
+    if(aiState.filePath){
+      sourceNote='Aus KI-Projektwissen abgeleitet: '+aiState.filePath;
+    }
+
+    selected.forEach(function(item,idx){
+      var notes=[];
+      if(item.note){
+        notes.push({id:window.DataLayer.generateId(),text:item.note,createdAt:new Date().toISOString()});
+      }
+
+      if(sourceNote){
+        notes.push({id:window.DataLayer.generateId(),text:sourceNote,createdAt:new Date().toISOString()});
+      }
+
+      draft.queuedTasks.push({
+        id:window.DataLayer.generateId(),
+        source:'project-ai-knowledge-draft',
+        title:item.title,
+        description:item.description,
+        assigneeId:item.assigneeId||null,
+        priority:item.priority||'medium',
+        urgency:item.urgency||'normal',
+        effortHours:Number(item.effortHours||0)||0,
+        labels:resolveLabelIdsByNames(item.labels),
+        schedule:{mode:'none',deadline:'',fixedAt:'',rangeStart:'',rangeEnd:''},
+        sequenceIndex:Number(item.sequenceIndex||idx+1)||0,
+        dependsOnPrevious:!!item.dependsOnPrevious,
+        chainWithPrevious:!!item.dependsOnPrevious || idx>0,
+        externalDependencyTaskId:'',
+        subtasks:item.subtasks.slice(),
+        notes:notes,
+        queuedAt:new Date().toISOString()
+      });
+      queuedCount++;
+    });
+
+    draft.status='queued';
+    if(!draft.generatedAt)draft.generatedAt=new Date().toISOString();
+    draft.updatedAt=new Date().toISOString();
+    window.DataLayer.updateProject(baseProject);
+
+    var freshProject=window.DataLayer.getProjectById(projectId);
+    if(freshProject){
+      var freshAiState=ensureProjectAiKnowledge(freshProject);
+      freshAiState.lastTaskDraftAt=new Date().toISOString();
+      freshAiState.lastTaskDraftCount=queuedCount;
+      window.DataLayer.updateProject(freshProject);
+    }
+
+    notify(queuedCount+' Aufgaben in der Projekt-Startvorlage gespeichert.','info');
+    render();
+    closeWith();
+  }
+
+  function generateDraft(){
+    if(state.loading)return;
+    state.loading=true;
+    var host=dialog.querySelector('#ai-task-draft-result');
+    var createBtn=dialog.querySelector('[data-action="create"]');
+    var generateBtn=dialog.querySelector('[data-action="generate"]');
+    var focusText=String((dialog.querySelector('#ai-task-focus')||{}).value||'').trim();
+
+    if(createBtn)createBtn.disabled=true;
+    if(generateBtn)generateBtn.disabled=true;
+    if(host)host.innerHTML='<p class="text-muted">KI erstellt Vorschlaege aus dem gespeicherten Projektwissen ...</p>';
+
+    fetchKnowledgeMarkdownSnippet(aiState.filePath,6500).then(function(snippet){
+      var payload={
+        projectId:project.id,
+        projectTitle:getProjectTitle(project),
+        draftInput:buildAiKnowledgeDraftInput(project,aiState,focusText,snippet),
+        meetingNotes:(ensureProjectInfoHub(project).notes||[]).map(function(note){
+          return {
+            text:(note.title?note.title+': ':'')+String(note.text||''),
+            label:'infohub',
+            createdAt:String(note.updatedAt||note.createdAt||'')
+          };
+        }),
+        options:{
+          scheduleMode:'none',
+          eventType:'task',
+          createSubtasks:true,
+          splitIntoMultiple:true
+        },
+        existingData:buildProjectKnowledgeSnapshot(project),
+        promptConfig:{
+          model:aiState.preferredModel||DEFAULT_OLLAMA_MODEL,
+          temperature:0.2,
+          maxTokens:2400
+        }
+      };
+      return postJsonWithFallback('/api/ai/meeting-task-draft',payload);
+    }).then(function(body){
+      var normalized=normalizeAiKnowledgeTaskDraft(body&&body.draft?body.draft:{});
+      state.items=normalized.items;
+      state.summary=normalized.summaryMarkdown;
+      renderItems();
+      if(!state.items.length){
+        notify('Keine konkreten Aufgaben erkannt. Fokus bitte praezisieren und erneut versuchen.','error');
+      } else {
+        notify(state.items.length+' KI-Aufgabenvorschlaege bereit zur Pruefung.','info');
+      }
+    }).catch(function(err){
+      if(host)host.innerHTML='<p class="ai-status-error">Fehler: '+escapeHtml(err&&err.message?err.message:String(err))+'</p>';
+      notify('KI-Aufgabenvorschlaege fehlgeschlagen: '+(err&&err.message?err.message:String(err)),'error');
+    }).finally(function(){
+      state.loading=false;
+      if(generateBtn)generateBtn.disabled=false;
+    });
+  }
+
+  dialog.addEventListener('click',function(event){
+    var target=event.target&&event.target.closest?event.target.closest('[data-action]'):null;
+    if(!target)return;
+    var action=target.getAttribute('data-action');
+    if(action==='cancel'){
+      closeWith();
+      return;
+    }
+    if(action==='generate'){
+      generateDraft();
+      return;
+    }
+    if(action==='create'){
+      createTasksFromSelection();
+    }
+  });
+
+  dialog.showModal();
+  if(options&&options.autoGenerate){
+    generateDraft();
+  }
+}
+
 function generateAiKnowledgeForProject(projectId){
   var project=window.DataLayer.getProjectById(projectId);
   if(!project)throw new Error('Projekt nicht gefunden.');
@@ -3052,6 +3717,7 @@ function generateAiKnowledgeForProject(projectId){
     refreshAiHealthStatus(true).catch(function(){});
     notify('Projektwissen KI erfolgreich erstellt.','info');
     render();
+    openAiKnowledgeTaskDialog(projectId,{autoGenerate:true});
     return body;
   }).catch(function(err){
     var failedProject=window.DataLayer.getProjectById(projectId);
@@ -3370,6 +4036,7 @@ function saveScratchpad(projectId){
 
   window.DataLayer.updateProject(project);
   notify('Schmierzettel gespeichert.','info');
+  render();
 }
 
 function saveEnvText(projectId){
@@ -3478,12 +4145,20 @@ function bindForm(){
         notify(err.message,'error');
       });
     });
+    form.addEventListener('input',saveProjectPageDraftState);
+    form.addEventListener('change',saveProjectPageDraftState);
   }
 
   var githubUrlInput=byId('project-github-url');
   if(githubUrlInput){
-    githubUrlInput.addEventListener('input',updateProjectDateFieldState);
-    githubUrlInput.addEventListener('blur',updateProjectDateFieldState);
+    githubUrlInput.addEventListener('input',function(){
+      updateProjectDateFieldState();
+      saveProjectPageDraftState();
+    });
+    githubUrlInput.addEventListener('blur',function(){
+      updateProjectDateFieldState();
+      saveProjectPageDraftState();
+    });
   }
 
   var githubTokenInput=byId('project-github-token');
@@ -3500,10 +4175,17 @@ function bindForm(){
     });
   }
 
+  var githubBootstrapUrlInput=byId('github-bootstrap-url');
+  if(githubBootstrapUrlInput){
+    githubBootstrapUrlInput.addEventListener('input',saveProjectPageDraftState);
+    githubBootstrapUrlInput.addEventListener('change',saveProjectPageDraftState);
+  }
+
   var teamAddBtn=byId('project-team-add-btn');
   if(teamAddBtn){
     teamAddBtn.addEventListener('click',function(){
       addProjectTeamRow();
+      saveProjectPageDraftState();
     });
   }
 
@@ -3514,14 +4196,18 @@ function bindForm(){
       if(!target||!target.dataset)return;
       if(target.dataset.action==='remove-team-row'){
         removeProjectTeamRow(target.dataset.index);
+        saveProjectPageDraftState();
       }
     });
+    teamRows.addEventListener('input',saveProjectPageDraftState);
+    teamRows.addEventListener('change',saveProjectPageDraftState);
   }
 
   setGitHubApiToken(getGitHubApiToken());
 
   renderProjectTeamRows([]);
   updateProjectDateFieldState();
+  restoreProjectPageDraftState();
 
   var resetBtn=byId('project-reset-btn');
   if(resetBtn){
@@ -3579,6 +4265,24 @@ function bindForm(){
       closeProjectImportDialog();
     }
   });
+
+  document.addEventListener('toggle',function(evt){
+    var target=evt.target;
+    if(!target||!target.matches)return;
+    if(target.matches('.project-card-sections, .project-commit-details, .project-infohub')){
+      saveProjectPageState();
+    }
+  },true);
+
+  document.addEventListener('scroll',function(){
+    var projectList=byId('project-list');
+    if(projectList && document.getElementById('projects')&&document.getElementById('projects').classList.contains('active')){
+      saveProjectPageState();
+    }
+  },true);
+
+  window.addEventListener('beforeunload',saveProjectPageState);
+  window.addEventListener('pagehide',saveProjectPageState);
 }
 
 function bindListActions(){
@@ -3708,6 +4412,15 @@ function bindListActions(){
       return;
     }
 
+    if(action==='generate-ai-tasks'){
+      if(!canEdit){
+        notify('Dieses Projekt kann nicht bearbeitet werden.','error');
+        return;
+      }
+      openAiKnowledgeTaskDialog(projectId,{autoGenerate:false});
+      return;
+    }
+
     if(action==='check-ai-health'){
       refreshAiHealthStatus(true).then(function(state){
         render();
@@ -3813,13 +4526,6 @@ function init(){
     }).catch(function(){
       render();
     });
-
-    if(window.DataLayer.on){
-      window.DataLayer.on('dataChanged',function(){
-        renderProjectTeamRows(readProjectTeamRowsFromForm());
-        render();
-      });
-    }
   } catch(err){
     console.error('[Projects] init failed',err);
   }

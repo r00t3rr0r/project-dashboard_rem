@@ -543,6 +543,106 @@ button:active {
   border-radius: 1.25rem;
 }
 
+.project-card-active-work {
+  position: relative;
+  border-color: rgba(99, 226, 255, 0.62);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(99, 226, 255, 0.42), 0 0 32px rgba(99, 226, 255, 0.52);
+  overflow: hidden;
+  animation: project-active-work-shell 1.1s steps(1, end) infinite;
+}
+
+.project-card-active-work::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 3px solid rgba(99, 226, 255, 0.34);
+  background:
+    repeating-conic-gradient(
+      from calc(var(--trace-angle, 0deg) * -1),
+      rgba(99, 226, 255, 0) 0deg,
+      rgba(99, 226, 255, 0) 10deg,
+      rgba(99, 226, 255, 0.28) 12deg,
+      rgba(99, 226, 255, 0) 16deg
+    ) border-box;
+  -webkit-mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.project-card-active-work::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 3px solid transparent;
+  background:
+    repeating-conic-gradient(
+      from var(--trace-angle, 0deg),
+      rgba(99, 226, 255, 0) 0deg,
+      rgba(99, 226, 255, 0) 5deg,
+      rgba(99, 226, 255, 0.62) 7deg,
+      rgba(99, 226, 255, 0) 11deg
+    ) border-box,
+    repeating-conic-gradient(
+      from calc(var(--trace-angle, 0deg) + 44deg),
+      rgba(64, 217, 140, 0) 0deg,
+      rgba(64, 217, 140, 0) 16deg,
+      rgba(64, 217, 140, 0.58) 18deg,
+      rgba(64, 217, 140, 0) 22deg
+    ) border-box,
+    conic-gradient(
+      from var(--trace-angle, 0deg),
+      rgba(99, 226, 255, 0.22) 0deg,
+      rgba(99, 226, 255, 0.22) 360deg
+    ) border-box,
+    conic-gradient(
+      from var(--trace-angle, 0deg),
+      rgba(99, 226, 255, 0) 0deg,
+      rgba(99, 226, 255, 0) 292deg,
+      rgba(99, 226, 255, 0.4) 306deg,
+      rgba(94, 162, 255, 1) 322deg,
+      rgba(64, 217, 140, 1) 338deg,
+      rgba(99, 226, 255, 1) 350deg,
+      rgba(99, 226, 255, 0) 360deg
+    ) border-box;
+  -webkit-mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  filter: drop-shadow(0 0 13px rgba(99, 226, 255, 0.68));
+  animation: project-active-work-trace 0.95s linear infinite, project-active-work-trace-flicker 0.62s steps(1, end) infinite;
+}
+
+.project-active-work-note {
+  margin-top: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.58rem;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 226, 255, 0.42);
+  background: rgba(99, 226, 255, 0.12);
+  color: var(--accent-cyan);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.project-active-work-note::before {
+  content: '';
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 0 0 rgba(64, 217, 140, 0.55);
+  animation: project-active-work-pulse 1.8s ease-out infinite;
+}
+
 .project-meta-block,
 .infohub-card,
 .kanban-column {
@@ -700,6 +800,95 @@ body.light-mode .kanban-card {
   box-shadow: 0 14px 36px rgba(80, 105, 142, 0.14);
 }
 
+body.light-mode .project-card-active-work {
+  border-color: rgba(56, 121, 201, 0.55);
+  box-shadow: 0 14px 36px rgba(80, 105, 142, 0.14), 0 0 0 1px rgba(56, 121, 201, 0.34), 0 0 22px rgba(94, 162, 255, 0.44);
+}
+
+body.light-mode .project-card-active-work::before {
+  border-color: rgba(56, 121, 201, 0.34);
+}
+
+body.light-mode .project-card-active-work::after {
+  filter: drop-shadow(0 0 12px rgba(56, 121, 201, 0.58));
+}
+
+body.light-mode .project-active-work-note {
+  border-color: rgba(56, 121, 201, 0.4);
+  background: rgba(94, 162, 255, 0.14);
+  color: #1e4f8f;
+}
+
+@property --trace-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes project-active-work-trace {
+  0% {
+    --trace-angle: 0deg;
+  }
+  100% {
+    --trace-angle: 360deg;
+  }
+}
+
+@keyframes project-active-work-trace-flicker {
+  0%,
+  12%,
+  19%,
+  44%,
+  63% {
+    filter: drop-shadow(0 0 10px rgba(99, 226, 255, 0.52));
+  }
+  13%,
+  18% {
+    filter: drop-shadow(0 0 22px rgba(99, 226, 255, 1));
+  }
+  26%,
+  28% {
+    filter: drop-shadow(0 0 24px rgba(64, 217, 140, 0.95));
+  }
+  45%,
+  50% {
+    filter: drop-shadow(0 0 26px rgba(94, 162, 255, 1));
+  }
+  64%,
+  68%,
+  100% {
+    filter: drop-shadow(0 0 18px rgba(99, 226, 255, 0.86));
+  }
+}
+
+@keyframes project-active-work-shell {
+  0%,
+  12%,
+  32%,
+  52%,
+  100% {
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(99, 226, 255, 0.42), 0 0 28px rgba(99, 226, 255, 0.5);
+  }
+  13%,
+  15%,
+  53%,
+  56% {
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(99, 226, 255, 0.56), 0 0 44px rgba(99, 226, 255, 0.84);
+  }
+}
+
+@keyframes project-active-work-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(64, 217, 140, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 0.5rem rgba(64, 217, 140, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(64, 217, 140, 0);
+  }
+}
+
 body.light-mode .nav-menu li a:hover {
   background: rgba(94, 162, 255, 0.1);
 }
@@ -784,26 +973,179 @@ body.light-mode .nav-menu li a:hover {
 }
 
 .project-progress-item {
+  display: grid;
+  gap: 0.7rem;
   margin-bottom: 1rem;
+}
+
+#chart-progress-bar {
+  transition: max-height 0.2s ease, padding 0.2s ease;
+}
+
+#chart-progress-bar.project-progress-compact {
+  max-height: none;
+  overflow: visible;
+}
+
+#chart-progress-bar.project-progress-expanded {
+  max-height: none;
+}
+
+#chart-progress-bar .project-progress-toggle {
+  appearance: none;
+  border: 1px solid var(--border-color);
+  background: rgba(125, 169, 255, 0.08);
+  color: var(--text-primary);
+  border-radius: 999px;
+  padding: 0.38rem 0.7rem;
+  margin: 0 0 0.75rem;
+  font-weight: 600;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+#chart-progress-bar .project-progress-toggle:hover,
+#chart-progress-bar .project-progress-toggle:focus-visible {
+  background: rgba(125, 169, 255, 0.14);
+  border-color: rgba(125, 169, 255, 0.36);
+  outline: none;
+}
+
+#chart-progress-bar .project-progress-list {
+  display: grid;
+  gap: 0.25rem;
+}
+
+#chart-progress-bar.project-progress-compact .project-progress-item {
+  margin-bottom: 0.5rem;
+  gap: 0.45rem;
+}
+
+#chart-progress-bar.project-progress-compact .project-progress-item:last-child {
+  margin-bottom: 0;
+}
+
+#chart-progress-bar.project-progress-compact .project-progress-head {
+  gap: 0.42rem;
+}
+
+#chart-progress-bar.project-progress-compact .project-progress-title {
+  font-size: 0.78rem;
+  letter-spacing: 0.01em;
+}
+
+#chart-progress-bar.project-progress-compact .project-progress-percent {
+  font-size: 0.74rem;
+}
+
+#chart-progress-bar.project-progress-compact .project-progress-contact-avatar {
+  width: 1.35rem;
+  height: 1.35rem;
+}
+
+#chart-progress-bar.project-progress-compact .project-head-progress {
+  padding: 0.38rem 0.42rem 0.32rem;
+}
+
+#chart-progress-bar.project-progress-compact .project-head-progress-label,
+#chart-progress-bar.project-progress-compact .project-head-progress-live-text,
+#chart-progress-bar.project-progress-compact .project-head-progress-live-dot {
+  display: none;
+}
+
+#chart-progress-bar.project-progress-compact .project-head-progress-track {
+  height: 0.3rem;
+}
+
+#chart-progress-bar.project-progress-compact .project-head-progress-meta {
+  gap: 0.08rem;
+  justify-content: flex-end;
+  font-size: 0.68rem;
+}
+
+#chart-progress-bar.project-progress-compact .project-head-progress-value {
+  font-size: 0.73rem;
+}
+
+#chart-progress-bar.project-progress-expanded .project-head-progress-label,
+#chart-progress-bar.project-progress-expanded .project-head-progress-live-text,
+#chart-progress-bar.project-progress-expanded .project-head-progress-live-dot {
+  display: inline-flex;
 }
 
 .project-progress-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 0.35rem;
   gap: 0.7rem;
 }
 
+.project-progress-head-main {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  flex: 1;
+}
+
 .project-progress-title {
+  min-width: 0;
   font-weight: 600;
   color: var(--text-primary);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-progress-contact-avatar {
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.project-progress-contact-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.project-progress-contact-avatar-fallback {
+  color: var(--text-primary);
+  font-size: 0.6rem;
+  font-weight: 700;
 }
 
 .project-progress-percent {
   font-family: var(--font-mono);
   color: var(--text-secondary);
   font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.project-progress-item .project-head-progress {
+  width: 100%;
+  min-width: 0;
+  padding: 0.5rem 0.58rem 0.44rem;
+}
+
+.project-progress-item .project-head-progress-track {
+  height: 0.38rem;
+}
+
+.project-progress-item .project-head-progress-meta {
+  gap: 0.28rem;
 }
 
 .dashboard-projects-full {
@@ -831,21 +1173,38 @@ body.light-mode .nav-menu li a:hover {
 
 .dashboard-project-row {
   display: block;
+  --dashboard-row-surface: rgba(81, 170, 255, 0.06);
+  --dashboard-row-accent: rgba(102, 227, 255, 0.12);
+  --dashboard-card-tint: rgba(84, 172, 255, 0.08);
+  padding: 0.52rem;
+  border-radius: 1.2rem;
+  border: 1px solid rgba(124, 168, 220, 0.16);
+  background:
+    radial-gradient(140% 120% at 0% 0%, var(--dashboard-row-accent) 0%, transparent 55%),
+    var(--dashboard-row-surface);
+}
+
+.dashboard-projects-layout > .dashboard-project-row:nth-child(even) {
+  --dashboard-row-surface: rgba(120, 219, 186, 0.06);
+  --dashboard-row-accent: rgba(128, 232, 190, 0.12);
+  --dashboard-card-tint: rgba(102, 207, 173, 0.08);
 }
 
 .dashboard-project-row > .project-card {
   margin: 0;
   width: 100%;
+  background: linear-gradient(150deg, var(--dashboard-card-tint), rgba(255, 255, 255, 0.015) 52%), var(--bg-card);
 }
 
 .dashboard-project-schedule-card {
   display: grid;
+  container-type: inline-size;
   align-self: stretch;
   gap: 0.45rem;
   padding: 0.85rem;
   border: 1px solid var(--border-color);
   border-radius: 1.15rem;
-  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0)), var(--bg-card);
+  background: linear-gradient(150deg, var(--dashboard-card-tint), rgba(255,255,255,0.015) 52%), var(--bg-card);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
   height: 100%;
 }
@@ -869,6 +1228,16 @@ body.light-mode .nav-menu li a:hover {
   margin-bottom: 0;
 }
 
+.dashboard-project-schedule-card .project-head-timeline-week {
+  display: none;
+}
+
+@container (min-width: 19rem) {
+  .dashboard-project-schedule-card .project-head-timeline-week {
+    display: grid;
+  }
+}
+
 .dashboard-project-row > .project-card .project-head-timeline {
   display: none !important;
 }
@@ -883,7 +1252,7 @@ body.light-mode .nav-menu li a:hover {
 }
 
 .dashboard-project-row > .project-card .project-card-head-matrix {
-  margin-top: 2.4rem;
+  margin-top: 0;
 }
 
 .dashboard-project-row > .project-card input,
@@ -918,12 +1287,12 @@ body.light-mode .nav-menu li a:hover {
 }
 
 @media (max-width: 1360px) {
-  .dashboard-project-row.has-schedule .dashboard-project-schedule-card {
-    display: none !important;
-  }
-
   .dashboard-project-row {
     display: block;
+  }
+
+  .dashboard-project-row.has-schedule .dashboard-project-schedule-card {
+    margin-top: 0.8rem;
   }
 }
 
@@ -934,38 +1303,198 @@ body.light-mode .nav-menu li a:hover {
   }
 }
 
-.task-distribution-wrap {
+.team-week-calendar-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 2rem;
-  padding: 1rem;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 0.35rem;
+  margin-bottom: 0.85rem;
 }
 
-.task-distribution-donut {
-  width: 150px;
-  height: 150px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  border: 1px solid var(--border-color);
-  box-shadow: inset 0 0 0 10px rgba(255,255,255,0.02);
-}
-
-.task-distribution-legend {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.task-distribution-legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  color: var(--text-secondary);
+.team-week-calendar-range {
+  color: var(--text-primary);
+  font-weight: 600;
   font-size: 0.9rem;
 }
 
-.task-distribution-dot {
-  font-size: 0.85rem;
+.team-week-calendar-summary {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.team-week-matrix-wrap {
+  border: 1px solid rgba(132, 170, 225, 0.22);
+  border-radius: 0.95rem;
+  overflow: auto;
+  background: linear-gradient(180deg, rgba(14, 24, 40, 0.86), rgba(9, 17, 30, 0.95));
+}
+
+.team-week-row {
+  display: grid;
+  grid-template-columns: 180px repeat(7, minmax(170px, 1fr));
+  min-width: 1360px;
+}
+
+.team-week-row + .team-week-row {
+  border-top: 1px solid rgba(132, 170, 225, 0.16);
+}
+
+.team-week-row-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: linear-gradient(180deg, rgba(20, 34, 56, 0.98), rgba(13, 24, 40, 0.98));
+}
+
+.team-week-row-employee {
+  padding: 0.62rem;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  border-right: 1px solid rgba(132, 170, 225, 0.16);
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: rgba(11, 19, 32, 0.96);
+  display: flex;
+  align-items: center;
+}
+
+.team-week-row-employee-header {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  z-index: 4;
+}
+
+.team-week-col-head {
+  padding: 0.5rem 0.42rem;
+  border-right: 1px solid rgba(132, 170, 225, 0.16);
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 0.32rem;
+  background: rgba(15, 26, 43, 0.95);
+}
+
+.team-week-col-head.is-today {
+  background: linear-gradient(180deg, rgba(33, 64, 104, 0.88), rgba(19, 37, 60, 0.95));
+}
+
+.team-week-col-label {
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-transform: uppercase;
+}
+
+.team-week-col-date {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.team-week-col-count {
+  justify-self: end;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #dff2ff;
+  background: rgba(74, 158, 255, 0.28);
+  border: 1px solid rgba(74, 158, 255, 0.44);
+}
+
+.team-week-cell {
+  padding: 0.4rem;
+  border-right: 1px solid rgba(132, 170, 225, 0.14);
+  min-height: 76px;
+}
+
+.team-week-cell-empty {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.team-week-event-list {
+  list-style: none;
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+}
+
+.team-week-event-item {
+  border: 1px solid rgba(132, 169, 224, 0.2);
+  background: rgba(255,255,255,0.02);
+  border-radius: 0.7rem;
+  padding: 0.42rem 0.45rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.team-week-event-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.team-week-event-time {
+  font-size: 0.72rem;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.team-week-event-time-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.team-week-event-type {
+  font-size: 0.67rem;
+  color: #d3e8ff;
+  border: 1px solid rgba(74, 158, 255, 0.42);
+  background: rgba(74, 158, 255, 0.22);
+  border-radius: 999px;
+  padding: 0.08rem 0.38rem;
+  white-space: nowrap;
+}
+
+.team-week-event-title {
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.team-week-event-meta {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.team-week-event-participants,
+.team-week-event-project {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 960px) {
+  .team-week-row {
+    grid-template-columns: 150px repeat(7, minmax(150px, 1fr));
+    min-width: 1210px;
+  }
+
+  .team-week-row-employee {
+    padding: 0.5rem;
+    font-size: 0.77rem;
+  }
 }
 
 .team-load-grid {
