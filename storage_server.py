@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import hmac
 import sqlite3
 import shutil
 import uuid
@@ -21,10 +22,12 @@ KNOWLEDGE_DIR = os.path.join(ROOT, 'data', 'project-knowledge')
 MEETINGS_DIR = os.path.join(ROOT, 'data', 'meetings')
 HOST = os.environ.get('PROJECT_DASHBOARD_STORAGE_HOST', '0.0.0.0')
 PORT = int(os.environ.get('PROJECT_DASHBOARD_STORAGE_PORT', '8766'))
+ADMIN_PIN = str(os.environ.get('PROJECT_DASHBOARD_ADMIN_PIN', '1337'))
 OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')
 OLLAMA_DEFAULT_MODEL = os.environ.get('OLLAMA_MODEL', 'hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M')
 OLLAMA_AUTOSTART = str(os.environ.get('PROJECT_DASHBOARD_OLLAMA_AUTOSTART', '1')).strip().lower() not in ('0', 'false', 'no')
 GITHUB_API_BASE = 'https://api.github.com'
+TRUSTED_ORIGINS_ENV = str(os.environ.get('PROJECT_DASHBOARD_TRUSTED_ORIGINS', '') or '').strip()
 BOOTSTRAP_STATUS = {
     'dbRestore': {'restored': False, 'source': 'unknown', 'rows': 0},
     'ollama': {'status': 'unknown', 'autostart': OLLAMA_AUTOSTART, 'detail': ''}
@@ -35,11 +38,19 @@ def utc_now_iso_z():
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
+def open_db_connection(path=DB_PATH):
+    conn = sqlite3.connect(path, timeout=10)
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA busy_timeout=10000')
+    conn.execute('PRAGMA synchronous=NORMAL')
+    return conn
+
+
 def _read_kv_rows(path):
     if not os.path.exists(path):
         return []
     try:
-        conn = sqlite3.connect(path)
+        conn = open_db_connection(path)
         try:
             rows = conn.execute('SELECT key, value, updatedAt FROM kv_store ORDER BY key').fetchall()
             return rows
@@ -71,7 +82,7 @@ def _read_kv_json(path):
 
 
 def restore_db_if_empty():
-    conn = sqlite3.connect(DB_PATH)
+    conn = open_db_connection(DB_PATH)
     try:
         existing_count = conn.execute('SELECT COUNT(*) FROM kv_store').fetchone()[0]
         if existing_count > 0:
@@ -158,15 +169,15 @@ def ensure_daily_backup(force=False):
     if not force and last_backup_day == today and os.path.exists(BACKUP_PATH) and os.path.exists(BACKUP_JSON_PATH):
         return False
 
-    source_conn = sqlite3.connect(DB_PATH)
-    backup_conn = sqlite3.connect(BACKUP_PATH)
+    source_conn = open_db_connection(DB_PATH)
+    backup_conn = open_db_connection(BACKUP_PATH)
     try:
         source_conn.backup(backup_conn)
     finally:
         backup_conn.close()
         source_conn.close()
 
-    snapshot_conn = sqlite3.connect(DB_PATH)
+    snapshot_conn = open_db_connection(DB_PATH)
     try:
         rows = snapshot_conn.execute('SELECT key, value FROM kv_store ORDER BY key').fetchall()
         payload = {
@@ -188,7 +199,7 @@ def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
     os.makedirs(MEETINGS_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = open_db_connection(DB_PATH)
     conn.execute('CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt TEXT NOT NULL)')
     conn.commit()
     conn.close()
@@ -211,13 +222,35 @@ def init_db():
 init_db()
 
 
+def _build_trusted_origins():
+    defaults = {
+        'http://127.0.0.1:' + str(PORT),
+        'http://localhost:' + str(PORT)
+    }
+    configured = set()
+    if TRUSTED_ORIGINS_ENV:
+        for item in TRUSTED_ORIGINS_ENV.split(','):
+            value = str(item or '').strip().rstrip('/')
+            if value:
+                configured.add(value)
+    return defaults.union(configured)
+
+
+TRUSTED_ORIGINS = _build_trusted_origins()
+
+
 class StorageHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         ensure_daily_backup()
         parsed = urlparse(self.path)
+        if not self._require_admin_pin_for_request(parsed.path):
+            return
         meeting_project_id = self._extract_meeting_project_id(parsed.path)
         if meeting_project_id:
             self._handle_meetings_get(meeting_project_id)
+            return
+        if parsed.path == '/api/auth/validate':
+            self._send_json({'ok': True})
             return
         if parsed.path == '/api/kv':
             self._send_json(self._read_all())
@@ -243,7 +276,12 @@ class StorageHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         ensure_daily_backup()
+        if not self._is_request_origin_allowed():
+            self._send_json({'error': 'Origin not allowed.'}, status=403)
+            return
         parsed = urlparse(self.path)
+        if not self._require_admin_pin_for_request(parsed.path):
+            return
         meeting_project_id = self._extract_meeting_project_id(parsed.path)
         if meeting_project_id:
             self._handle_meetings_post(meeting_project_id)
@@ -1318,10 +1356,18 @@ class StorageHandler(BaseHTTPRequestHandler):
         return None
 
     def do_OPTIONS(self):
+        if not self._is_request_origin_allowed():
+            self.send_response(403)
+            self._apply_security_headers()
+            self.end_headers()
+            return
+
         self.send_response(204)
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self._apply_cors_headers()
+        self._apply_security_headers()
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-GitHub-Token')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-GitHub-Token, X-Admin-Pin')
+        self.send_header('Access-Control-Max-Age', '600')
         self.end_headers()
 
     def log_message(self, fmt, *args):
@@ -1525,14 +1571,60 @@ class StorageHandler(BaseHTTPRequestHandler):
             safe = 'project'
         return safe[:80]
 
+    def _request_origin(self):
+        return str(self.headers.get('Origin', '') or '').strip().rstrip('/')
+
+    def _is_allowed_origin(self, origin):
+        if not origin:
+            return True
+        return origin in TRUSTED_ORIGINS
+
+    def _is_request_origin_allowed(self):
+        return self._is_allowed_origin(self._request_origin())
+
+    def _is_pin_protected_path(self, path):
+        if not path or not path.startswith('/api/'):
+            return False
+        return path != '/api/health'
+
+    def _read_admin_pin_header(self):
+        return str(self.headers.get('X-Admin-Pin', '') or '').strip()
+
+    def _is_admin_pin_valid(self):
+        candidate = self._read_admin_pin_header()
+        if not ADMIN_PIN:
+            return True
+        return hmac.compare_digest(candidate, ADMIN_PIN)
+
+    def _require_admin_pin_for_request(self, path):
+        if not self._is_pin_protected_path(path):
+            return True
+        if self._is_admin_pin_valid():
+            return True
+        self._send_json({'error': 'Admin PIN erforderlich oder ungueltig.', 'authRequired': True}, status=401)
+        return False
+
+    def _apply_cors_headers(self):
+        origin = self._request_origin()
+        if not origin:
+            return
+        if self._is_allowed_origin(origin):
+            self.send_header('Access-Control-Allow-Origin', origin)
+            self.send_header('Vary', 'Origin')
+
+    def _apply_security_headers(self):
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Referrer-Policy', 'no-referrer')
+
     def _read_all(self):
-        conn = sqlite3.connect(DB_PATH)
+        conn = open_db_connection(DB_PATH)
         rows = conn.execute('SELECT key, value FROM kv_store ORDER BY key').fetchall()
         conn.close()
         return {key: value for key, value in rows}
 
     def _write_value(self, key, value):
-        conn = sqlite3.connect(DB_PATH)
+        conn = open_db_connection(DB_PATH)
         if value is None:
             conn.execute('DELETE FROM kv_store WHERE key = ?', (key,))
         else:
@@ -1544,7 +1636,7 @@ class StorageHandler(BaseHTTPRequestHandler):
         conn.close()
 
     def _clear_all_values(self):
-        conn = sqlite3.connect(DB_PATH)
+        conn = open_db_connection(DB_PATH)
         conn.execute('DELETE FROM kv_store')
         conn.commit()
         conn.close()
@@ -1555,7 +1647,8 @@ class StorageHandler(BaseHTTPRequestHandler):
             self.send_response(status)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
             self.send_header('Content-Length', str(len(payload)))
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self._apply_cors_headers()
+            self._apply_security_headers()
             self.end_headers()
             self.wfile.write(payload)
         except (BrokenPipeError, ConnectionResetError):
@@ -1584,6 +1677,7 @@ class StorageHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', self._mime_type(full_path))
         self.send_header('Content-Length', str(len(content)))
+        self._apply_security_headers()
         self.end_headers()
         self.wfile.write(content)
 

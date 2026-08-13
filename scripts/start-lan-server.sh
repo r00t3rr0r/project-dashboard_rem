@@ -7,6 +7,8 @@ PROJECT_ROOT=${SCRIPT_DIR:h}
 HOST=${PROJECT_DASHBOARD_STORAGE_HOST:-0.0.0.0}
 PORT=${PROJECT_DASHBOARD_STORAGE_PORT:-8766}
 PYTHON_BIN=${PROJECT_DASHBOARD_PYTHON_BIN:-python3}
+ADMIN_PIN=${PROJECT_DASHBOARD_ADMIN_PIN:-1337}
+TRUSTED_ORIGINS=${PROJECT_DASHBOARD_TRUSTED_ORIGINS:-}
 
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   echo "[ERROR] Python executable not found: $PYTHON_BIN"
@@ -22,10 +24,18 @@ if command -v ipconfig >/dev/null 2>&1; then
   fi
 fi
 
+if [[ -z "$TRUSTED_ORIGINS" ]]; then
+  TRUSTED_ORIGINS="http://127.0.0.1:$PORT,http://localhost:$PORT"
+  if [[ -n "$LAN_IP" ]]; then
+    TRUSTED_ORIGINS="$TRUSTED_ORIGINS,http://$LAN_IP:$PORT"
+  fi
+fi
+
 echo "[projekt-dashboard] Starting storage server"
 echo "  host:   $HOST"
 echo "  port:   $PORT"
 echo "  python: $PYTHON_BIN"
+echo "  trusted origins: $TRUSTED_ORIGINS"
 echo ""
 if [[ -n "$LAN_IP" ]]; then
   echo "Open from this Mac:    http://127.0.0.1:$PORT/app.html"
@@ -37,4 +47,9 @@ echo "Stop server with Ctrl+C."
 echo ""
 
 cd "$PROJECT_ROOT"
-exec env PROJECT_DASHBOARD_STORAGE_HOST="$HOST" PROJECT_DASHBOARD_STORAGE_PORT="$PORT" "$PYTHON_BIN" storage_server.py
+exec env \
+  PROJECT_DASHBOARD_STORAGE_HOST="$HOST" \
+  PROJECT_DASHBOARD_STORAGE_PORT="$PORT" \
+  PROJECT_DASHBOARD_ADMIN_PIN="$ADMIN_PIN" \
+  PROJECT_DASHBOARD_TRUSTED_ORIGINS="$TRUSTED_ORIGINS" \
+  "$PYTHON_BIN" storage_server.py

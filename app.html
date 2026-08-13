@@ -9,10 +9,106 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
 <link rel="stylesheet" href="styles.css?v=20260802d">
-<link rel="stylesheet" href="theme-override.css?v=20260802f">
+<link rel="stylesheet" href="theme-override.css?v=20260813a">
 <!-- Data Layer -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
-  <script src="data.js?v=20260802d"></script>
+<script>
+  (function () {
+    'use strict';
+
+    var PIN_STORAGE_KEY = 'pd_admin_pin';
+
+    function readPin() {
+      try {
+        return String(window.sessionStorage.getItem(PIN_STORAGE_KEY) || '').trim();
+      } catch (_err) {
+        return '';
+      }
+    }
+
+    function setPin(pin) {
+      var value = String(pin || '').trim();
+      try {
+        if (!value) {
+          window.sessionStorage.removeItem(PIN_STORAGE_KEY);
+        } else {
+          window.sessionStorage.setItem(PIN_STORAGE_KEY, value);
+        }
+      } catch (_err) {}
+      return value;
+    }
+
+    function clearPin() {
+      setPin('');
+    }
+
+    function shouldAttachPinToUrl(url) {
+      try {
+        var parsed = new URL(String(url || ''), window.location.origin);
+        var isApiPath = parsed.pathname.indexOf('/api/') === 0;
+        if (!isApiPath) return false;
+
+        var sameOrigin = parsed.origin === window.location.origin;
+        var localHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+        return sameOrigin || localHost;
+      } catch (_err) {
+        return false;
+      }
+    }
+
+    function buildHeaders(sourceHeaders) {
+      if (typeof Headers === 'undefined') {
+        return sourceHeaders || {};
+      }
+      return new Headers(sourceHeaders || {});
+    }
+
+    var nativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
+    if (nativeFetch) {
+      window.fetch = function (input, init) {
+        var request = input;
+        var nextInit = init ? Object.assign({}, init) : {};
+        var targetUrl = '';
+
+        if (typeof input === 'string' || (input && typeof input.url === 'string')) {
+          targetUrl = typeof input === 'string' ? input : input.url;
+        }
+
+        if (input && typeof Request !== 'undefined' && input instanceof Request) {
+          request = input;
+          nextInit = init ? Object.assign({}, init) : {
+            method: input.method,
+            mode: input.mode,
+            cache: input.cache,
+            credentials: input.credentials,
+            redirect: input.redirect,
+            referrer: input.referrer,
+            integrity: input.integrity
+          };
+          targetUrl = input.url;
+        }
+
+        if (targetUrl && shouldAttachPinToUrl(targetUrl)) {
+          var pin = readPin();
+          if (pin) {
+            var headers = buildHeaders(nextInit.headers);
+            headers.set('X-Admin-Pin', pin);
+            nextInit.headers = headers;
+          }
+        }
+
+        return nativeFetch(request, nextInit);
+      };
+    }
+
+    window.ProjektDashboardSecurity = {
+      readPin: readPin,
+      setPin: setPin,
+      clearPin: clearPin
+    };
+  })();
+</script>
+  <script src="data.js?v=20260813a"></script>
 <script src="modules/auth.js?v=20260802b"></script>
 <!-- Core: App Router, Theme, Export/Import -->
 <script src="modules/app.js?v=20260802b"></script>
@@ -42,9 +138,22 @@
 <script src="modules/healthcheck.js?v=20260730c"></script>
 <script src="modules/timeline.js?v=20260730w"></script>
 </head>
-<body>
+<body class="admin-pin-locked">
   <div class="app-shell-glow app-shell-glow-left"></div>
   <div class="app-shell-glow app-shell-glow-right"></div>
+  <div id="admin-pin-gate" class="admin-pin-gate" role="dialog" aria-modal="true" aria-labelledby="admin-pin-title">
+    <div class="admin-pin-panel">
+      <p class="admin-pin-kicker">Sicherheitsfreigabe</p>
+      <h1 id="admin-pin-title">Administrator PIN erforderlich</h1>
+      <p class="admin-pin-text">Bitte PIN eingeben, um das Dashboard zu entsperren.</p>
+      <form id="admin-pin-form" class="admin-pin-form" autocomplete="off">
+        <label for="admin-pin-input">PIN</label>
+        <input id="admin-pin-input" name="admin-pin" type="password" inputmode="numeric" autocomplete="one-time-code" required>
+        <button id="admin-pin-submit" type="submit" class="btn btn-primary">Entsperren</button>
+      </form>
+      <p id="admin-pin-error" class="admin-pin-error" hidden>PIN ungueltig oder Server nicht erreichbar.</p>
+    </div>
+  </div>
   <!-- Sidebar Navigation -->
   <nav id="sidebar" class="sidebar">
     <div class="sidebar-top">
@@ -749,6 +858,126 @@
   <div id="modal-overlay" class="modal-overlay hidden">
     <div id="modal-content" class="modal"></div>
   </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var gate = document.getElementById('admin-pin-gate');
+      var form = document.getElementById('admin-pin-form');
+      var input = document.getElementById('admin-pin-input');
+      var submit = document.getElementById('admin-pin-submit');
+      var error = document.getElementById('admin-pin-error');
+
+      function setLockedState(isLocked) {
+        document.body.classList.toggle('admin-pin-locked', !!isLocked);
+        document.body.classList.toggle('admin-pin-unlocked', !isLocked);
+        if (gate) gate.hidden = !isLocked;
+      }
+
+      function showError(message) {
+        if (!error) return;
+        error.textContent = message || 'PIN ungueltig oder Server nicht erreichbar.';
+        error.hidden = false;
+      }
+
+      function clearError() {
+        if (!error) return;
+        error.hidden = true;
+      }
+
+      function validatePin(pin) {
+        return fetch('/api/auth/validate', {
+          method: 'GET',
+          cache: 'no-store',
+          headers: { 'X-Admin-Pin': pin }
+        }).then(function (res) {
+          return !!res.ok;
+        }).catch(function () {
+          return false;
+        });
+      }
+
+      function refreshAfterUnlock() {
+        if (!window.DataLayer || typeof window.DataLayer.refreshFromRemote !== 'function') {
+          if (window.AppShell && typeof window.AppShell.refreshAllModules === 'function') {
+            window.AppShell.refreshAllModules();
+          }
+          return;
+        }
+
+        window.DataLayer.refreshFromRemote().then(function () {
+          if (window.AppShell && typeof window.AppShell.refreshAllModules === 'function') {
+            window.AppShell.refreshAllModules();
+          }
+        }).catch(function () {
+          if (window.AppShell && typeof window.AppShell.refreshAllModules === 'function') {
+            window.AppShell.refreshAllModules();
+          }
+        });
+      }
+
+      function unlockWithPin(pin) {
+        if (window.ProjektDashboardSecurity && typeof window.ProjektDashboardSecurity.setPin === 'function') {
+          window.ProjektDashboardSecurity.setPin(pin);
+        }
+
+        return validatePin(pin).then(function (isValid) {
+          if (!isValid) {
+            if (window.ProjektDashboardSecurity && typeof window.ProjektDashboardSecurity.clearPin === 'function') {
+              window.ProjektDashboardSecurity.clearPin();
+            }
+            return false;
+          }
+
+          setLockedState(false);
+          clearError();
+          refreshAfterUnlock();
+          return true;
+        });
+      }
+
+      if (form) {
+        form.addEventListener('submit', function (event) {
+          event.preventDefault();
+          clearError();
+
+          var pin = input ? String(input.value || '').trim() : '';
+          if (!pin) {
+            showError('Bitte PIN eingeben.');
+            return;
+          }
+
+          if (submit) submit.disabled = true;
+          unlockWithPin(pin).then(function (ok) {
+            if (!ok) {
+              showError('PIN ungueltig oder Server nicht erreichbar.');
+              if (input) input.value = '';
+              if (input && input.focus) input.focus();
+            }
+          }).finally(function () {
+            if (submit) submit.disabled = false;
+          });
+        });
+      }
+
+      var storedPin = window.ProjektDashboardSecurity && typeof window.ProjektDashboardSecurity.readPin === 'function'
+        ? window.ProjektDashboardSecurity.readPin()
+        : '';
+
+      if (storedPin) {
+        unlockWithPin(storedPin).then(function (ok) {
+          if (!ok) {
+            setLockedState(true);
+            if (input && input.focus) input.focus();
+          }
+        });
+      } else {
+        setLockedState(true);
+        if (input && input.focus) input.focus();
+      }
+    })();
+  </script>
 
 </body>
 </html>

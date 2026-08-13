@@ -45,6 +45,44 @@ Aus dem lokalen Netzwerk:
 
 - Beispiel: http://192.168.1.50:8766/app.html
 
+## Internetbetrieb (Mehrere Mitarbeiter gleichzeitig)
+
+Empfohlene Struktur fuer den produktiven Betrieb:
+
+1. Zentraler Storage-Server (Single Source of Truth)
+2. Reverse Proxy mit TLS (z. B. Nginx/Caddy)
+3. Feste Trusted Origins ueber `PROJECT_DASHBOARD_TRUSTED_ORIGINS`
+4. Geschuetzter API-Zugriff per Admin-PIN Header
+5. Clients mit periodischem Remote-Sync (automatisches Nachladen)
+
+Damit koennen mehrere Mitarbeiter parallel arbeiten: jede Aenderung wird zentral in `data/projekt-dashboard.sqlite` gespeichert und andere Clients laden Aenderungen automatisch nach.
+
+### Sicherheits-Gate beim Oeffnen
+
+Beim Laden der App wird jetzt immer ein Admin-PIN abgefragt. Ohne gueltige PIN werden keine Inhalte angezeigt und API-Aufrufe auf geschuetzte Endpunkte blockiert.
+
+- Default-PIN: `1337`
+- Konfiguration per Umgebungsvariable: `PROJECT_DASHBOARD_ADMIN_PIN`
+- Validierung ueber API-Endpunkt: `/api/auth/validate`
+
+Beispiel Start mit expliziter PIN und Origins:
+
+```bash
+PROJECT_DASHBOARD_ADMIN_PIN=1337 \
+PROJECT_DASHBOARD_TRUSTED_ORIGINS="https://dashboard.example.com,http://127.0.0.1:8766" \
+PROJECT_DASHBOARD_STORAGE_HOST=0.0.0.0 \
+PROJECT_DASHBOARD_STORAGE_PORT=8766 \
+python3 storage_server.py
+```
+
+### Empfehlung fuer die Internet-Freigabe
+
+1. Nur den Reverse Proxy ins Internet exponieren (Port 443).
+2. Storage-Server intern binden oder per Firewall auf Proxy-Host beschraenken.
+3. `PROJECT_DASHBOARD_TRUSTED_ORIGINS` nur auf echte Frontend-Domains setzen.
+4. PIN regelmaessig wechseln (`PROJECT_DASHBOARD_ADMIN_PIN`).
+5. Tägliche Backups in `data/` pruefen und extern sichern.
+
 Beim Start werden automatisch vorbereitet:
 
 - KV-Datenbank (`data/projekt-dashboard.sqlite`)
