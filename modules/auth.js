@@ -54,16 +54,107 @@
   var PASSWORD_SCHEME = 'pbkdf2';
   var PASSWORD_PBKDF2_ITERATIONS = 180000;
   var PASSWORD_PBKDF2_BYTES = 32;
+  var SESSION_VERSION = 2;
+  var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+  var SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000;
+  var SESSION_TOUCH_INTERVAL_MS = 30 * 1000;
   var AUTH_REFRESH_INTERVAL_MS = 15000;
   var wrapped = false;
   var originalMethods = {};
   var authRefreshTimer = null;
 
+  function stableHashHex(input) {
+    var text = String(input || '');
+    var hash = 2166136261;
+    var i;
+    for (i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return String(hash >>> 0).padStart(8, '0');
+  }
+
+  function toIsoStringSafe(value) {
+    if (!value) return '';
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return '';
+    return date.toISOString();
+  }
+
+  function getUserAgentTag() {
+    var ua = (window.navigator && window.navigator.userAgent) ? String(window.navigator.userAgent) : '';
+    return stableHashHex(ua);
+  }
+
+  function createPasswordStateTag(passwordHash) {
+    return stableHashHex(String(passwordHash || ''));
+  }
+
+  function createSessionId() {
+    if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+      var bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      return Array.from(bytes).map(function (byte) {
+        return byte.toString(16).padStart(2, '0');
+      }).join('');
+    }
+    return String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+  }
+
+  function buildSessionForEmployee(employee) {
+    var nowIso = new Date().toISOString();
+    var hash = employee && employee.auth && employee.auth.login ? employee.auth.login.passwordHash : '';
+    return {
+      version: SESSION_VERSION,
+      sessionId: createSessionId(),
+      employeeId: employee && employee.id ? String(employee.id) : '',
+      uaTag: getUserAgentTag(),
+      passwordStateTag: createPasswordStateTag(hash),
+      issuedAt: nowIso,
+      lastSeenAt: nowIso
+    };
+  }
+
+  function isSessionExpired(session) {
+    var now = Date.now();
+    var issuedAt = Date.parse(String(session && session.issuedAt || ''));
+    var lastSeenAt = Date.parse(String(session && session.lastSeenAt || ''));
+    if (isNaN(issuedAt) || isNaN(lastSeenAt)) return true;
+    if ((now - issuedAt) > SESSION_MAX_AGE_MS) return true;
+    if ((now - lastSeenAt) > SESSION_IDLE_TIMEOUT_MS) return true;
+    return false;
+  }
+
+  function sessionMatchesClient(session) {
+    var uaTag = String(session && session.uaTag || '');
+    if (!uaTag) return false;
+    return constantTimeEquals(uaTag, getUserAgentTag());
+  }
+
+  function touchSessionIfNeeded(session) {
+    if (!session || typeof session !== 'object') return;
+    var lastSeenAt = Date.parse(String(session.lastSeenAt || ''));
+    var now = Date.now();
+    if (!isNaN(lastSeenAt) && (now - lastSeenAt) < SESSION_TOUCH_INTERVAL_MS) return;
+    session.lastSeenAt = new Date(now).toISOString();
+    writeSession(session);
+  }
+
   function readSession() {
     try {
       var raw = window.sessionStorage.getItem(SESSION_KEY);
       var parsed = raw ? JSON.parse(raw) : {};
-      return parsed && typeof parsed === 'object' ? parsed : {};
+      if (!parsed || typeof parsed !== 'object') return {};
+
+      return {
+        version: Number(parsed.version || 0),
+        sessionId: String(parsed.sessionId || ''),
+        employeeId: String(parsed.employeeId || ''),
+        uaTag: String(parsed.uaTag || ''),
+        passwordStateTag: String(parsed.passwordStateTag || ''),
+        issuedAt: toIsoStringSafe(parsed.issuedAt),
+        lastSeenAt: toIsoStringSafe(parsed.lastSeenAt)
+      };
     } catch (_err) {
       return {};
     }
@@ -75,7 +166,17 @@
         window.sessionStorage.removeItem(SESSION_KEY);
         return;
       }
-      window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(data));
+      var sessionData = {
+        version: Number(data.version || SESSION_VERSION),
+        sessionId: String(data.sessionId || ''),
+        employeeId: String(data.employeeId || ''),
+        uaTag: String(data.uaTag || ''),
+        passwordStateTag: String(data.passwordStateTag || ''),
+        issuedAt: toIsoStringSafe(data.issuedAt),
+        lastSeenAt: toIsoStringSafe(data.lastSeenAt)
+      };
+
+      window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
     } catch (_err) {}
   }
 
@@ -183,6 +284,21 @@
       writeSession(null);
       return null;
     }
+
+    var isLegacySession = Number(session.version || 0) < SESSION_VERSION;
+    var passwordStateTag = createPasswordStateTag(employee.auth.login.passwordHash);
+    if (
+      isLegacySession ||
+      !session.sessionId ||
+      !sessionMatchesClient(session) ||
+      isSessionExpired(session) ||
+      !constantTimeEquals(String(session.passwordStateTag || ''), passwordStateTag)
+    ) {
+      writeSession(null);
+      return null;
+    }
+
+    touchSessionIfNeeded(session);
 
     return employee;
   }
@@ -753,7 +869,7 @@
         if (!isValid) {
           return { ok: false, message: 'Passwort ist nicht korrekt.' };
         }
-        writeSession({ employeeId: employee.id, loggedInAt: new Date().toISOString() });
+        writeSession(buildSessionForEmployee(employee));
         emitAuthChanged();
         refreshUi();
         return { ok: true, user: employee };

@@ -52,6 +52,9 @@
   var remoteKvLastCheckedAt = '';
   var remoteKvLastError = '';
   var startupReadyPromise = null;
+  var remoteSyncTimer = null;
+  var remoteSyncInFlight = false;
+  var REMOTE_SYNC_INTERVAL_MS = 8000;
 
   function getStorageStatus() {
     return {
@@ -115,10 +118,28 @@
       var endpoint = candidates[index];
       return fetch(endpoint, requestOptions)
         .then(function (res) {
+          if (res.status === 401 || res.status === 403) {
+            return res.json().catch(function () { return {}; }).then(function (body) {
+              return {
+                __authError: true,
+                message: body && body.error
+                  ? String(body.error)
+                  : 'Admin-PIN erforderlich oder ungueltig.'
+              };
+            });
+          }
           if (!res.ok) return null;
           return res.json().catch(function () { return {}; });
         })
         .then(function (json) {
+          if (json && json.__authError) {
+            remoteKvLastCheckedAt = new Date().toISOString();
+            remoteKvLastError = json.message || 'Admin-PIN erforderlich oder ungueltig.';
+            remoteKvReachable = false;
+            emitStorageStatusChanged();
+            return { ok: false, path: endpoint, payload: null, authRequired: true };
+          }
+
           if (json === null) return tryNext(index + 1);
           remoteKvLastCheckedAt = new Date().toISOString();
           remoteKvLastError = '';
@@ -420,42 +441,73 @@
     });
   }
 
+  function createStorageFingerprint(storageObj) {
+    var source = storageObj && typeof storageObj === 'object' ? storageObj : {};
+    var keys = Object.keys(source).sort();
+    var parts = [];
+
+    keys.forEach(function (key) {
+      var value = source[key];
+      if (value === null || value === undefined) return;
+      parts.push(key + '=' + String(value));
+    });
+
+    return parts.join('\n');
+  }
+
+  function applyRemoteSnapshotPayload(payload) {
+    var nextStorage = Object.create(null);
+    var previousFingerprint = createStorageFingerprint(memoryStorage);
+
+    Object.keys(payload).forEach(function (key) {
+      var normalizedKey = normalizeStorageKey(key);
+      var value = payload[key];
+      if (value === null || value === undefined) return;
+      nextStorage[normalizedKey] = normalizeStorageValue(value);
+    });
+
+    var nextFingerprint = createStorageFingerprint(nextStorage);
+    var changed = previousFingerprint !== nextFingerprint;
+    if (!changed) return false;
+
+    memoryStorage = nextStorage;
+
+    listNativeManagedKeys().forEach(function (key) {
+      if (Object.prototype.hasOwnProperty.call(memoryStorage, key)) return;
+      try { nativeStorageApi.removeItem(key); } catch (_removeErr) {}
+    });
+
+    Object.keys(memoryStorage).forEach(function (key) {
+      try {
+        var localValue = toLocalPersistValue(key, memoryStorage[key]);
+        if (localValue === null) nativeStorageApi.removeItem(key);
+        else nativeStorageApi.setItem(key, localValue);
+      } catch (_writeErr) {}
+    });
+
+    rebuildLocalDatabaseFromMemory();
+    return true;
+  }
+
   function loadRemoteSnapshot() {
     return fetchRemoteKv('GET').then(function (result) {
       if (!result.ok || !result.payload || typeof result.payload !== 'object') {
         remoteKvReachable = false;
         emitStorageStatusChanged();
-        return false;
+        return { ok: false, changed: false, authRequired: !!(result && result.authRequired) };
       }
 
       var payload = result.payload;
-
-      memoryStorage = Object.create(null);
-      Object.keys(payload).forEach(function (key) {
-        var normalizedKey = normalizeStorageKey(key);
-        var value = payload[key];
-        if (value === null || value === undefined) return;
-        memoryStorage[normalizedKey] = normalizeStorageValue(value);
-      });
-
-      Object.keys(memoryStorage).forEach(function (key) {
-        try {
-          var localValue = toLocalPersistValue(key, memoryStorage[key]);
-          if (localValue === null) nativeStorageApi.removeItem(key);
-          else nativeStorageApi.setItem(key, localValue);
-        } catch (_e) {}
-      });
-
-      rebuildLocalDatabaseFromMemory();
+      var changed = applyRemoteSnapshotPayload(payload);
       remoteKvReachable = true;
       emitStorageStatusChanged();
-      return true;
+      return { ok: true, changed: changed, authRequired: false };
     }).catch(function () {
       remoteKvReachable = false;
       remoteKvLastCheckedAt = new Date().toISOString();
       remoteKvLastError = 'Snapshot-Ladevorgang fehlgeschlagen';
       emitStorageStatusChanged();
-      return false;
+      return { ok: false, changed: false, authRequired: false };
     });
   }
 
@@ -463,8 +515,8 @@
     if (startupReadyPromise) return startupReadyPromise;
 
     startupReadyPromise = ensureDatabaseReady().then(function () {
-      return loadRemoteSnapshot().then(function (loadedFromRemote) {
-        if (loadedFromRemote) {
+      return loadRemoteSnapshot().then(function (snapshotResult) {
+        if (snapshotResult && snapshotResult.ok) {
           hydrateCollections();
           return true;
         }
@@ -502,12 +554,38 @@
   }
 
   function refreshFromRemote() {
-    return loadRemoteSnapshot().then(function (loadedFromRemote) {
-      if (!loadedFromRemote) return false;
+    return loadRemoteSnapshot().then(function (snapshotResult) {
+      if (!snapshotResult || !snapshotResult.ok) return false;
+      if (!snapshotResult.changed) return false;
       hydrateCollections();
       emitDataChanged('hydrate', 'all');
       return true;
     });
+  }
+
+  function startRemoteSyncLoop() {
+    if (remoteSyncTimer) return;
+
+    function runSyncTick() {
+      if (remoteSyncInFlight) return;
+      remoteSyncInFlight = true;
+      refreshFromRemote().catch(function () {
+        return false;
+      }).finally(function () {
+        remoteSyncInFlight = false;
+      });
+    }
+
+    remoteSyncTimer = window.setInterval(function () {
+      if (document.hidden) return;
+      runSyncTick();
+    }, REMOTE_SYNC_INTERVAL_MS);
+
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) runSyncTick();
+    });
+
+    window.addEventListener('focus', runSyncTick);
   }
 
   function removeValueAsync(key) {
@@ -867,7 +945,9 @@
 
   snapshotLegacyStorage();
   patchStorageApi();
-  runStartupHydration();
+  runStartupHydration().finally(function () {
+    startRemoteSyncLoop();
+  });
 
   /* ---------- Save Helpers ---------- */
 

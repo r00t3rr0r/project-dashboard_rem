@@ -3,6 +3,8 @@
    ======================================== */
 (function(){'use strict';
 
+var AI_BACKEND_URL=(window.location&&/^https?:/i.test(window.location.origin||''))?window.location.origin.replace(/\/$/,''):'';
+
 function escapeHtml(str){
   if(!str)return'';
   var div=document.createElement('div');
@@ -68,6 +70,118 @@ function getAssignableEmployees(){
     return auth.getAssignableEmployees(employees);
   }
   return employees;
+}
+
+function isAdminMode(auth){
+  if(!auth||typeof auth.getMode!=='function')return false;
+  var mode=String(auth.getMode()||'').toLowerCase();
+  return mode==='setup'||mode==='admin';
+}
+
+function getAiBackendCandidates(){
+  var origin=(window.location&&window.location.origin)?window.location.origin:'';
+  var list=[origin,AI_BACKEND_URL,'http://localhost:8766','http://127.0.0.1:8766','http://127.0.0.1:8765'];
+  if(origin)list.push(origin);
+  return list.filter(function(item,idx){return item&&list.indexOf(item)===idx;});
+}
+
+function requestAiTaskDraft(payload){
+  var bases=getAiBackendCandidates();
+
+  function tryBase(index,lastError){
+    if(index>=bases.length)return Promise.reject(lastError||new Error('Kein KI-Backend erreichbar.'));
+    var endpoint=bases[index]+'/api/ai/meeting-task-draft';
+    var options={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})};
+    return fetch(endpoint,options).then(function(res){
+      return res.json().catch(function(){return {};}).then(function(body){
+        if(!res.ok){
+          var err=new Error(body&&body.error?body.error:('HTTP '+res.status+' @ '+endpoint));
+          if(res.status===404||res.status===405||res.status===501)return tryBase(index+1,err);
+          throw err;
+        }
+        return body;
+      });
+    }).catch(function(err){
+      if(index+1<bases.length)return tryBase(index+1,err);
+      throw err;
+    });
+  }
+
+  return tryBase(0,null);
+}
+
+function setMultiSelectValues(selectEl,values){
+  if(!selectEl||!selectEl.options)return;
+  var map={};
+  (Array.isArray(values)?values:[]).forEach(function(value){
+    map[String(value)]=true;
+  });
+  for(var i=0;i<selectEl.options.length;i++){
+    var option=selectEl.options[i];
+    option.selected=!!map[String(option.value)];
+  }
+}
+
+function normalizeText(value){
+  return String(value||'').toLowerCase();
+}
+
+function collectEmployeeLoad(projectId){
+  var tasks=(window.DataLayer&&typeof window.DataLayer.getTasks==='function')?window.DataLayer.getTasks():[];
+  var loads={};
+  tasks.forEach(function(task){
+    if(!task||!task.assigneeId)return;
+    var status=String(task.status||'').toLowerCase();
+    if(status==='done'||status==='closed')return;
+    var key=String(task.assigneeId);
+    if(!loads[key])loads[key]={open:0,openInProject:0,highPressure:0};
+    loads[key].open++;
+    if(projectId&&String(task.projectId||'')===String(projectId))loads[key].openInProject++;
+    var isCritical=String(task.priority||'')==='blocker'||String(task.priority||'')==='high'||String(task.urgency||'')==='critical'||String(task.urgency||'')==='high'||!!task.blocked;
+    if(isCritical)loads[key].highPressure++;
+  });
+  return loads;
+}
+
+function rankAssigneeSuggestions(taskText,projectId,employees){
+  var list=Array.isArray(employees)?employees:[];
+  if(!list.length)return [];
+
+  var text=normalizeText(taskText);
+  var loads=collectEmployeeLoad(projectId);
+  var roleHintMap=[
+    {keywords:['frontend','ui','css','html','design'],roles:['frontend','ui','designer']},
+    {keywords:['backend','api','server','datenbank','db'],roles:['backend','api','devops']},
+    {keywords:['test','qa','bug','qualitaet'],roles:['qa','quality','test']},
+    {keywords:['deploy','infrastruktur','infra','ci','pipeline'],roles:['devops','platform','infrastruktur']},
+    {keywords:['planung','abstimmung','stakeholder','konzept'],roles:['project lead','manager','product']}
+  ];
+
+  function computeRoleFit(roleText){
+    var fit=0;
+    for(var i=0;i<roleHintMap.length;i++){
+      var hint=roleHintMap[i];
+      var keywordHit=hint.keywords.some(function(word){return text.indexOf(word)!==-1;});
+      if(!keywordHit)continue;
+      var roleHit=hint.roles.some(function(role){return roleText.indexOf(role)!==-1;});
+      if(roleHit)fit++;
+    }
+    return fit;
+  }
+
+  return list.map(function(employee){
+    var id=String(employee&&employee.id||'');
+    var roleText=normalizeText((employee&&employee.role||'')+' '+(employee&&employee.name||''));
+    var fit=computeRoleFit(roleText);
+    var load=loads[id]||{open:0,openInProject:0,highPressure:0};
+    var score=(load.open*1.2)+(load.openInProject*0.8)+(load.highPressure*1.5)-(fit*1.35);
+    return {
+      employee:employee,
+      score:Math.round(score*100)/100,
+      roleFit:fit,
+      load:load
+    };
+  }).sort(function(a,b){return a.score-b.score;});
 }
 
 function getDateKey(offsetDays){
@@ -174,13 +288,28 @@ function openQuickTaskModal(){
     var projects=getVisibleProjects();
     var employees=getAssignableEmployees();
     var labels=window.DataLayer.getLabels();
+    var adminMode=isAdminMode(auth);
     
     var pOpts=buildProjectOptions(projects,'-- Projekt waehlen --');
     var eOpts=buildEmployeeOptions(employees,'-- Zuweisen --');
     var lOpts=buildLabelOptions(labels);
+    var aiToolsHtml=adminMode
+      ? '<div class="task-ai-panel">'
+        +'<div class="task-ai-head"><strong>KI-Assistent (Admin)</strong><small>Aus Titel automatisch Entwurf und Verteilung erzeugen</small></div>'
+        +'<div class="task-ai-actions">'
+          +'<button type="button" class="btn btn-secondary" id="qtm-ai-fill">KI-Entwurf aus Titel</button>'
+          +'<button type="button" class="btn btn-secondary" id="qtm-ai-assign">KI-Zuweisung</button>'
+          +'<button type="button" class="btn btn-secondary hidden" id="qtm-ai-chain">Kettenvorschlag uebernehmen</button>'
+        +'</div>'
+        +'<label class="task-ai-check"><input type="checkbox" id="qtm-ai-autoassign" checked> Mitarbeiter automatisch vorschlagen</label>'
+        +'<div class="task-ai-status" id="qtm-ai-status">Bereit fuer KI-Vervollstaendigung.</div>'
+        +'<div class="task-ai-hint hidden" id="qtm-ai-hint"></div>'
+      +'</div>'
+      : '';
     
     content.innerHTML='<h2>Neue Aufgabe</h2>' +
       '<div class="form-group"><label>Titel *</label><input type="text" id="qtm-title"></div>' +
+      aiToolsHtml +
       '<div class="form-group"><label>Beschreibung</label><textarea id="qtm-desc" rows="3"></textarea></div>' +
       '<div class="task-cockpit-grid">' +
       '  <div class="form-group"><label>Priorität *</label><select id="qtm-prio"><option value="low">Niedrig</option><option value="medium" selected>Mittel</option><option value="high">Hoch</option><option value="blocker">Blocker</option></select></div>' +
@@ -200,6 +329,249 @@ function openQuickTaskModal(){
       '<div class="modal-actions">' +
       '<button class="btn btn-secondary" id="qt-cancel">Abbrechen</button>' +
       '<button class="btn btn-primary" id="qt-submit">Erstellen</button></div>';
+
+    var aiState={loading:false,draft:null,suggestions:[]};
+
+    function updateAiStatus(message,isError){
+      var statusEl=document.getElementById('qtm-ai-status');
+      if(!statusEl)return;
+      statusEl.textContent=String(message||'');
+      statusEl.classList.toggle('is-error',!!isError);
+    }
+
+    function toggleAiButtons(disabled){
+      ['qtm-ai-fill','qtm-ai-assign','qtm-ai-chain'].forEach(function(id){
+        var btn=document.getElementById(id);
+        if(btn)btn.disabled=!!disabled;
+      });
+    }
+
+    function getProjectSelection(){
+      var projectId=((document.getElementById('qtm-project')||{}).value||'').trim();
+      var project=projects.find(function(item){return String(item.id)===projectId;})||null;
+      return {projectId:projectId,project:project};
+    }
+
+    function applyLabelSuggestions(labelNames){
+      var names=(Array.isArray(labelNames)?labelNames:[]).map(function(item){
+        return String(item||'').trim().toLowerCase();
+      }).filter(Boolean);
+      if(!names.length)return;
+      var matched=[];
+      labels.forEach(function(label){
+        var labelName=String(label&&label.name||'').trim().toLowerCase();
+        if(!labelName)return;
+        if(names.indexOf(labelName)!==-1)matched.push(String(label.id));
+      });
+      var labelsSelect=document.getElementById('qtm-labels');
+      if(labelsSelect&&matched.length)setMultiSelectValues(labelsSelect,matched);
+    }
+
+    function applyScheduleSuggestion(schedule){
+      if(!schedule||typeof schedule!=='object')return;
+      var modeSelect=document.getElementById('qtm-schedule-mode');
+      if(!modeSelect)return;
+      var mode=String(schedule.mode||'none');
+      modeSelect.value=mode;
+      renderModalScheduleFields();
+      if(mode==='deadline'){
+        var dl=document.getElementById('qtm-deadline');
+        if(dl)dl.value=String(schedule.deadline||'');
+      }else if(mode==='fixed'){
+        var fx=document.getElementById('qtm-fixed');
+        if(fx)fx.value=String(schedule.fixedAt||'');
+      }else if(mode==='range'){
+        var rs=document.getElementById('qtm-range-start');
+        var re=document.getElementById('qtm-range-end');
+        if(rs)rs.value=String(schedule.rangeStart||'');
+        if(re)re.value=String(schedule.rangeEnd||'');
+      }
+    }
+
+    function renderAssigneeHint(ranking){
+      var hintEl=document.getElementById('qtm-ai-hint');
+      if(!hintEl)return;
+      if(!ranking||!ranking.length){
+        hintEl.classList.add('hidden');
+        hintEl.innerHTML='';
+        return;
+      }
+      var top=ranking.slice(0,3).map(function(entry,index){
+        var employee=entry.employee||{};
+        var load=entry.load||{open:0,openInProject:0,highPressure:0};
+        var role=employee.role?(' - '+employee.role):'';
+        return '<div><strong>'+(index+1)+'. '+escapeHtml(employee.name||'Mitarbeiter')+role+'</strong> '
+          +'<span>Score '+escapeHtml(String(entry.score))+' | Offen '+escapeHtml(String(load.open))+' | Projekt '+escapeHtml(String(load.openInProject))+' | Kritisch '+escapeHtml(String(load.highPressure))+'</span></div>';
+      }).join('');
+      hintEl.innerHTML=top;
+      hintEl.classList.remove('hidden');
+    }
+
+    function applyAssigneeRecommendation(){
+      var title=((document.getElementById('qtm-title')||{}).value||'').trim();
+      var desc=((document.getElementById('qtm-desc')||{}).value||'').trim();
+      var projectInfo=getProjectSelection();
+      var ranking=rankAssigneeSuggestions(title+' '+desc,projectInfo.projectId,employees);
+      renderAssigneeHint(ranking);
+      if(!ranking.length){
+        updateAiStatus('Keine Mitarbeiterdaten fuer KI-Zuweisung verfuegbar.',true);
+        return;
+      }
+      var best=ranking[0];
+      var assigneeSelect=document.getElementById('qtm-assignee');
+      if(assigneeSelect&&best&&best.employee&&best.employee.id){
+        assigneeSelect.value=String(best.employee.id);
+        updateAiStatus('Vorgeschlagene Zuweisung: '+String(best.employee.name||'Mitarbeiter')+'.',false);
+      }
+    }
+
+    function buildChainRowsFromSuggestions(taskSuggestions){
+      var out=[];
+      (Array.isArray(taskSuggestions)?taskSuggestions:[]).forEach(function(item){
+        if(!item||typeof item!=='object')return;
+        var title=String(item.titleDe||item.titleEn||'').trim();
+        if(!title)return;
+        out.push({
+          title:title,
+          description:String(item.descriptionDe||item.descriptionEn||'').trim(),
+          effortHours:String(item.effortHours||'0')
+        });
+      });
+      return out;
+    }
+
+    function applyTaskDraftToForm(draft){
+      if(!draft||typeof draft!=='object')return;
+      var task=draft.task&&typeof draft.task==='object'?draft.task:{};
+      var taskSuggestions=Array.isArray(draft.taskSuggestions)?draft.taskSuggestions:[];
+      aiState.suggestions=taskSuggestions;
+      aiState.draft=draft;
+
+      var descEl=document.getElementById('qtm-desc');
+      var prioEl=document.getElementById('qtm-prio');
+      var urgencyEl=document.getElementById('qtm-urgency');
+      var effortEl=document.getElementById('qtm-effort');
+      var subtaskEl=document.getElementById('qtm-subtasks');
+      var noteEl=document.getElementById('qtm-note');
+
+      if(descEl){
+        descEl.value=String(task.descriptionDe||task.descriptionEn||descEl.value||'').trim();
+      }
+      if(prioEl&&task.priority)prioEl.value=String(task.priority);
+      if(urgencyEl&&task.urgency)urgencyEl.value=String(task.urgency);
+      if(effortEl&&task.effortHours!==undefined&&task.effortHours!==null){
+        var effortNum=parseFloat(task.effortHours);
+        if(!isNaN(effortNum))effortEl.value=String(Math.max(0,Math.round(effortNum*2)/2));
+      }
+
+      applyScheduleSuggestion(task.schedule||{});
+
+      if(subtaskEl){
+        var subtasks=Array.isArray(task.subtasksDe)&&task.subtasksDe.length?task.subtasksDe:(Array.isArray(task.subtasksEn)?task.subtasksEn:[]);
+        if(subtasks.length){
+          subtaskEl.value=subtasks.join('\n');
+        }else if(taskSuggestions.length){
+          subtaskEl.value=taskSuggestions.map(function(item){
+            return String(item.titleDe||item.titleEn||'').trim();
+          }).filter(Boolean).join('\n');
+        }
+      }
+
+      if(noteEl&&task.note){
+        var existing=String(noteEl.value||'').trim();
+        noteEl.value=existing?(existing+'\n\n'+String(task.note).trim()):String(task.note).trim();
+      }
+
+      applyLabelSuggestions(task.labels);
+
+      var chainBtn=document.getElementById('qtm-ai-chain');
+      if(chainBtn){
+        chainBtn.classList.toggle('hidden',taskSuggestions.length<2);
+      }
+
+      var autoAssign=((document.getElementById('qtm-ai-autoassign')||{}).checked)!==false;
+      if(autoAssign)applyAssigneeRecommendation();
+    }
+
+    function collectAiContext(project){
+      var tasks=(window.DataLayer&&typeof window.DataLayer.getTasks==='function')?window.DataLayer.getTasks():[];
+      var employeesSafe=Array.isArray(employees)?employees:[];
+      var projectTasks=tasks.filter(function(task){
+        return task&&String(task.projectId||'')===String(project.id||'');
+      }).slice(0,120).map(function(task){
+        return {
+          id:task.id,
+          title:task.title||'',
+          status:task.status||'',
+          priority:task.priority||'',
+          urgency:task.urgency||'',
+          assigneeId:task.assigneeId||'',
+          effortHours:task.effortHours||0
+        };
+      });
+
+      return {
+        project:{
+          id:project.id||'',
+          title:project.title||project.name||'',
+          description:project.description||'',
+          status:project.status||''
+        },
+        team:employeesSafe.map(function(employee){
+          return {id:employee.id||'',name:employee.name||'',role:employee.role||''};
+        }),
+        tasks:projectTasks
+      };
+    }
+
+    function runAiDraftFromTitle(){
+      if(aiState.loading)return;
+      var title=((document.getElementById('qtm-title')||{}).value||'').trim();
+      if(!title){
+        updateAiStatus('Bitte zuerst einen kurzen Aufgabentitel eingeben.',true);
+        var titleEl=document.getElementById('qtm-title');
+        if(titleEl&&titleEl.focus)titleEl.focus();
+        return;
+      }
+      var selection=getProjectSelection();
+      if(!selection.project){
+        updateAiStatus('Fuer die KI-Generierung bitte zuerst ein Projekt waehlen.',true);
+        return;
+      }
+
+      aiState.loading=true;
+      toggleAiButtons(true);
+      updateAiStatus('KI erzeugt Entwurf aus dem Titel ...',false);
+
+      var mode=((document.getElementById('qtm-schedule-mode')||{}).value||'none').trim()||'none';
+      var payload={
+        projectId:String(selection.project.id||''),
+        projectTitle:String(selection.project.title||selection.project.name||'Projekt'),
+        draftInput:title,
+        options:{
+          scheduleMode:mode,
+          eventType:'task',
+          createSubtasks:true,
+          splitIntoMultiple:true
+        },
+        existingData:collectAiContext(selection.project)
+      };
+
+      requestAiTaskDraft(payload).then(function(result){
+        var draft=result&&result.draft&&typeof result.draft==='object'?result.draft:null;
+        if(!draft){
+          throw new Error('KI konnte keinen verwertbaren Entwurf liefern.');
+        }
+        applyTaskDraftToForm(draft);
+        var suggestionCount=(Array.isArray(draft.taskSuggestions)?draft.taskSuggestions.length:0);
+        updateAiStatus('KI-Entwurf uebernommen. '+(suggestionCount?String(suggestionCount)+' Folgeaufgaben erkannt.':'Keine Folgeaufgaben erkannt.'),false);
+      }).catch(function(err){
+        updateAiStatus('KI-Entwurf fehlgeschlagen: '+String(err&&err.message?err.message:err),true);
+      }).finally(function(){
+        aiState.loading=false;
+        toggleAiButtons(false);
+      });
+    }
     
     function renderModalScheduleFields(){
       var modeEl=document.getElementById('qtm-schedule-mode');
@@ -231,6 +603,47 @@ function openQuickTaskModal(){
     var cancelBtn=document.getElementById('qt-cancel');
     if(cancelBtn){
       cancelBtn.addEventListener('click',closeSharedModal);
+    }
+
+    if(adminMode){
+      var aiFillBtn=document.getElementById('qtm-ai-fill');
+      if(aiFillBtn)aiFillBtn.addEventListener('click',runAiDraftFromTitle);
+
+      var aiAssignBtn=document.getElementById('qtm-ai-assign');
+      if(aiAssignBtn)aiAssignBtn.addEventListener('click',function(){
+        applyAssigneeRecommendation();
+      });
+
+      var aiChainBtn=document.getElementById('qtm-ai-chain');
+      if(aiChainBtn){
+        aiChainBtn.addEventListener('click',function(){
+          var rows=buildChainRowsFromSuggestions(aiState.suggestions);
+          if(rows.length<2){
+            updateAiStatus('Fuer eine Kettenaufgabe werden mindestens zwei KI-Vorschlaege benoetigt.',true);
+            return;
+          }
+          var projectId=((document.getElementById('qtm-project')||{}).value||'').trim();
+          var assigneeId=((document.getElementById('qtm-assignee')||{}).value||'').trim();
+          var priority=((document.getElementById('qtm-prio')||{}).value||'medium').trim();
+          var urgency=((document.getElementById('qtm-urgency')||{}).value||'normal').trim();
+          var noteText=((document.getElementById('qtm-note')||{}).value||'').trim();
+          var labelValues=[];
+          var labelSelect=document.getElementById('qtm-labels');
+          if(labelSelect&&labelSelect.selectedOptions){
+            for(var li=0;li<labelSelect.selectedOptions.length;li++)labelValues.push(labelSelect.selectedOptions[li].value);
+          }
+          closeSharedModal();
+          openTaskChainModal({
+            projectId:projectId,
+            assigneeId:assigneeId,
+            priority:priority,
+            urgency:urgency,
+            noteText:noteText,
+            labelIds:labelValues,
+            rows:rows
+          });
+        });
+      }
     }
     
     document.getElementById('qt-submit').addEventListener('click',function(){
@@ -531,7 +944,7 @@ function openDepartmentNoticeModal(){
   }catch(e){console.error('[QuickTask notice]',e);}
 }
 
-function openTaskChainModal(){
+function openTaskChainModal(prefill){
   try{
     var auth=getAuthManager();
     if(auth&&typeof auth.canCreateTask==='function'&&!auth.canCreateTask()){
@@ -550,8 +963,18 @@ function openTaskChainModal(){
     var eOpts=buildEmployeeOptions(employees,'-- Optional zuweisen --');
     var lOpts=buildLabelOptions(labels);
 
+    var prefilledRows=Array.isArray(prefill&&prefill.rows)?prefill.rows.filter(function(row){
+      return row&&String(row.title||'').trim();
+    }).map(function(row){
+      return {
+        title:String(row.title||'').trim(),
+        description:String(row.description||'').trim(),
+        effortHours:String(row.effortHours||'0')
+      };
+    }):[];
+
     var state={
-      rows:[
+      rows:prefilledRows.length?prefilledRows:[
         {title:'',description:'',effortHours:'0'},
         {title:'',description:'',effortHours:'0'}
       ]
@@ -647,6 +1070,23 @@ function openTaskChainModal(){
     }
 
     renderRows();
+
+    if(prefill&&typeof prefill==='object'){
+      var projectSelect=document.getElementById('qcm-project');
+      if(projectSelect&&prefill.projectId)projectSelect.value=String(prefill.projectId);
+      var assigneeSelect=document.getElementById('qcm-assignee');
+      if(assigneeSelect&&prefill.assigneeId)assigneeSelect.value=String(prefill.assigneeId);
+      var prioSelect=document.getElementById('qcm-prio');
+      if(prioSelect&&prefill.priority)prioSelect.value=String(prefill.priority);
+      var urgencySelect=document.getElementById('qcm-urgency');
+      if(urgencySelect&&prefill.urgency)urgencySelect.value=String(prefill.urgency);
+      var noteInput=document.getElementById('qcm-note');
+      if(noteInput&&prefill.noteText)noteInput.value=String(prefill.noteText);
+      var labelsSelect=document.getElementById('qcm-labels');
+      if(labelsSelect&&Array.isArray(prefill.labelIds)&&prefill.labelIds.length){
+        setMultiSelectValues(labelsSelect,prefill.labelIds);
+      }
+    }
 
     var cancelBtn=document.getElementById('qcm-cancel');
     if(cancelBtn)cancelBtn.addEventListener('click',closeSharedModal);
