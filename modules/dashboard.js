@@ -101,9 +101,13 @@
     var auth = getAuthManager();
     if (!auth) return projects;
 
-    // Guests sollen auf dem Dashboard alle Projekte als Uebersicht sehen.
-    if (typeof auth.getMode === 'function' && auth.getMode() === 'guest') {
-      return projects;
+    // Alle Mitarbeiter, unabhängig von ihrer Rolle, sollen auf dem Dashboard
+    // die komplette Projektübersicht sehen. Nur Gäste bleiben auf Sichtbarkeit
+    // des Auth-Systems beschränkt.
+    if (typeof auth.getMode === 'function') {
+      var mode = auth.getMode();
+      if (mode === 'guest') return projects;
+      if (mode === 'employee' || mode === 'admin' || mode === 'setup') return projects;
     }
 
     if (typeof auth.getVisibleProjects === 'function') {
@@ -120,6 +124,17 @@
     if (number < 0) number = 0;
     if (number > 100) number = 100;
     return number;
+  }
+
+  function getRoleColor(role) {
+    var value = String(role || '').trim().toLowerCase();
+    if (value === 'admin' || value === 'administrator') return '#ef4444';
+    if (value === 'manager' || value === 'lead' || value === 'leitung') return '#8b5cf6';
+    if (value === 'developer' || value === 'entwickler' || value === 'engineer') return '#3b82f6';
+    if (value === 'designer' || value === 'design') return '#ec4899';
+    if (value === 'qa' || value === 'tester' || value === 'test') return '#f59e0b';
+    if (value === 'devops' || value === 'ops') return '#10b981';
+    return '#6b7280';
   }
 
   function getProjectProgressPercent(project) {
@@ -197,6 +212,25 @@
     return null;
   }
 
+  function getDefaultEmployeeAvatarDataUrl(employee) {
+    var name = String((employee && employee.name) || 'Mitarbeiter').trim() || 'Mitarbeiter';
+    var roleColor = employee && employee.role ? getRoleColor(employee.role) : '#5ba6ff';
+    var svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" aria-label="' + escapeHtml(name) + '">',
+      '<defs>',
+      '<linearGradient id="employeeAvatarGradient" x1="0%" y1="0%" x2="100%" y2="100%">',
+      '<stop offset="0%" stop-color="' + roleColor + '"/>',
+      '<stop offset="100%" stop-color="#1f2937"/>',
+      '</linearGradient>',
+      '</defs>',
+      '<rect width="40" height="40" rx="20" fill="url(#employeeAvatarGradient)"/>',
+      '<circle cx="20" cy="15" r="6.25" fill="rgba(255,255,255,0.9)"/>',
+      '<path d="M12 31c1.8-5.1 6.2-8 8-8s6.2 2.9 8 8" fill="rgba(255,255,255,0.9)"/>',
+      '</svg>'
+    ].join('');
+    return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+  }
+
   function renderProjectContactAvatar(project) {
     var employee = getProjectContactEmployee(project);
     if (!employee) {
@@ -204,16 +238,8 @@
     }
 
     var name = String(employee.name || 'Mitarbeiter').trim() || 'Mitarbeiter';
-    var initials = name.split(/\s+/).slice(0, 2).map(function(part) {
-      return part ? part.charAt(0).toUpperCase() : '';
-    }).join('').trim() || 'M';
-
-    var avatarUrl = getEmployeeAvatarUrl(employee);
-    if (avatarUrl) {
-      return '<span class="project-progress-contact-avatar" title="' + escapeHtml(name) + '"><img src="' + escapeHtml(avatarUrl) + '" alt="' + escapeHtml(name) + '" /></span>';
-    }
-
-    return '<span class="project-progress-contact-avatar project-progress-contact-avatar-fallback" title="' + escapeHtml(name) + '">' + escapeHtml(initials) + '</span>';
+    var avatarUrl = getEmployeeAvatarUrl(employee) || getDefaultEmployeeAvatarDataUrl(employee);
+    return '<span class="project-progress-contact-avatar" title="' + escapeHtml(name) + '"><img src="' + escapeHtml(avatarUrl) + '" alt="' + escapeHtml(name) + '" /></span>';
   }
 
   function getStatusLabel(project) {
@@ -1246,7 +1272,7 @@
 
   function getEmployeeAvatarUrl(employee) {
     var github = employee && employee.github ? employee.github : null;
-    if (!github) return '';
+    if (!github) return getDefaultEmployeeAvatarDataUrl(employee);
 
     if (github.avatarUrl) {
       return String(github.avatarUrl).trim();
@@ -1259,7 +1285,7 @@
     }
 
     username = username.replace(/^@+/, '').replace(/\/$/, '').replace(/[^A-Za-z0-9-]/g, '');
-    return username ? 'https://github.com/' + encodeURIComponent(username) + '.png?size=96' : '';
+    return username ? 'https://github.com/' + encodeURIComponent(username) + '.png?size=96' : getDefaultEmployeeAvatarDataUrl(employee);
   }
 
   function getTaskProgressValue(task) {
@@ -1316,9 +1342,73 @@
     return String(task && (task.projectTitle || task.projectName) || '').trim();
   }
 
+  function getDashboardEmployeesSnapshot() {
+    var employees = window.DataLayer && typeof window.DataLayer.getEmployees === 'function'
+      ? (window.DataLayer.getEmployees() || [])
+      : [];
+
+    if (employees.length) return employees;
+
+    try {
+      var raw = window.localStorage ? window.localStorage.getItem('pd_employees') : '';
+      var parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter(function(item) { return item && typeof item === 'object'; }) : [];
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function getTeamLoadEmployeeRows(employees, tasks) {
+    var rows = [];
+    var seen = {};
+
+    (employees || []).forEach(function(employee) {
+      if (!employee) return;
+      var key = employee.id ? 'id:' + String(employee.id) : 'name:' + String(employee.name || '').trim().toLowerCase();
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      rows.push({
+        employee: employee,
+        activeTasks: getEmployeeTeamLoadTasks(employee, tasks)
+      });
+    });
+
+    if (rows.length) return rows;
+
+    (tasks || []).forEach(function(task) {
+      if (!task || normalizeTaskStatus(task) !== 'in-progress') return;
+
+      var assigneeId = String(task.assigneeId || task.employeeId || '').trim();
+      var assigneeName = String(task.employeeName || task.assigneeName || '').trim();
+      var key = assigneeId ? 'id:' + assigneeId : 'name:' + assigneeName.toLowerCase();
+      if (!key || seen[key]) return;
+
+      seen[key] = true;
+      rows.push({
+        employee: {
+          id: assigneeId,
+          name: assigneeName || 'Mitarbeiter',
+          github: null,
+          currentActivity: ''
+        },
+        activeTasks: (tasks || []).filter(function(candidate) {
+          if (!candidate || normalizeTaskStatus(candidate) !== 'in-progress') return false;
+          if (assigneeId && String(candidate.assigneeId || candidate.employeeId || '').trim() === assigneeId) return true;
+          return assigneeName && String(candidate.employeeName || candidate.assigneeName || '').trim().toLowerCase() === assigneeName.toLowerCase();
+        }).sort(function(a, b) {
+          var diff = getTaskProgressValue(b) - getTaskProgressValue(a);
+          if (diff !== 0) return diff;
+          return String(a.title || '').localeCompare(String(b.title || ''), 'de');
+        })
+      });
+    });
+
+    return rows;
+  }
+
   // --- Team-Load Donut-Chart ---
   function renderTeamLoad() {
-    var employees = window.DataLayer.getEmployees() || [];
+    var employees = getDashboardEmployeesSnapshot();
     var tasks = window.DataLayer.getTasks() || [];
     var projects = window.DataLayer.getProjects() || [];
     var container = document.getElementById('chart-team-load');
@@ -1335,18 +1425,18 @@
       projectsById[String(project.id)] = project;
     });
 
-    var html = '<h3>Aufgabenverteilung</h3>';
-    html += '<div class="team-load-grid">';
-
-    var employeeRows = employees.slice().map(function(employee) {
-      return {
-        employee: employee,
-        activeTasks: getEmployeeTeamLoadTasks(employee, tasks)
-      };
-    }).sort(function(a, b) {
+    var employeeRows = getTeamLoadEmployeeRows(employees, tasks).sort(function(a, b) {
       if (b.activeTasks.length !== a.activeTasks.length) return b.activeTasks.length - a.activeTasks.length;
       return String(a.employee.name || '').localeCompare(String(b.employee.name || ''), 'de');
     });
+
+    if (employeeRows.length === 0) {
+      setHtmlIfChanged(container, '<h3>Aufgabenverteilung</h3><p class="chart-empty">Nicht genügend Daten für Chart.</p>');
+      return;
+    }
+
+    var html = '<h3>Aufgabenverteilung</h3>';
+    html += '<div class="team-load-grid">';
 
     employeeRows.forEach(function(row) {
       var employee = row.employee || {};
@@ -1358,14 +1448,14 @@
       var activeLabel = activeTasks.length === 1 ? '1 aktiv' : activeTasks.length + ' aktiv';
 
       html += '<article class="team-load-card">';
-      if (avatarUrl) {
-        if (profileUrl) {
-          html += '<a class="team-load-avatar-link" href="' + escapeHtml(profileUrl) + '" target="_blank" rel="noopener noreferrer" aria-label="GitHub Profil von ' + escapeHtml(employee.name || 'Mitarbeiter') + '">';
-        } else {
-          html += '<span class="team-load-avatar-link" aria-hidden="true">';
-        }
+      if (avatarUrl && profileUrl) {
+        html += '<a class="team-load-avatar-link" href="' + escapeHtml(profileUrl) + '" target="_blank" rel="noopener noreferrer" aria-label="GitHub Profil von ' + escapeHtml(employee.name || 'Mitarbeiter') + '">';
         html += '<img class="team-load-avatar" src="' + escapeHtml(avatarUrl) + '" alt="' + escapeHtml(employee.name || 'Mitarbeiter') + '">';
-        html += (profileUrl ? '</a>' : '</span>');
+        html += '</a>';
+      } else if (avatarUrl) {
+        html += '<span class="team-load-avatar-link" aria-hidden="true">';
+        html += '<img class="team-load-avatar" src="' + escapeHtml(avatarUrl) + '" alt="' + escapeHtml(employee.name || 'Mitarbeiter') + '">';
+        html += '</span>';
       } else {
         html += '<span class="team-load-avatar team-load-avatar-fallback" aria-hidden="true">' + escapeHtml(String(employee.name || '?').charAt(0).toUpperCase()) + '</span>';
       }

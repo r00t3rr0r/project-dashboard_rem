@@ -874,14 +874,25 @@ function notify(message,type){
   }
 }
 
+function isLocalDevelopmentHost(){
+  try{
+    var hostname=(window.location&&window.location.hostname)?String(window.location.hostname):'';
+    return hostname==='localhost'||hostname==='127.0.0.1';
+  }catch(_err){
+    return false;
+  }
+}
+
 function getAiBackendCandidates(){
   var origin=(window.location&&window.location.origin)?window.location.origin:'';
   var bases=[];
   if(origin)bases.push(origin);
   if(AI_BACKEND_URL)bases.push(AI_BACKEND_URL);
-  if('http://localhost:8766'!==AI_BACKEND_URL)bases.push('http://localhost:8766');
-  if('http://127.0.0.1:8766'!==AI_BACKEND_URL)bases.push('http://127.0.0.1:8766');
-  if('http://127.0.0.1:8765'!==AI_BACKEND_URL)bases.push('http://127.0.0.1:8765');
+  if(isLocalDevelopmentHost()){
+    if('http://localhost:8766'!==AI_BACKEND_URL)bases.push('http://localhost:8766');
+    if('http://127.0.0.1:8766'!==AI_BACKEND_URL)bases.push('http://127.0.0.1:8766');
+    if('http://127.0.0.1:8765'!==AI_BACKEND_URL)bases.push('http://127.0.0.1:8765');
+  }
   return bases.filter(function(item,idx){return item&&bases.indexOf(item)===idx;});
 }
 

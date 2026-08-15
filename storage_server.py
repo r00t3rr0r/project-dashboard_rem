@@ -2,8 +2,10 @@ import json
 import os
 import re
 import hmac
+import queue
 import sqlite3
 import shutil
+import threading
 import uuid
 import urllib.error
 import subprocess
@@ -238,11 +240,51 @@ def _build_trusted_origins():
 
 TRUSTED_ORIGINS = _build_trusted_origins()
 
+KV_STREAM_SUBSCRIBERS = set()
+KV_STREAM_LOCK = threading.Lock()
+KV_STREAM_SEQ = 0
+
+
+def _next_kv_stream_event(action, key=''):
+    global KV_STREAM_SEQ
+    with KV_STREAM_LOCK:
+        KV_STREAM_SEQ += 1
+        event = {
+            'seq': KV_STREAM_SEQ,
+            'action': str(action or 'set'),
+            'key': str(key or ''),
+            'updatedAt': utc_now_iso_z()
+        }
+        subscribers = list(KV_STREAM_SUBSCRIBERS)
+
+    for subscriber in subscribers:
+        try:
+            subscriber.put_nowait(event)
+        except queue.Full:
+            # Slow consumers can safely miss old events because clients refresh
+            # from the full KV snapshot after receiving a newer event.
+            continue
+
+
+def _register_kv_stream_subscriber(subscriber):
+    with KV_STREAM_LOCK:
+        KV_STREAM_SUBSCRIBERS.add(subscriber)
+
+
+def _unregister_kv_stream_subscriber(subscriber):
+    with KV_STREAM_LOCK:
+        KV_STREAM_SUBSCRIBERS.discard(subscriber)
+
 
 class StorageHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         ensure_daily_backup()
         parsed = urlparse(self.path)
+        if parsed.path == '/api/kv/stream':
+            if not self._require_admin_pin_for_request(parsed.path, parsed=parsed):
+                return
+            self._handle_kv_stream()
+            return
         if not self._require_admin_pin_for_request(parsed.path):
             return
         meeting_project_id = self._extract_meeting_project_id(parsed.path)
@@ -321,6 +363,7 @@ class StorageHandler(BaseHTTPRequestHandler):
 
         if payload.get('clear') is True:
             self._clear_all_values()
+            _next_kv_stream_event('clear', '')
             self._send_json({'ok': True, 'cleared': True})
             return
 
@@ -331,7 +374,48 @@ class StorageHandler(BaseHTTPRequestHandler):
             return
 
         self._write_value(key, value)
+        _next_kv_stream_event('delete' if value is None else 'set', key)
         self._send_json({'ok': True, 'key': key})
+
+    def _handle_kv_stream(self):
+        subscriber = queue.Queue(maxsize=256)
+        _register_kv_stream_subscriber(subscriber)
+
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Connection', 'keep-alive')
+            self._apply_cors_headers()
+            self._apply_security_headers()
+            self.end_headers()
+
+            self._write_sse_event('ready', {
+                'seq': 0,
+                'action': 'ready',
+                'key': '',
+                'updatedAt': utc_now_iso_z()
+            })
+
+            while True:
+                try:
+                    event = subscriber.get(timeout=20)
+                    self._write_sse_event('kv-update', event)
+                except queue.Empty:
+                    self.wfile.write(b': keep-alive\n\n')
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        finally:
+            _unregister_kv_stream_subscriber(subscriber)
+
+    def _write_sse_event(self, event_name, payload):
+        body = ''
+        if payload is not None:
+            body = json.dumps(payload, ensure_ascii=False)
+        chunk = ('event: ' + str(event_name or 'message') + '\n' + 'data: ' + body + '\n\n').encode('utf-8')
+        self.wfile.write(chunk)
+        self.wfile.flush()
 
     def _handle_project_knowledge_post(self):
         length = int(self.headers.get('Content-Length', '0'))
@@ -1590,17 +1674,31 @@ class StorageHandler(BaseHTTPRequestHandler):
     def _read_admin_pin_header(self):
         return str(self.headers.get('X-Admin-Pin', '') or '').strip()
 
+    def _read_admin_pin_from_query(self, parsed):
+        if not parsed:
+            return ''
+        params = parse_qs(parsed.query or '')
+        return str((params.get('pin') or [''])[0] or '').strip()
+
     def _is_admin_pin_valid(self):
         candidate = self._read_admin_pin_header()
         if not ADMIN_PIN:
             return True
         return hmac.compare_digest(candidate, ADMIN_PIN)
 
-    def _require_admin_pin_for_request(self, path):
+    def _require_admin_pin_for_request(self, path, parsed=None):
         if not self._is_pin_protected_path(path):
             return True
         if self._is_admin_pin_valid():
             return True
+
+        # EventSource cannot attach custom headers, therefore /api/kv/stream
+        # additionally accepts the PIN via query string.
+        if path == '/api/kv/stream' and ADMIN_PIN:
+            query_pin = self._read_admin_pin_from_query(parsed)
+            if query_pin and hmac.compare_digest(query_pin, ADMIN_PIN):
+                return True
+
         self._send_json({'error': 'Admin PIN erforderlich oder ungueltig.', 'authRequired': True}, status=401)
         return False
 

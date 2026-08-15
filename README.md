@@ -17,7 +17,12 @@ Die Anwendung wurde umfassend modernisiert:
 
 ### Empfohlen: Storage-Server (All-in-One)
 
-macOS / Linux (LAN-ready):
+Voraussetzungen:
+
+- Python 3.10+
+- Port `8766` frei (oder alternativen Port setzen)
+
+macOS / Linux (LAN-ready, mit auto-konfigurierten Trusted Origins):
 
 ```bash
 cd /Users/DNS/Projects/projekt-dashboard
@@ -33,8 +38,8 @@ PROJECT_DASHBOARD_STORAGE_HOST=0.0.0.0 PROJECT_DASHBOARD_STORAGE_PORT=8766 ./scr
 Direktstart (ohne Skript):
 
 ```bash
-cd C:\Users\r00t3\.openclaw\workspace\projekt-dashboard
-python storage_server.py
+cd /Users/DNS/Projects/projekt-dashboard
+python3 storage_server.py
 ```
 
 Danach im Browser:
@@ -56,6 +61,122 @@ Empfohlene Struktur fuer den produktiven Betrieb:
 5. Clients mit periodischem Remote-Sync (automatisches Nachladen)
 
 Damit koennen mehrere Mitarbeiter parallel arbeiten: jede Aenderung wird zentral in `data/projekt-dashboard.sqlite` gespeichert und andere Clients laden Aenderungen automatisch nach.
+
+## Server-Setup (Linux, produktionsnah)
+
+Die folgenden Schritte setzen einen Linux-Server mit `systemd` und `nginx` voraus.
+
+### 1) Projekt auf den Server legen
+
+```bash
+sudo mkdir -p /opt/projekt-dashboard
+sudo rsync -a --delete ./ /opt/projekt-dashboard/
+sudo chown -R www-data:www-data /opt/projekt-dashboard
+```
+
+### 2) Runtime-Umgebung setzen
+
+```bash
+sudo tee /etc/projekt-dashboard.env >/dev/null <<'EOF'
+PROJECT_DASHBOARD_STORAGE_HOST=127.0.0.1
+PROJECT_DASHBOARD_STORAGE_PORT=8766
+PROJECT_DASHBOARD_ADMIN_PIN=1337
+PROJECT_DASHBOARD_TRUSTED_ORIGINS=https://dashboard.example.com
+PROJECT_DASHBOARD_OLLAMA_AUTOSTART=0
+EOF
+```
+
+Hinweise:
+
+- `PROJECT_DASHBOARD_STORAGE_HOST=127.0.0.1` bindet den App-Server nur lokal.
+- Den Zugriff aus dem Internet uebernimmt danach ausschließlich Nginx auf Port 443.
+- Fuer Team/LAN ohne Reverse Proxy kann `0.0.0.0` verwendet werden.
+
+### 3) systemd-Service erstellen
+
+```bash
+sudo tee /etc/systemd/system/projekt-dashboard.service >/dev/null <<'EOF'
+[Unit]
+Description=Projekt Dashboard Storage Server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/projekt-dashboard
+EnvironmentFile=/etc/projekt-dashboard.env
+ExecStart=/usr/bin/python3 /opt/projekt-dashboard/storage_server.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now projekt-dashboard
+sudo systemctl status projekt-dashboard
+```
+
+### 4) Nginx Reverse Proxy + TLS
+
+```bash
+sudo tee /etc/nginx/sites-available/projekt-dashboard.conf >/dev/null <<'EOF'
+server {
+	listen 80;
+	server_name dashboard.example.com;
+	return 301 https://$host$request_uri;
+}
+
+server {
+	listen 443 ssl http2;
+	server_name dashboard.example.com;
+
+	ssl_certificate /etc/letsencrypt/live/dashboard.example.com/fullchain.pem;
+	ssl_certificate_key /etc/letsencrypt/live/dashboard.example.com/privkey.pem;
+
+	location / {
+		proxy_pass http://127.0.0.1:8766;
+		proxy_set_header Host $host;
+		proxy_set_header X-Real-IP $remote_addr;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto $scheme;
+	}
+}
+EOF
+
+sudo ln -s /etc/nginx/sites-available/projekt-dashboard.conf /etc/nginx/sites-enabled/projekt-dashboard.conf
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Danach ist die App erreichbar unter:
+
+- https://dashboard.example.com/app.html
+
+### 5) Funktionstest
+
+Health-Check:
+
+```bash
+curl -sS http://127.0.0.1:8766/api/health
+```
+
+Gesicherter KV-Endpunkt (ohne PIN -> 401, mit PIN -> 200):
+
+```bash
+curl -i http://127.0.0.1:8766/api/kv
+curl -i -H 'X-Admin-Pin: 1337' http://127.0.0.1:8766/api/kv
+```
+
+### 6) Update-Routine
+
+```bash
+sudo rsync -a --delete ./ /opt/projekt-dashboard/
+sudo systemctl restart projekt-dashboard
+sudo systemctl status projekt-dashboard
+```
 
 ### Sicherheits-Gate beim Oeffnen
 
@@ -167,8 +288,8 @@ ollama serve
 ### 2) Storage-Server starten
 
 ```bash
-cd C:\Users\r00t3\.openclaw\workspace\projekt-dashboard
-python storage_server.py
+cd /Users/DNS/Projects/projekt-dashboard
+python3 storage_server.py
 ```
 
 Standard-Port ist 8766 (konfigurierbar ueber PROJECT_DASHBOARD_STORAGE_PORT).
@@ -177,14 +298,14 @@ Standardmaessig versucht der Storage-Server Ollama bei Bedarf automatisch zu sta
 Deaktivieren mit:
 
 ```bash
-PROJECT_DASHBOARD_OLLAMA_AUTOSTART=0 python storage_server.py
+PROJECT_DASHBOARD_OLLAMA_AUTOSTART=0 python3 storage_server.py
 ```
 
 ### 3) UI oeffnen
 
 Beispiel:
 
-- [http://localhost:8080/app.html](http://localhost:8080/app.html)
+- [http://127.0.0.1:8766/app.html](http://127.0.0.1:8766/app.html)
 
 Die KI-Endpunkte werden vom Storage-Server bedient; generierte Inhalte landen unter [data/project-knowledge](data/project-knowledge).
 

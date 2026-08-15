@@ -30,6 +30,12 @@
   var memoryStorage = Object.create(null);
   var db = null;
   var dbReadyPromise = null;
+  var AUTH_SESSION_KEYS = ['pd_auth_session_v1', 'pd_auth_session_persist_v1'];
+
+  function isAuthSessionKey(key) {
+    var normalizedKey = normalizeStorageKey(key);
+    return AUTH_SESSION_KEYS.indexOf(normalizedKey) !== -1;
+  }
   var dbFileHandle = null;
   var dbFileName = 'projekt-dashboard.sqlite';
   var dbReady = false;
@@ -47,6 +53,7 @@
     'http://localhost:8766/api/kv'
   ];
   var remoteKvEnabled = true;
+  var REMOTE_ONLY_MODE = true;
   var remoteKvReachable = false;
   var remoteKvActivePath = '';
   var remoteKvLastCheckedAt = '';
@@ -54,15 +61,82 @@
   var startupReadyPromise = null;
   var remoteSyncTimer = null;
   var remoteSyncInFlight = false;
+  var remoteStreamSource = null;
+  var remoteStreamReconnectTimer = null;
+  var remoteStreamEventQueued = false;
   var REMOTE_SYNC_INTERVAL_MS = 8000;
+  var REMOTE_STREAM_RETRY_MS = 3000;
+  var pendingLocalWritesCount = 0;
+  var dirtyRemoteSyncKeys = Object.create(null);
+  var DIRTY_REMOTE_SYNC_STATE_KEY = '__pd_remote_dirty_sync_v1';
+
+  function beginLocalWrite() {
+    pendingLocalWritesCount += 1;
+  }
+
+  function endLocalWrite() {
+    pendingLocalWritesCount = Math.max(0, pendingLocalWritesCount - 1);
+  }
+
+  function hasPendingLocalWrites() {
+    return pendingLocalWritesCount > 0;
+  }
+
+  function loadDirtyRemoteSyncState() {
+    if (REMOTE_ONLY_MODE) return;
+    try {
+      var raw = nativeStorageApi.getItem(DIRTY_REMOTE_SYNC_STATE_KEY);
+      if (!raw) return;
+      var parsed = JSON.parse(String(raw));
+      if (!parsed || typeof parsed !== 'object') return;
+      Object.keys(parsed).forEach(function (key) {
+        var mode = parsed[key] === 'deleted' ? 'deleted' : 'set';
+        dirtyRemoteSyncKeys[normalizeStorageKey(key)] = mode;
+      });
+    } catch (_err) {}
+  }
+
+  function persistDirtyRemoteSyncState() {
+    if (REMOTE_ONLY_MODE) return;
+    try {
+      var keys = Object.keys(dirtyRemoteSyncKeys);
+      if (keys.length === 0) {
+        nativeStorageApi.removeItem(DIRTY_REMOTE_SYNC_STATE_KEY);
+        return;
+      }
+      nativeStorageApi.setItem(DIRTY_REMOTE_SYNC_STATE_KEY, JSON.stringify(dirtyRemoteSyncKeys));
+    } catch (_err) {}
+  }
+
+  function markKeyDirtyForRemoteSync(key, mode) {
+    var normalizedKey = normalizeStorageKey(key);
+    if (!normalizedKey || isAuthSessionKey(normalizedKey)) return;
+    dirtyRemoteSyncKeys[normalizedKey] = mode === 'deleted' ? 'deleted' : 'set';
+    persistDirtyRemoteSyncState();
+  }
+
+  function clearDirtyKeyForRemoteSync(key) {
+    var normalizedKey = normalizeStorageKey(key);
+    if (!normalizedKey) return;
+    delete dirtyRemoteSyncKeys[normalizedKey];
+    persistDirtyRemoteSyncState();
+  }
+
+  function markAllKeysDirtyForRemoteSync(mode) {
+    Object.keys(memoryStorage).forEach(function (key) {
+      if (isAuthSessionKey(key)) return;
+      markKeyDirtyForRemoteSync(key, mode);
+    });
+  }
 
   function getStorageStatus() {
     return {
       remoteEnabled: remoteKvEnabled,
       remoteReachable: remoteKvReachable,
       remotePath: remoteKvActivePath || remoteKvPath,
-      localMirror: true,
-      fallbackActive: !remoteKvReachable,
+      remoteOnly: REMOTE_ONLY_MODE,
+      localMirror: !REMOTE_ONLY_MODE,
+      fallbackActive: REMOTE_ONLY_MODE ? false : !remoteKvReachable,
       lastCheckedAt: remoteKvLastCheckedAt,
       lastError: remoteKvLastError
     };
@@ -75,15 +149,59 @@
   function getRemoteKvCandidates() {
     var list = [];
     if (remoteKvPath) list.push(remoteKvPath);
-    remoteKvFallbackPaths.forEach(function (path) {
-      if (path) list.push(path);
-    });
+
+    var isLocalHost = false;
+    try {
+      var hostname = window.location && window.location.hostname ? String(window.location.hostname) : '';
+      isLocalHost = hostname === 'localhost' || hostname === '127.0.0.1';
+    } catch (_err) {
+      isLocalHost = false;
+    }
+
+    if (isLocalHost) {
+      remoteKvFallbackPaths.forEach(function (path) {
+        if (path) list.push(path);
+      });
+    }
+
     if (window.location && window.location.origin) {
       list.push(window.location.origin.replace(/\/$/, '') + '/api/kv');
     }
     return list.filter(function (item, idx) {
       return !!item && list.indexOf(item) === idx;
     });
+  }
+
+  function getStoredAdminPin() {
+    try {
+      if (window.ProjektDashboardSecurity && typeof window.ProjektDashboardSecurity.readPin === 'function') {
+        return String(window.ProjektDashboardSecurity.readPin() || '').trim();
+      }
+    } catch (_err) {}
+
+    try {
+      return String(window.sessionStorage.getItem('pd_admin_pin') || '').trim();
+    } catch (_err2) {
+      return '';
+    }
+  }
+
+  function getRemoteKvStreamCandidates() {
+    var candidates = getRemoteKvCandidates();
+    return candidates.map(function (endpoint) {
+      return String(endpoint || '').replace(/\/api\/kv$/, '/api/kv/stream');
+    }).filter(function (item, idx, arr) {
+      return !!item && arr.indexOf(item) === idx;
+    });
+  }
+
+  function buildRemoteKvStreamUrl(baseUrl) {
+    var endpoint = String(baseUrl || '');
+    var pin = getStoredAdminPin();
+    if (!pin) return endpoint;
+
+    var separator = endpoint.indexOf('?') === -1 ? '?' : '&';
+    return endpoint + separator + 'pin=' + encodeURIComponent(pin);
   }
 
   function fetchRemoteKv(method, payload) {
@@ -159,13 +277,13 @@
   function listNativeManagedKeys() {
     var set = Object.create(null);
     Object.keys(KEYS).forEach(function (name) {
-      set[KEYS[name]] = true;
+      if (!isAuthSessionKey(KEYS[name])) set[KEYS[name]] = true;
     });
 
     try {
       for (var i = 0; i < window.localStorage.length; i++) {
         var key = window.localStorage.key(i);
-        if (key && /^pd_/.test(key)) set[key] = true;
+        if (key && /^pd_/.test(key) && !isAuthSessionKey(key)) set[key] = true;
       }
     } catch (_e) {}
 
@@ -220,6 +338,7 @@
   }
 
   function snapshotLegacyStorage() {
+    if (REMOTE_ONLY_MODE) return;
     try {
       var legacyKeys = listNativeManagedKeys();
       for (var i = 0; i < window.localStorage.length; i++) {
@@ -244,8 +363,18 @@
 
   function getStorageValue(key) {
     var normalizedKey = normalizeStorageKey(key);
+    if (isAuthSessionKey(normalizedKey)) {
+      try {
+        return nativeStorageApi.getItem(normalizedKey);
+      } catch (_e) {
+        return null;
+      }
+    }
     if (Object.prototype.hasOwnProperty.call(memoryStorage, normalizedKey)) {
       return memoryStorage[normalizedKey];
+    }
+    if (REMOTE_ONLY_MODE) {
+      return null;
     }
     try {
       var nativeValue = nativeStorageApi.getItem(normalizedKey);
@@ -259,24 +388,66 @@
 
   function setStorageValue(key, value) {
     var normalizedKey = normalizeStorageKey(key);
+    if (isAuthSessionKey(normalizedKey)) {
+      var authValue = value === null || value === undefined ? null : normalizeStorageValue(value);
+      try {
+        if (authValue === null) nativeStorageApi.removeItem(normalizedKey);
+        else nativeStorageApi.setItem(normalizedKey, authValue);
+      } catch (_e) {}
+      return true;
+    }
     var normalizedValue = normalizeStorageValue(value);
     memoryStorage[normalizedKey] = normalizedValue;
+    markKeyDirtyForRemoteSync(normalizedKey, 'set');
+
+    if (REMOTE_ONLY_MODE) {
+      beginLocalWrite();
+      persistRemoteValueAsync(normalizedKey, normalizedValue).then(function (remoteOk) {
+        if (remoteOk) clearDirtyKeyForRemoteSync(normalizedKey);
+      }).finally(function () {
+        endLocalWrite();
+      });
+      return true;
+    }
+
     var localPersistValue = toLocalPersistValue(normalizedKey, normalizedValue);
     try {
       if (localPersistValue === null) nativeStorageApi.removeItem(normalizedKey);
       else nativeStorageApi.setItem(normalizedKey, localPersistValue);
     } catch (_e) {}
+    beginLocalWrite();
     ensureDatabaseReady().then(function () {
-      persistValueAsync(normalizedKey, memoryStorage[normalizedKey]);
+      return persistValueAsync(normalizedKey, normalizedValue);
+    }).finally(function () {
+      endLocalWrite();
     });
     return true;
   }
 
   function removeStorageValue(key) {
     var normalizedKey = normalizeStorageKey(key);
+    if (isAuthSessionKey(normalizedKey)) {
+      try { nativeStorageApi.removeItem(normalizedKey); } catch (_e) {}
+      return true;
+    }
     delete memoryStorage[normalizedKey];
+    markKeyDirtyForRemoteSync(normalizedKey, 'deleted');
+
+    if (REMOTE_ONLY_MODE) {
+      beginLocalWrite();
+      persistRemoteValueAsync(normalizedKey, null).then(function (remoteOk) {
+        if (remoteOk) clearDirtyKeyForRemoteSync(normalizedKey);
+      }).finally(function () {
+        endLocalWrite();
+      });
+      return true;
+    }
+
     try { nativeStorageApi.removeItem(normalizedKey); } catch (_e) {}
-    persistValueAsync(normalizedKey, null);
+    beginLocalWrite();
+    persistValueAsync(normalizedKey, null).finally(function () {
+      endLocalWrite();
+    });
     return true;
   }
 
@@ -294,13 +465,31 @@
   }
 
   function clearStorageValues() {
+    beginLocalWrite();
+    markAllKeysDirtyForRemoteSync('deleted');
     Object.keys(memoryStorage).forEach(function (key) {
+      if (isAuthSessionKey(key)) return;
       delete memoryStorage[key];
     });
     listNativeManagedKeys().forEach(function (key) {
+      if (isAuthSessionKey(key)) return;
       try { nativeStorageApi.removeItem(key); } catch (_e) {}
     });
-    clearDatabaseValuesAsync();
+
+    if (REMOTE_ONLY_MODE) {
+      clearRemoteValuesAsync().then(function (remoteOk) {
+        if (remoteOk) {
+          dirtyRemoteSyncKeys = Object.create(null);
+        }
+      }).finally(function () {
+        endLocalWrite();
+      });
+      return true;
+    }
+
+    clearDatabaseValuesAsync().finally(function () {
+      endLocalWrite();
+    });
     clearRemoteValuesAsync();
     return true;
   }
@@ -387,6 +576,13 @@
   function persistValueAsync(key, value) {
     if (!key) return Promise.resolve(false);
 
+    if (REMOTE_ONLY_MODE) {
+      return persistRemoteValueAsync(key, value).then(function (remoteOk) {
+        if (remoteOk) clearDirtyKeyForRemoteSync(key);
+        return !!remoteOk;
+      });
+    }
+
     return ensureDatabaseReady().then(function () {
       if (!db) return false;
       var localPersistValue = toLocalPersistValue(key, value);
@@ -403,6 +599,7 @@
       }
     }).then(function (localOk) {
       return persistRemoteValueAsync(key, value).then(function (remoteOk) {
+        if (remoteOk) clearDirtyKeyForRemoteSync(key);
         return !!(localOk || remoteOk);
       });
     });
@@ -427,6 +624,10 @@
 
   function clearRemoteValuesAsync() {
     return fetchRemoteKv('POST', { clear: true }).then(function (result) {
+      if (result.ok) {
+        dirtyRemoteSyncKeys = Object.create(null);
+        persistDirtyRemoteSyncState();
+      }
       return !!result.ok;
     });
   }
@@ -457,13 +658,27 @@
 
   function applyRemoteSnapshotPayload(payload) {
     var nextStorage = Object.create(null);
+    var currentStorage = memoryStorage;
     var previousFingerprint = createStorageFingerprint(memoryStorage);
 
     Object.keys(payload).forEach(function (key) {
       var normalizedKey = normalizeStorageKey(key);
+      if (isAuthSessionKey(normalizedKey)) return;
       var value = payload[key];
       if (value === null || value === undefined) return;
       nextStorage[normalizedKey] = normalizeStorageValue(value);
+    });
+
+    // Keep unsynced local writes authoritative until remote persistence succeeds.
+    Object.keys(dirtyRemoteSyncKeys).forEach(function (key) {
+      var mode = dirtyRemoteSyncKeys[key];
+      if (mode === 'deleted') {
+        delete nextStorage[key];
+        return;
+      }
+      if (Object.prototype.hasOwnProperty.call(currentStorage, key)) {
+        nextStorage[key] = currentStorage[key];
+      }
     });
 
     var nextFingerprint = createStorageFingerprint(nextStorage);
@@ -472,12 +687,17 @@
 
     memoryStorage = nextStorage;
 
+    if (REMOTE_ONLY_MODE) {
+      return true;
+    }
+
     listNativeManagedKeys().forEach(function (key) {
       if (Object.prototype.hasOwnProperty.call(memoryStorage, key)) return;
       try { nativeStorageApi.removeItem(key); } catch (_removeErr) {}
     });
 
     Object.keys(memoryStorage).forEach(function (key) {
+      if (isAuthSessionKey(key)) return;
       try {
         var localValue = toLocalPersistValue(key, memoryStorage[key]);
         if (localValue === null) nativeStorageApi.removeItem(key);
@@ -497,6 +717,14 @@
         return { ok: false, changed: false, authRequired: !!(result && result.authRequired) };
       }
 
+      // While local writes are still being flushed, do not hydrate from remote
+      // to avoid restoring stale server state over fresh local task changes.
+      if (hasPendingLocalWrites()) {
+        remoteKvReachable = true;
+        emitStorageStatusChanged();
+        return { ok: true, changed: false, deferred: true, authRequired: false };
+      }
+
       var payload = result.payload;
       var changed = applyRemoteSnapshotPayload(payload);
       remoteKvReachable = true;
@@ -514,14 +742,23 @@
   function runStartupHydration() {
     if (startupReadyPromise) return startupReadyPromise;
 
-    startupReadyPromise = ensureDatabaseReady().then(function () {
+    startupReadyPromise = Promise.resolve().then(function () {
+      if (!REMOTE_ONLY_MODE) {
+        return ensureDatabaseReady();
+      }
+      return true;
+    }).then(function () {
       return loadRemoteSnapshot().then(function (snapshotResult) {
+        hydrateCollections();
+
+        if (REMOTE_ONLY_MODE) {
+          return !!(snapshotResult && snapshotResult.ok);
+        }
+
         if (snapshotResult && snapshotResult.ok) {
-          hydrateCollections();
           return true;
         }
 
-        hydrateCollections();
         return bootstrapFromDurableFileIfEmpty().then(function () {
           hydrateCollections();
           return true;
@@ -563,29 +800,86 @@
     });
   }
 
+  function runRemoteSyncTick() {
+    if (remoteSyncInFlight) {
+      remoteStreamEventQueued = true;
+      return Promise.resolve(false);
+    }
+
+    remoteSyncInFlight = true;
+    return refreshFromRemote().catch(function () {
+      return false;
+    }).finally(function () {
+      remoteSyncInFlight = false;
+      if (remoteStreamEventQueued) {
+        remoteStreamEventQueued = false;
+        runRemoteSyncTick();
+      }
+    });
+  }
+
+  function closeRemoteKvStream() {
+    if (!remoteStreamSource) return;
+    try {
+      remoteStreamSource.close();
+    } catch (_err) {}
+    remoteStreamSource = null;
+  }
+
+  function scheduleRemoteKvStreamReconnect() {
+    if (remoteStreamReconnectTimer) return;
+    remoteStreamReconnectTimer = window.setTimeout(function () {
+      remoteStreamReconnectTimer = null;
+      startRemoteKvStream();
+    }, REMOTE_STREAM_RETRY_MS);
+  }
+
+  function startRemoteKvStream() {
+    if (!remoteKvEnabled || typeof window.EventSource !== 'function') return;
+    if (remoteStreamSource) return;
+
+    var pin = getStoredAdminPin();
+    if (!pin) {
+      scheduleRemoteKvStreamReconnect();
+      return;
+    }
+
+    var streamCandidates = getRemoteKvStreamCandidates();
+    if (!streamCandidates.length) {
+      scheduleRemoteKvStreamReconnect();
+      return;
+    }
+
+    var source = new window.EventSource(buildRemoteKvStreamUrl(streamCandidates[0]));
+    remoteStreamSource = source;
+
+    function handleKvEvent() {
+      runRemoteSyncTick();
+    }
+
+    source.addEventListener('ready', handleKvEvent);
+    source.addEventListener('kv-update', handleKvEvent);
+
+    source.onerror = function () {
+      closeRemoteKvStream();
+      scheduleRemoteKvStreamReconnect();
+    };
+  }
+
   function startRemoteSyncLoop() {
     if (remoteSyncTimer) return;
 
-    function runSyncTick() {
-      if (remoteSyncInFlight) return;
-      remoteSyncInFlight = true;
-      refreshFromRemote().catch(function () {
-        return false;
-      }).finally(function () {
-        remoteSyncInFlight = false;
-      });
-    }
-
     remoteSyncTimer = window.setInterval(function () {
       if (document.hidden) return;
-      runSyncTick();
+      runRemoteSyncTick();
     }, REMOTE_SYNC_INTERVAL_MS);
 
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) runSyncTick();
+      if (!document.hidden) runRemoteSyncTick();
     });
 
-    window.addEventListener('focus', runSyncTick);
+    window.addEventListener('focus', runRemoteSyncTick);
+    window.addEventListener('beforeunload', closeRemoteKvStream);
   }
 
   function removeValueAsync(key) {
@@ -916,6 +1210,7 @@
   }
 
   function bootstrapFromDurableFileIfEmpty() {
+    if (REMOTE_ONLY_MODE) return Promise.resolve(false);
     if (hasCoreData()) return Promise.resolve(false);
     if (typeof fetch !== 'function') return Promise.resolve(false);
 
@@ -944,9 +1239,11 @@
   }
 
   snapshotLegacyStorage();
+  loadDirtyRemoteSyncState();
   patchStorageApi();
   runStartupHydration().finally(function () {
     startRemoteSyncLoop();
+    startRemoteKvStream();
   });
 
   /* ---------- Save Helpers ---------- */

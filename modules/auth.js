@@ -6,6 +6,7 @@
   'use strict';
 
   var SESSION_KEY = 'pd_auth_session_v1';
+  var SESSION_PERSIST_KEY = 'pd_auth_session_persist_v1';
   var TOOLBAR_ID = 'auth-toolbar-group';
   var ALL_PAGES = [
     'dashboard',
@@ -62,6 +63,9 @@
   var wrapped = false;
   var originalMethods = {};
   var authRefreshTimer = null;
+  var initStarted = false;
+  var authStateBootstrapped = false;
+  var authBootstrapPromise = null;
 
   function stableHashHex(input) {
     var text = String(input || '');
@@ -143,6 +147,10 @@
   function readSession() {
     try {
       var raw = window.sessionStorage.getItem(SESSION_KEY);
+      if (!raw) {
+        raw = window.localStorage.getItem(SESSION_PERSIST_KEY);
+      }
+
       var parsed = raw ? JSON.parse(raw) : {};
       if (!parsed || typeof parsed !== 'object') return {};
 
@@ -164,6 +172,7 @@
     try {
       if (!data || !data.employeeId) {
         window.sessionStorage.removeItem(SESSION_KEY);
+        window.localStorage.removeItem(SESSION_PERSIST_KEY);
         return;
       }
       var sessionData = {
@@ -176,7 +185,9 @@
         lastSeenAt: toIsoStringSafe(data.lastSeenAt)
       };
 
-      window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
+      var serialized = JSON.stringify(sessionData);
+      window.sessionStorage.setItem(SESSION_KEY, serialized);
+      window.localStorage.setItem(SESSION_PERSIST_KEY, serialized);
     } catch (_err) {}
   }
 
@@ -266,7 +277,46 @@
   }
 
   function isSetupMode() {
-    return getLoginEmployees().length === 0;
+    if (!authStateBootstrapped) return false;
+
+    var employees = getEmployees();
+    if (employees.length === 0) return true;
+    if (getLoginEmployees().length > 0) return false;
+
+    // In local fallback mode password hashes can be omitted intentionally.
+    // Treat enabled/password-set logins as configured to avoid false setup state.
+    var hasProvisionedLogins = employees.some(function (employee) {
+      var login = employee && employee.auth && employee.auth.login ? employee.auth.login : null;
+      if (!login) return false;
+      return !!(login.enabled || login.passwordSet);
+    });
+
+    return !hasProvisionedLogins;
+  }
+
+  function bootstrapAuthState() {
+    if (authBootstrapPromise) return authBootstrapPromise;
+
+    var readyPromise = Promise.resolve(true);
+    if (window.DataLayer && window.DataLayer.ready && typeof window.DataLayer.ready.then === 'function') {
+      readyPromise = window.DataLayer.ready.catch(function () {
+        return false;
+      });
+    }
+
+    authBootstrapPromise = readyPromise.then(function () {
+      return syncAuthStateFromServer().catch(function () {
+        return false;
+      });
+    }).then(function (result) {
+      authStateBootstrapped = true;
+      return result;
+    }).catch(function () {
+      authStateBootstrapped = true;
+      return false;
+    });
+
+    return authBootstrapPromise;
   }
 
   function getCurrentUser() {
@@ -280,8 +330,11 @@
       return String(item.id) === employeeId;
     }) || null;
 
-    if (!employee || !employee.auth.login.enabled || !employee.auth.login.passwordHash) {
-      writeSession(null);
+    if (!employee) {
+      return null;
+    }
+
+    if (!employee.auth.login.enabled || !employee.auth.login.passwordHash) {
       return null;
     }
 
@@ -448,6 +501,7 @@
     if (mode === 'setup' || mode === 'admin') return true;
     if (!project) return false;
     if (mode === 'guest') return false;
+    if (mode === 'employee') return true;
     return employeeOwnsProject(getCurrentUser(), project);
   }
 
@@ -560,8 +614,10 @@
 
   function getVisibleProjects(projects) {
     var list = Array.isArray(projects) ? projects.slice() : [];
-    if (getMode() === 'setup' || getMode() === 'admin') return list;
-    if (getMode() === 'guest') return [];
+    var mode = getMode();
+    if (mode === 'setup' || mode === 'admin') return list;
+    if (mode === 'guest') return [];
+    if (mode === 'employee') return list;
     return list.filter(canViewProject);
   }
 
@@ -743,6 +799,16 @@
     });
   }
 
+  function hashPasswordPortable(password) {
+    var text = String(password || '');
+    return Promise.all([
+      createHashFallback(text),
+      hashPasswordLegacy(text)
+    ]).then(function (hashes) {
+      return ['compat', String(hashes[0] || ''), String(hashes[1] || '')].join('$');
+    });
+  }
+
   function derivePbkdf2Hash(password, saltHex, iterations) {
     if (!window.crypto || !window.crypto.subtle || typeof window.TextEncoder !== 'function') {
       return Promise.reject(new Error('PBKDF2 nicht verfuegbar'));
@@ -770,24 +836,34 @@
   }
 
   function hashPasswordForStorage(password) {
-    if (!window.crypto || !window.crypto.subtle || typeof window.crypto.getRandomValues !== 'function') {
-      return hashPasswordLegacy(password);
-    }
-
-    var saltBytes = new Uint8Array(16);
-    window.crypto.getRandomValues(saltBytes);
-    var saltHex = bytesToHex(saltBytes);
-
-    return derivePbkdf2Hash(password, saltHex, PASSWORD_PBKDF2_ITERATIONS).then(function (hashHex) {
-      return [PASSWORD_SCHEME, String(PASSWORD_PBKDF2_ITERATIONS), saltHex, hashHex].join('$');
-    }).catch(function () {
-      return hashPasswordLegacy(password);
-    });
+    return hashPasswordPortable(password);
   }
 
   function verifyPasswordAgainstStoredHash(password, storedHash) {
     var value = String(storedHash || '').trim();
     if (!value) return Promise.resolve(false);
+
+    if (value.indexOf('compat$') === 0) {
+      var compatParts = value.split('$');
+      var fallbackHash = String(compatParts[1] || '');
+      var legacyHash = String(compatParts[2] || '');
+
+      return Promise.all([
+        createHashFallback(password),
+        hashPasswordLegacy(password)
+      ]).then(function (hashes) {
+        var fallbackCandidate = String(hashes[0] || '');
+        var legacyCandidate = String(hashes[1] || '');
+        return (
+          (fallbackHash && constantTimeEquals(fallbackCandidate, fallbackHash)) ||
+          (fallbackHash && constantTimeEquals(legacyCandidate, fallbackHash)) ||
+          (legacyHash && constantTimeEquals(fallbackCandidate, legacyHash)) ||
+          (legacyHash && constantTimeEquals(legacyCandidate, legacyHash))
+        );
+      }).catch(function () {
+        return false;
+      });
+    }
 
     if (value.indexOf(PASSWORD_SCHEME + '$') === 0) {
       var parts = value.split('$');
@@ -804,8 +880,13 @@
       });
     }
 
-    return hashPasswordLegacy(password).then(function (legacyHash) {
-      return constantTimeEquals(legacyHash, value);
+    return Promise.all([
+      hashPasswordLegacy(password),
+      createHashFallback(password)
+    ]).then(function (hashes) {
+      var legacyHash = String(hashes[0] || '');
+      var fallbackHash = String(hashes[1] || '');
+      return constantTimeEquals(legacyHash, value) || constantTimeEquals(fallbackHash, value);
     });
   }
 
@@ -820,7 +901,7 @@
   }
 
   function hashPassword(password) {
-    return hashPasswordLegacy(password);
+    return hashPasswordPortable(password);
   }
 
   function buildEmployeeAuth(existingEmployee, patch) {
@@ -991,6 +1072,14 @@
     var mode = getMode();
     var user = getCurrentUser();
 
+    if (!authStateBootstrapped) {
+      statusEl.textContent = 'Authentifizierung: Daten werden synchronisiert';
+      loginBtn.textContent = 'Bitte warten';
+      loginBtn.hidden = true;
+      logoutBtn.hidden = true;
+      return;
+    }
+
     if (mode === 'setup') {
       statusEl.textContent = 'Setup-Modus: ersten Admin anlegen';
       loginBtn.textContent = 'Mitarbeiterbereich';
@@ -1133,12 +1222,18 @@
   }
 
   function init() {
+    if (initStarted) return;
+    initStarted = true;
+
     wrapDataLayer();
     refreshUi();
     startAuthRefreshLoop();
-    syncAuthStateFromServer().then(function () {
+
+    bootstrapAuthState().then(function () {
       refreshUi();
+      emitAuthChanged();
     });
+
     window.addEventListener('authChanged', refreshUi);
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'visible') {
