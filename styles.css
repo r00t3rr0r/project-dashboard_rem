@@ -1590,8 +1590,8 @@ textarea#retro-notes {
 }
 
 .employee-avatar {
-  width: 56px;
-  height: 56px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   background: var(--accent-blue);
   display: flex;
@@ -2142,10 +2142,23 @@ body.projects-modal-open {
   display: grid;
   gap: 0.55rem;
   margin-top: 0.7rem;
-  max-height: 20rem;
+  min-height: 0;
   overflow: auto;
   padding-right: 0.2rem;
   scrollbar-gutter: stable;
+}
+
+#chart-team-load {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  min-height: 23rem;
+}
+
+#chart-team-load .team-load-grid {
+  flex: 1 1 auto;
+  max-height: none;
+  align-content: start;
 }
 
 .team-load-card {
@@ -3486,6 +3499,42 @@ body.projects-modal-open {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 1rem;
   margin-top: 1.5rem;
+  align-items: stretch;
+}
+
+@container (max-width: 240px) {
+  .team-load-card {
+    grid-template-columns: 2rem minmax(0, 1fr);
+    gap: 0.58rem;
+    padding: 0.68rem;
+  }
+
+  .team-load-avatar-link,
+  .team-load-avatar {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .team-load-header {
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .team-load-count {
+    align-self: flex-start;
+  }
+
+  .team-load-name {
+    font-size: 0.88rem;
+  }
+
+  .team-load-meta,
+  .team-load-empty,
+  .team-load-task-label,
+  .team-load-task-value,
+  .team-load-more {
+    font-size: 0.62rem;
+  }
 }
 
 /* ========================================

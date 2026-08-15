@@ -210,13 +210,28 @@
     return 'https://github.com/' + encodeURIComponent(username) + '.png?size=200';
   }
 
-  function renderEmployeeAvatar(emp) {
-    var avatarUrl = getEmployeeGitHubAvatarUrl(emp);
-    if (avatarUrl) {
-      return '<div class="employee-avatar employee-avatar-image" style="background-color:' + getRoleColor(emp.role) + '; background-image:url(\'' + escapeHtml(avatarUrl) + '\'); background-size:cover; background-position:center;" title="' + escapeHtml(emp.role) + '"></div>';
-    }
+  function getDefaultEmployeeAvatarDataUrl(employee) {
+    var name = String((employee && employee.name) || 'Mitarbeiter').trim() || 'Mitarbeiter';
+    var roleColor = getRoleColor(employee && employee.role ? employee.role : '');
+    var svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" aria-label="' + escapeHtml(name) + '">',
+      '<defs>',
+      '<linearGradient id="employeeAvatarGradient" x1="0%" y1="0%" x2="100%" y2="100%">',
+      '<stop offset="0%" stop-color="' + roleColor + '"/>',
+      '<stop offset="100%" stop-color="#1f2937"/>',
+      '</linearGradient>',
+      '</defs>',
+      '<rect width="40" height="40" rx="20" fill="url(#employeeAvatarGradient)"/>',
+      '<circle cx="20" cy="15" r="6.25" fill="rgba(255,255,255,0.9)"/>',
+      '<path d="M12 31c1.8-5.1 6.2-8 8-8s6.2 2.9 8 8" fill="rgba(255,255,255,0.9)"/>',
+      '</svg>'
+    ].join('');
+    return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+  }
 
-    return '<div class="employee-avatar" style="background:' + getRoleColor(emp.role) + '" title="' + escapeHtml(emp.role) + '">' + escapeHtml(String(emp.name).charAt(0).toUpperCase()) + '</div>';
+  function renderEmployeeAvatar(emp) {
+    var avatarUrl = getEmployeeGitHubAvatarUrl(emp) || getDefaultEmployeeAvatarDataUrl(emp);
+    return '<div class="employee-avatar employee-avatar-image" style="background-color:' + getRoleColor(emp.role) + '; background-image:url(\'' + escapeHtml(avatarUrl) + '\'); background-size:cover; background-position:center;" title="' + escapeHtml(emp.role) + '"></div>';
   }
 
   function formatDateTime(value) {
@@ -1241,6 +1256,7 @@
       var access = getEmployeeAccess(emp);
       var canEditProfile = canEditEmployeeProfile(emp.id);
       var canManageAccess = canManageEmployeeAccessFields();
+      var canDeleteEmployee = canManageEmployees();
       var profileDisabledAttr = canEditProfile ? '' : ' disabled';
       var adminDisabledAttr = canManageAccess ? '' : ' disabled';
       var loadBand = loadBandConfig[vm.metrics.loadBand] || loadBandConfig.balanced;
@@ -1336,6 +1352,7 @@
           '</select>' +
           '<button type="button" class="btn btn-secondary employee-task-btn" data-action="assign-task" data-emp-id="' + escapeHtml(emp.id) + '"' + adminDisabledAttr + '>+ Task</button>' +
           '<button type="button" class="btn btn-primary employee-save-btn" data-action="save-profile" data-emp-id="' + escapeHtml(emp.id) + '"' + profileDisabledAttr + '>Speichern</button>' +
+          (canDeleteEmployee ? '<button type="button" class="btn btn-danger employee-remove-btn" data-action="remove-employee" data-emp-id="' + escapeHtml(emp.id) + '">Entfernen</button>' : '') +
         '</div>' +
 
         renderGitHubPanel(emp, vm.github, canEditProfile) +
@@ -1488,6 +1505,107 @@
 
     target.updatedAt = new Date().toISOString();
     persistEmployee(target);
+  }
+
+  function removeEmployee(employeeId) {
+    if (!employeeId) return false;
+    if (!canManageEmployees()) {
+      alert('Nur Administratoren koennen Mitarbeiter entfernen.');
+      return false;
+    }
+
+    var employees = getEmployees();
+    var target = employees.find(function(emp) { return emp.id === employeeId; });
+    if (!target) {
+      alert('Mitarbeiter nicht gefunden.');
+      return false;
+    }
+
+    var currentUser = getCurrentUser();
+    if (currentUser && String(currentUser.id || '') === String(employeeId || '')) {
+      alert('Das eigene Benutzerkonto kann nicht entfernt werden.');
+      return false;
+    }
+
+    setAssignments(getAssignments().filter(function(item) {
+      return String(item.employeeId || '') !== String(employeeId || '');
+    }));
+
+    getDataLayerTasks().forEach(function(task) {
+      var changed = false;
+
+      if (String(task.assigneeId || '') === String(employeeId || '')) {
+        task.assigneeId = '';
+        changed = true;
+      }
+
+      if (String(task.employeeName || '').trim().toLowerCase() === String(target.name || '').trim().toLowerCase()) {
+        task.employeeName = '';
+        changed = true;
+      }
+
+      if (changed && window.DataLayer && typeof window.DataLayer.updateTask === 'function') {
+        window.DataLayer.updateTask(task);
+      }
+    });
+
+    getProjects().forEach(function(project) {
+      var changed = false;
+
+      (project.tasks || []).forEach(function(task) {
+        if (String(task.assigneeId || '') === String(employeeId || '')) {
+          task.assigneeId = '';
+          changed = true;
+        }
+
+        if (String(task.employeeName || '').trim().toLowerCase() === String(target.name || '').trim().toLowerCase()) {
+          task.employeeName = '';
+          changed = true;
+        }
+      });
+
+      if (changed && window.DataLayer && typeof window.DataLayer.updateProject === 'function') {
+        window.DataLayer.updateProject(project);
+      }
+    });
+
+    if (hasDataLayer() && window.DataLayer && typeof window.DataLayer.deleteEmployee === 'function') {
+      window.DataLayer.deleteEmployee(employeeId);
+    } else {
+      setEmployees(employees.filter(function(emp) { return emp.id !== employeeId; }));
+    }
+
+    createNotification(target.name + ' wurde aus dem Team entfernt.');
+    renderEmployeeList('employee-list');
+    return true;
+  }
+
+  function confirmRemoveEmployee(employeeId) {
+    if (!employeeId) return;
+    if (!canManageEmployees()) {
+      alert('Nur Administratoren koennen Mitarbeiter entfernen.');
+      return;
+    }
+
+    var employee = getEmployees().find(function(item) { return item.id === employeeId; });
+    if (!employee) {
+      alert('Mitarbeiter nicht gefunden.');
+      return;
+    }
+
+    showConfirmModal(
+      'Mitarbeiter entfernen',
+      '<div class="modal-form-stack">' +
+        '<p>Der Mitarbeiter <strong>' + escapeHtml(employee.name || 'Unbenannt') + '</strong> wird entfernt.</p>' +
+        '<p class="modal-hint"><small>Alle direkten Zuweisungen im Mitarbeiterbereich werden geloest. Diese Aktion kann nicht rueckgaengig gemacht werden.</small></p>' +
+      '</div>',
+      function() {
+        if (removeEmployee(employeeId)) {
+          closeModal();
+        }
+      },
+      ['Entfernen', 'Abbrechen']
+    );
   }
 
   function getTaskById(taskId) {
@@ -2026,6 +2144,10 @@
         showGitHubTokenModal(empId);
       }
 
+      if (action === 'remove-employee') {
+        confirmRemoveEmployee(empId);
+      }
+
       if (action === 'save-profile') {
         var activityInput = page.querySelector('input[data-field="activity"][data-emp-id="' + empId + '"]');
         var focusInput = page.querySelector('input[data-field="focus"][data-emp-id="' + empId + '"]');
@@ -2107,6 +2229,7 @@
       closeModal: closeModal,
       escapeHtml: escapeHtml,
       updateEmployeeProfile: updateEmployeeProfile,
+      removeEmployee: removeEmployee,
       syncGitHubActivity: syncEmployeeGitHubActivity
     };
 

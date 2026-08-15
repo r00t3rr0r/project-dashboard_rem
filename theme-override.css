@@ -1146,8 +1146,9 @@ body.light-mode .nav-menu li a:hover {
 
 .dashboard-charts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
   gap: 0.9rem;
+  align-items: stretch;
 }
 
 .chart-empty {
@@ -1285,8 +1286,8 @@ body.light-mode .nav-menu li a:hover {
 }
 
 .project-progress-contact-avatar {
-  width: 1.65rem;
-  height: 1.65rem;
+  width: 2.5rem;
+  height: 2.5rem;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -3302,8 +3303,8 @@ body.light-mode .kanban-day-load {
 }
 
 .employee-avatar {
-  width: 3rem;
-  height: 3rem;
+  width: 2.5rem;
+  height: 2.5rem;
   border-radius: 999px;
   color: #fff;
   display: flex;

@@ -30,6 +30,15 @@ var state={
   saveStatus:'Bereit'
 };
 
+function isLocalDevelopmentHost(){
+  try{
+    var hostname=(window.location&&window.location.hostname)?String(window.location.hostname):'';
+    return hostname==='localhost'||hostname==='127.0.0.1';
+  }catch(_err){
+    return false;
+  }
+}
+
 function byId(id){return document.getElementById(id);}
 
 function escapeHtml(value){
@@ -99,7 +108,10 @@ function openCreateProjectModal(){
 
 function getBackendCandidates(){
   var origin=(window.location&&window.location.origin)?window.location.origin:'';
-  var list=[origin,AI_BACKEND_URL,'http://localhost:8766','http://127.0.0.1:8766','http://127.0.0.1:8765'];
+  var list=[origin,AI_BACKEND_URL];
+  if(isLocalDevelopmentHost()){
+    list.push('http://localhost:8766','http://127.0.0.1:8766','http://127.0.0.1:8765');
+  }
   if(origin)list.push(origin);
   return list.filter(function(item,idx){return item&&list.indexOf(item)===idx;});
 }
