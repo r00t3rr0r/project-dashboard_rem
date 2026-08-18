@@ -82,12 +82,13 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `urgency`     | `string`   | `"low"` \| `"normal"` \| `"high"` \| `"critical"` |
 | `effortHours` | `number`   | Geplanter Aufwand in Stunden                  |
 | `schedule`    | `object`   | Terminlogik: `mode`, `deadline`, `fixedAt`, `rangeStart`, `rangeEnd` |
-| `timeTracking` | `object`  | Arbeitszeit/Pausenstatus: `totalMinutes`, `activeStartedAt`, `isPaused`, `pausedAt`, `pauseReasonPending`, `lastPauseReason`, `minutesByDate`, `pauseHistory` |
+| `timeTracking` | `object`  | Arbeitszeit/Pausenstatus: `totalMinutes`, `activeStartedAt`, `inProgressConfirmedAt`, `isPaused`, `pausedAt`, `pauseReasonPending`, `lastPauseReason`, `minutesByDate`, `pauseHistory` |
 | `subtasks`    | `object[]` | Liste der Teilaufgaben (`id`, `title`, `completed`, `createdAt`) |
 | `notes`       | `object[]` | Hinweise/Notizen zur Aufgabe (`id`, `text`, `createdAt`) |
 | `attachments` | `object[]` | Datei-/Link-Hinweise (`id`, `name`, `url`, `type`, `addedAt`) |
 | `createdAt`   | `string`   | ISO-8601 Timestamp                            |
 | `updatedAt`   | `string`   | ISO-8601 Timestamp                            |
+| `completedAt` | `string`   | ISO-8601 Abschlusszeitpunkt; wird beim Wiederöffnen geleert |
 | `blocked`     | `boolean`  | Kennzeichnet aktive Blockierung der Aufgabe   |
 | `blockedReason` | `string` | Aktueller Blocker-Grund                        |
 | `blockedAt`   | `string`   | Startzeit des aktiven Blockers (ISO-8601)     |
@@ -109,6 +110,8 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `name`        | `string` | Name des Mitarbeiters                 |
 | `role`        | `string` | Rolle/Funktion                        |
 | `availability`| `string` | Verfuegbarkeitsstatus                 |
+| `workplace`   | `string` | Allgemeiner Arbeitsort                |
+| `dailyWorkStatus` | `object` | Tagesstatus: `date`, `workplace`, `note`, `sick`, `updatedAt` |
 | `currentActivity` | `string` | Aktuelle Arbeit / Fokus           |
 | `capacityPoints` | `number` | Verfuegbare Story-Points           |
 | `focusAreas`  | `string[]` | Fachliche Schwerpunkte              |
