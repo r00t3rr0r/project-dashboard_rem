@@ -26,6 +26,9 @@
   var assigneeStackExpansionState = Object.create(null);
   var ASSIGNEE_STACK_COLLAPSE_THRESHOLD = 6;
   var ASSIGNEE_STACK_VISIBLE_CARDS = 2;
+  var DONE_COLUMN_WINDOW_MS = 24 * 60 * 60 * 1000;
+  var IN_PROGRESS_CONFIRM_AFTER_MS = 3 * 60 * 60 * 1000;
+  var IN_PROGRESS_CONFIRM_WINDOW_MS = 90 * 60 * 1000;
 
   var currentTaskDraft = null;
   var currentTaskChainDraft = null;
@@ -177,6 +180,7 @@
     if (!Array.isArray(tracking.pauseHistory)) tracking.pauseHistory = [];
     if (typeof tracking.totalMinutes !== 'number' || isNaN(tracking.totalMinutes)) tracking.totalMinutes = 0;
     if (typeof tracking.activeStartedAt !== 'string') tracking.activeStartedAt = '';
+    if (typeof tracking.inProgressConfirmedAt !== 'string') tracking.inProgressConfirmedAt = '';
     if (typeof tracking.pausedAt !== 'string') tracking.pausedAt = '';
     tracking.isPaused = !!tracking.isPaused;
     tracking.pauseReasonPending = !!tracking.pauseReasonPending;
@@ -289,6 +293,31 @@
     return 'idle';
   }
 
+  function getInProgressConfirmationState(task, nowIso) {
+    if (!task || task.status !== 'in-progress') return { state: 'idle', remainingMs: 0 };
+    var tracking = getTaskTimeTracking(task);
+    var anchor = tracking.inProgressConfirmedAt || tracking.activeStartedAt || task.updatedAt || task.createdAt;
+    var anchorTime = Date.parse(anchor || '');
+    var nowTime = Date.parse(nowIso || getNowIsoString());
+    if (!isFinite(anchorTime) || !isFinite(nowTime)) return { state: 'active', remainingMs: IN_PROGRESS_CONFIRM_AFTER_MS };
+
+    var elapsed = Math.max(0, nowTime - anchorTime);
+    if (elapsed < IN_PROGRESS_CONFIRM_AFTER_MS) {
+      return { state: 'active', remainingMs: IN_PROGRESS_CONFIRM_AFTER_MS - elapsed };
+    }
+    if (elapsed < IN_PROGRESS_CONFIRM_AFTER_MS + IN_PROGRESS_CONFIRM_WINDOW_MS) {
+      return {
+        state: 'confirm',
+        remainingMs: IN_PROGRESS_CONFIRM_AFTER_MS + IN_PROGRESS_CONFIRM_WINDOW_MS - elapsed
+      };
+    }
+    return { state: 'expired', remainingMs: 0 };
+  }
+
+  function formatConfirmationRemaining(remainingMs) {
+    return Math.max(1, Math.ceil(remainingMs / 60000)) + ' Min. verbleibend';
+  }
+
   function buildTaskEffortSnapshot(task, nowIso) {
     var plannedMinutes = getTaskPlannedMinutes(task);
     var trackedToday = getTaskTrackedMinutesToday(task, nowIso);
@@ -324,15 +353,18 @@
 
   function startTaskWork(task, startIso) {
     var tracking = getTaskTimeTracking(task);
+    var nowIso = startIso || getNowIsoString();
     tracking.isPaused = false;
     tracking.pausedAt = '';
-    tracking.activeStartedAt = startIso || getNowIsoString();
+    tracking.activeStartedAt = nowIso;
+    tracking.inProgressConfirmedAt = nowIso;
   }
 
   function stopTaskWork(task, endIso) {
     var tracking = getTaskTimeTracking(task);
     captureActiveSession(task, endIso || getNowIsoString(), false);
     tracking.activeStartedAt = '';
+    tracking.inProgressConfirmedAt = '';
     tracking.isPaused = false;
     tracking.pausedAt = '';
   }
@@ -464,6 +496,9 @@
     if (nextStatus === 'done') {
       tracking.pauseReasonPending = false;
       task.progress = 100;
+      task.completedAt = nowIso;
+    } else if (previousStatus === 'done') {
+      task.completedAt = '';
     }
 
     return true;
@@ -508,6 +543,15 @@
       return;
     }
     resumeTaskWork(task, '', getNowIsoString());
+    window.DataLayer.updateTask(task);
+  }
+
+  function confirmTaskInProgress(taskId) {
+    var task = window.DataLayer.getTaskById(taskId);
+    if (!task || getInProgressConfirmationState(task).state !== 'confirm') return;
+    var auth = getAuthManager();
+    if (auth && typeof auth.canEditTask === 'function' && !auth.canEditTask(task)) return;
+    getTaskTimeTracking(task).inProgressConfirmedAt = getNowIsoString();
     window.DataLayer.updateTask(task);
   }
 
@@ -1234,6 +1278,7 @@
     var assigneeName = getAssigneeName(task);
     var assigneeInitials = getAssigneeInitials(assigneeName);
     var effortSnapshot = buildTaskEffortSnapshot(task);
+    var confirmationState = getInProgressConfirmationState(task);
     var timingState = effortSnapshot.state;
     var effortPercent = effortSnapshot.remainingPercent;
     var priorityTone = getPriorityColor(task.priority);
@@ -1317,18 +1362,26 @@
     html += chainBadge;
     html += '</div>';
 
-    html += '<div class="kanban-effort-block">';
-    html += '<div class="kanban-effort-head">';
-    html += '<span class="kanban-effort-label">Tagesanteil</span>';
-    html += '<span class="kanban-effort-value" data-live-effort-share="' + escapeHtml(task.id) + '">' + escapeHtml(effortSnapshot.dayShareLabel) + '</span>';
-    html += '</div>';
-    html += '<div class="kanban-effort-meter">';
-    html += '<div class="kanban-effort-allocation" style="width:' + effortSnapshot.allocationPercent + '%"></div>';
-    html += '<div class="kanban-effort-fill" data-live-effort-fill="' + escapeHtml(task.id) + '" style="width:' + effortPercent + '%"></div>';
-    html += '</div>';
-    html += '<div class="kanban-effort-caption" data-live-effort-caption="' + escapeHtml(task.id) + '">' + escapeHtml(effortSnapshot.remainingLabel) + '</div>';
-    html += '<div class="kanban-pause-caption' + (timingState === 'paused' ? ' is-paused' : '') + '" data-live-pause-caption="' + escapeHtml(task.id) + '">' + escapeHtml(effortMetaLabel) + '</div>';
-    html += '</div>';
+    if (confirmationState.state === 'confirm') {
+      html += '<div class="kanban-work-confirmation">';
+      html += '<button type="button" class="kanban-work-confirm-btn" data-task-confirm-work="' + escapeHtml(task.id) + '" ' + (editable ? '' : 'disabled') + '>';
+      html += '<span class="material-symbols-rounded" aria-hidden="true">update</span>';
+      html += '<span><strong>Weitere 3 Stunden</strong><small data-work-confirmation-time="' + escapeHtml(task.id) + '">' + escapeHtml(formatConfirmationRemaining(confirmationState.remainingMs)) + '</small></span>';
+      html += '</button></div>';
+    } else {
+      html += '<div class="kanban-effort-block">';
+      html += '<div class="kanban-effort-head">';
+      html += '<span class="kanban-effort-label">Tagesanteil</span>';
+      html += '<span class="kanban-effort-value" data-live-effort-share="' + escapeHtml(task.id) + '">' + escapeHtml(effortSnapshot.dayShareLabel) + '</span>';
+      html += '</div>';
+      html += '<div class="kanban-effort-meter">';
+      html += '<div class="kanban-effort-allocation" style="width:' + effortSnapshot.allocationPercent + '%"></div>';
+      html += '<div class="kanban-effort-fill" data-live-effort-fill="' + escapeHtml(task.id) + '" style="width:' + effortPercent + '%"></div>';
+      html += '</div>';
+      html += '<div class="kanban-effort-caption" data-live-effort-caption="' + escapeHtml(task.id) + '">' + escapeHtml(effortSnapshot.remainingLabel) + '</div>';
+      html += '<div class="kanban-pause-caption' + (timingState === 'paused' ? ' is-paused' : '') + '" data-live-pause-caption="' + escapeHtml(task.id) + '">' + escapeHtml(effortMetaLabel) + '</div>';
+      html += '</div>';
+    }
 
     html += '<div class="kanban-progress-block">';
     html += '<div class="kanban-progress-head">';
@@ -1370,11 +1423,28 @@
   }
 
   // --- Filter angewendete Tasks holen ---
+  function getTaskCompletedAt(task) {
+    if (task && task.completedAt) return task.completedAt;
+    var history = task && Array.isArray(task.history) ? task.history : [];
+    for (var index = history.length - 1; index >= 0; index--) {
+      if (history[index] && history[index].type === 'completed') return history[index].at || '';
+    }
+    return '';
+  }
+
+  function wasCompletedWithinDoneWindow(task) {
+    var completedAt = Date.parse(getTaskCompletedAt(task));
+    if (!isFinite(completedAt)) return false;
+    var elapsed = Date.now() - completedAt;
+    return elapsed >= 0 && elapsed <= DONE_COLUMN_WINDOW_MS;
+  }
+
   function getFilteredTasks(status) {
     var allTasks = window.DataLayer.getTasks();
     var sequenceMeta = buildTaskSequenceMeta(allTasks);
     return allTasks.filter(function(t) {
       if (!matchesCurrentFilters(t, status)) return false;
+      if (status === 'done' && !wasCompletedWithinDoneWindow(t)) return false;
       var meta = sequenceMeta[t.id];
       return !meta || !meta.hidden;
     }).map(function (task) {
@@ -1587,11 +1657,30 @@
       element.textContent = snapshot.timingLabel + (snapshot.pauseHint ? ' · ' + snapshot.pauseHint : '');
       element.classList.toggle('is-paused', snapshot.state === 'paused');
     });
+
+    Array.prototype.slice.call(document.querySelectorAll('[data-work-confirmation-time]')).forEach(function (element) {
+      var task = window.DataLayer.getTaskById(element.getAttribute('data-work-confirmation-time'));
+      if (!task) return;
+      element.textContent = formatConfirmationRemaining(getInProgressConfirmationState(task, nowIso).remainingMs);
+    });
+  }
+
+  function enforceInProgressConfirmationDeadlines() {
+    var nowIso = getNowIsoString();
+    window.DataLayer.getTasks().slice().forEach(function (task) {
+      if (getInProgressConfirmationState(task, nowIso).state !== 'expired') return;
+      applyTaskStatusTransition(task, 'todo', { at: nowIso });
+      window.DataLayer.updateTask(task);
+    });
   }
 
   function startLiveTaskRefresh() {
     if (liveRefreshHandle) return;
     liveRefreshHandle = window.setInterval(function () {
+      enforceInProgressConfirmationDeadlines();
+      renderColumn('done');
+      renderColumn('in-progress');
+      renderDayView();
       refreshLiveTaskMetrics();
     }, LIVE_REFRESH_INTERVAL_MS);
   }
@@ -2629,6 +2718,12 @@
     });
 
     document.addEventListener('click', function (e) {
+      var confirmWorkBtn = e.target.closest('[data-task-confirm-work]');
+      if (confirmWorkBtn) {
+        confirmTaskInProgress(confirmWorkBtn.getAttribute('data-task-confirm-work'));
+        return;
+      }
+
       var attachmentBtn = e.target.closest('[data-task-attachment-upload]');
       if (attachmentBtn) {
         openTaskAttachmentPicker(attachmentBtn.getAttribute('data-task-attachment-upload'));
@@ -2815,6 +2910,7 @@
     try {
       setAssigneeFilter(loadPersistedAssigneeFilter(), false);
       setupFilters();
+      enforceInProgressConfirmationDeadlines();
       renderAllColumns();
       setupDragAndDrop();
       setupSubtaskCheckboxes();

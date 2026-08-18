@@ -8,8 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20260814b">
-<link rel="stylesheet" href="theme-override.css?v=20260814b">
+<link rel="stylesheet" href="styles.css?v=20260818c">
+<link rel="stylesheet" href="theme-override.css?v=20260818c">
 <!-- Data Layer -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
 <script>
@@ -108,25 +108,27 @@
     };
   })();
 </script>
-  <script src="data.js?v=20260814f"></script>
-<script src="modules/auth.js?v=20260814d"></script>
+  <script src="data.js?v=20260818a"></script>
+<script src="modules/auth.js?v=20260818e"></script>
 <!-- Core: App Router, Theme, Export/Import -->
-<script src="modules/app.js?v=20260802b"></script>
+<script src="modules/app.js?v=20260816b"></script>
 <!-- Feature Modules (alphabetical) -->
 <script src="modules/analytics.js?v=20260730b"></script>
-<script src="modules/calendar.js?v=20260802a"></script>
-<script src="modules/dashboard.js?v=20260814i"></script>
+<script src="modules/calendar.js?v=20260818b"></script>
+<script src="modules/dashboard.js?v=20260818c"></script>
 <script src="modules/documentation.js?v=20260730b"></script>
 <script src="modules/employees.js?v=20260731a"></script>
 <script src="modules/integrations.js?v=20260730b"></script>
-<script src="modules/kanban.js?v=20260730v"></script>
+<script src="modules/kanban.js?v=20260818b"></script>
 <script src="modules/labels.js?v=20260730y"></script>
 <script src="modules/notifications.js?v=20260730b"></script>
 <script src="modules/prompt-config.js?v=20260731a"></script>
+<script src="modules/local-ollama.js?v=20260818a"></script>
   <script src="modules/projects.js?v=20260802g"></script>
 <script src="modules/ki-workflow.js?v=20260731a"></script>
 <script src="modules/meeting.js?v=20260802e"></script>
 <script src="modules/quicktask.js?v=20260802d"></script>
+<script src="modules/task-history.js?v=20260816b"></script>
 <script src="modules/releases.js?v=20260730u"></script>
 <script src="modules/search.js?v=20260730k"></script>
 <script src="modules/sharing.js?v=20260730b"></script>
@@ -171,6 +173,7 @@
       <li><a href="#" data-page="dashboard" data-label="Dashboard" data-kicker="Zentrale Lage" class="active"><span class="nav-icon material-symbols-rounded" aria-hidden="true">dashboard</span><span>Dashboard</span></a></li>
       <li><a href="#" data-page="projects" data-label="Projekte" data-kicker="Portfolio Steuerung"><span class="nav-icon material-symbols-rounded" aria-hidden="true">folder_managed</span><span>Projekte</span></a></li>
       <li><a href="#" data-page="meeting" data-label="Meeting Protokoll" data-kicker="Live Mitschrift"><span class="nav-icon material-symbols-rounded" aria-hidden="true">record_voice_over</span><span>Meeting Protokoll</span></a></li>
+      <li><a href="#" data-page="tasks" data-label="Aufgaben" data-kicker="Aufgabenhistorie"><span class="nav-icon material-symbols-rounded" aria-hidden="true">history</span><span>Aufgaben</span></a></li>
       <li><a href="#" data-page="kanban" data-label="Kanban Board" data-kicker="Aufgabenfluss"><span class="nav-icon material-symbols-rounded" aria-hidden="true">view_kanban</span><span>Kanban Board</span></a></li>
       <li><a href="#" data-page="calendar" data-label="Team-Kalender" data-kicker="Kapazitaeten"><span class="nav-icon material-symbols-rounded" aria-hidden="true">calendar_month</span><span>Team-Kalender</span></a></li>
       <li><a href="#" data-page="analytics" data-label="Analytics" data-kicker="Kennzahlen"><span class="nav-icon material-symbols-rounded" aria-hidden="true">monitoring</span><span>Analytics</span></a></li>
@@ -479,6 +482,18 @@
         <h2>Zuletzt erstellte Aufgaben</h2>
         <div id="quicktask-recent-list" class="recent-task-list"></div>
       </div>
+    </section>
+
+    <!-- Aufgabenhistorie -->
+    <section id="tasks" class="page">
+      <div class="section-header">
+        <div>
+          <p class="section-kicker">Aufgabenhistorie</p>
+          <h1>Aufgaben</h1>
+          <p class="section-description">Bearbeitung, Abschluesse und Statuswechsel aller Aufgaben nachvollziehen.</p>
+        </div>
+      </div>
+      <div id="task-history-root" class="task-history-root"></div>
     </section>
 
     <!-- Kanban Board -->

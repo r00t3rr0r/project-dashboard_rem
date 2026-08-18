@@ -58,6 +58,8 @@
   var remoteKvActivePath = '';
   var remoteKvLastCheckedAt = '';
   var remoteKvLastError = '';
+  var remoteKvSnapshotEtag = '';
+  var remoteKvGetInFlight = null;
   var startupReadyPromise = null;
   var remoteSyncTimer = null;
   var remoteSyncInFlight = false;
@@ -208,6 +210,9 @@
     if (!remoteKvEnabled || typeof fetch !== 'function') {
       return Promise.resolve({ ok: false, path: '', payload: null });
     }
+    if (method === 'GET' && remoteKvGetInFlight) {
+      return remoteKvGetInFlight;
+    }
 
     var candidates = getRemoteKvCandidates();
     if (remoteKvActivePath) {
@@ -219,6 +224,10 @@
       cache: 'no-store',
       headers: {}
     };
+    var receivedEtag = '';
+    if (method === 'GET' && remoteKvSnapshotEtag) {
+      requestOptions.headers['If-None-Match'] = remoteKvSnapshotEtag;
+    }
     if (payload !== undefined) {
       requestOptions.headers['Content-Type'] = 'application/json';
       requestOptions.body = JSON.stringify(payload);
@@ -236,6 +245,12 @@
       var endpoint = candidates[index];
       return fetch(endpoint, requestOptions)
         .then(function (res) {
+          receivedEtag = res.headers && typeof res.headers.get === 'function'
+            ? String(res.headers.get('ETag') || '')
+            : '';
+          if (res.status === 304) {
+            return { __notModified: true };
+          }
           if (res.status === 401 || res.status === 403) {
             return res.json().catch(function () { return {}; }).then(function (body) {
               return {
@@ -258,11 +273,23 @@
             return { ok: false, path: endpoint, payload: null, authRequired: true };
           }
 
+          if (json && json.__notModified) {
+            remoteKvLastCheckedAt = new Date().toISOString();
+            remoteKvLastError = '';
+            remoteKvReachable = true;
+            remoteKvActivePath = endpoint;
+            emitStorageStatusChanged();
+            return { ok: true, path: endpoint, payload: null, notModified: true };
+          }
+
           if (json === null) return tryNext(index + 1);
           remoteKvLastCheckedAt = new Date().toISOString();
           remoteKvLastError = '';
           remoteKvReachable = true;
           remoteKvActivePath = endpoint;
+          if (method === 'GET') {
+            remoteKvSnapshotEtag = receivedEtag;
+          }
           emitStorageStatusChanged();
           return { ok: true, path: endpoint, payload: json };
         })
@@ -271,7 +298,13 @@
         });
     }
 
-    return tryNext(0);
+    var requestPromise = tryNext(0);
+    if (method !== 'GET') return requestPromise;
+
+    remoteKvGetInFlight = requestPromise.finally(function () {
+      remoteKvGetInFlight = null;
+    });
+    return remoteKvGetInFlight;
   }
 
   function listNativeManagedKeys() {
@@ -711,6 +744,11 @@
 
   function loadRemoteSnapshot() {
     return fetchRemoteKv('GET').then(function (result) {
+      if (result && result.ok && result.notModified) {
+        remoteKvReachable = true;
+        emitStorageStatusChanged();
+        return { ok: true, changed: false, authRequired: false };
+      }
       if (!result.ok || !result.payload || typeof result.payload !== 'object') {
         remoteKvReachable = false;
         emitStorageStatusChanged();
@@ -764,9 +802,9 @@
           return true;
         });
       });
-    }).then(function () {
+    }).then(function (hydrated) {
       emitDataChanged('hydrate', 'all');
-      return true;
+      return hydrated;
     }).catch(function (err) {
       console.error('[DataLayer] Startup hydration failed:', err);
       emitDataChanged('hydrate', 'all');
@@ -1144,10 +1182,11 @@
     replaceArray(releases, read(KEYS.releases, []));
     replaceArray(notifications, read(KEYS.notifications, []));
     replaceArray(calendarEvents, read(KEYS.calendarEvents, []));
-    normalizeProjectsCollection();
+    var commitsCompacted = normalizeProjectsCollection();
     normalizeTasksCollection();
     if (reconcileTaskDependencies()) saveTasks();
     if (syncAllTaskCalendarEvents()) saveCalendarEvents();
+    if (commitsCompacted) saveProjects();
   }
 
   function hasCoreData() {
@@ -1397,12 +1436,28 @@
     project.progress = progress;
   }
 
+  function compactProjectGithubCommits(project) {
+    var commits = Array.isArray(project.githubCommits) ? project.githubCommits : [];
+    var changed = false;
+
+    project.githubCommits = commits.map(function (commit, index) {
+      if (index < 25 || !commit || typeof commit !== 'object') return commit;
+      var keys = Object.keys(commit);
+      if (keys.length === 1 && keys[0] === 'date') return commit;
+      changed = true;
+      return { date: typeof commit.date === 'string' ? commit.date : '' };
+    });
+
+    return changed;
+  }
+
   function normalizeProject(project) {
     if (!project || typeof project !== 'object') project = {};
     if (!project.id) project.id = generateId();
     if (!project.createdAt) project.createdAt = new Date().toISOString();
     if (!project.title && project.name) project.title = project.name;
     if (!Array.isArray(project.githubCommits)) project.githubCommits = [];
+    compactProjectGithubCommits(project);
     normalizeProjectTeamMembers(project);
     normalizeProjectInfoHub(project);
     normalizeProjectAiKnowledge(project);
@@ -1433,9 +1488,12 @@
   }
 
   function normalizeProjectsCollection() {
+    var commitsCompacted = false;
     projects.forEach(function (project, index) {
+      if (compactProjectGithubCommits(project)) commitsCompacted = true;
       projects[index] = normalizeProject(project);
     });
+    return commitsCompacted;
   }
 
   function normalizeSubtask(subtask) {
@@ -1585,6 +1643,7 @@
     task.timeTracking = {
       totalMinutes: typeof tracking.totalMinutes === 'number' && !isNaN(tracking.totalMinutes) ? tracking.totalMinutes : 0,
       activeStartedAt: typeof tracking.activeStartedAt === 'string' ? tracking.activeStartedAt : '',
+      inProgressConfirmedAt: typeof tracking.inProgressConfirmedAt === 'string' ? tracking.inProgressConfirmedAt : '',
       isPaused: !!tracking.isPaused,
       pausedAt: typeof tracking.pausedAt === 'string' ? tracking.pausedAt : '',
       pauseReasonPending: !!tracking.pauseReasonPending,
@@ -1671,8 +1730,15 @@
       at: typeof entry.at === 'string' && entry.at ? entry.at : new Date().toISOString(),
       status: typeof entry.status === 'string' && entry.status ? entry.status : 'todo',
       progress: clampTaskProgressValue(entry.progress),
-      assigneeId: typeof entry.assigneeId === 'string' ? entry.assigneeId : ''
+      assigneeId: typeof entry.assigneeId === 'string' ? entry.assigneeId : '',
+      actorId: typeof entry.actorId === 'string' ? entry.actorId : ''
     };
+  }
+
+  function getCurrentTaskHistoryActorId() {
+    var auth = window.AuthManager;
+    var user = auth && typeof auth.getCurrentUser === 'function' ? auth.getCurrentUser() : null;
+    return user && user.id ? String(user.id) : '';
   }
 
   function buildSeedTaskHistory(task) {
@@ -1762,7 +1828,8 @@
       at: task.updatedAt || new Date().toISOString(),
       status: nextStatus,
       progress: nextProgress,
-      assigneeId: nextAssigneeId
+      assigneeId: nextAssigneeId,
+      actorId: getCurrentTaskHistoryActorId()
     });
   }
 
@@ -2855,6 +2922,7 @@
     getStorageStatus: getStorageStatus,
     checkStorageHealth: checkStorageHealth,
     refreshFromRemote: refreshFromRemote,
+    hasData: hasCoreData,
 
     // Event Bus
     on:    on,
