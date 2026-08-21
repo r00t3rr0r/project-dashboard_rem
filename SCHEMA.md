@@ -36,10 +36,25 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `pd_releases`            | `Release[]`      | `[]` | Liste der Releases                                |
 | `pd_notifications`       | `Notification[]` | `[]` | Liste der Benachrichtigungen                      |
 | `pd_calendar_events`     | `CalendarEvent[]`| `[]` | Liste der Kalenderereignisse                       |
+| `pd_team_chat_messages`  | `TeamChatMessage[]` | `[]` | Öffentliche Nachrichten des Team-Gruppenchats  |
 
 ---
 
 ## Objekt-Strukturen
+
+### TeamChatMessage
+
+| Feld | Typ | Beschreibung |
+|------|-----|--------------|
+| `id` | `string` | Generierte Nachrichten-ID |
+| `authorId` / `authorName` | `string` | Absender zum Erstellzeitpunkt |
+| `targetType` | `string` | `all` oder `employee`; alle Nachrichten bleiben öffentlich sichtbar |
+| `targetEmployeeId` / `targetEmployeeName` | `string` | Direkt angesprochener Mitarbeiter |
+| `body` | `string` | Nachrichtentext |
+| `replyToId` | `string` | ID der beantworteten Nachricht |
+| `replyRequired` | `boolean` | Kennzeichnet eine verpflichtende Antwort |
+| `requiredEmployeeIds` | `string[]` | Mitarbeiter, deren direkte Antwort noch ausgewertet wird |
+| `createdAt` | `string` | ISO-8601 Timestamp |
 
 ### Project
 
@@ -77,7 +92,8 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `priority`    | `string`   | `"low"` \| `"medium"` \| `"high"` \| `"blocker"` |
 | `status`      | `string`   | `"todo"` \| `"in-progress"` \| `"review"` \| `"done"` \| `"backlog"` |
 | `projectId`   | `string\|null` | Verknüpftes Projekt-ID                    |
-| `assigneeId`  | `string\|null` | Mitarbeiter-ID (Zugewiesener)             |
+| `assigneeId`  | `string\|null` | Primaere Mitarbeiter-ID (erstes Element aus `assigneeIds`) |
+| `assigneeIds` | `string[]` | Mehrfachzuweisung: alle zugeordneten Mitarbeiter-IDs |
 | `labels`      | `string[]` | Array von Label-IDs                           |
 | `urgency`     | `string`   | `"low"` \| `"normal"` \| `"high"` \| `"critical"` |
 | `effortHours` | `number`   | Geplanter Aufwand in Stunden                  |

@@ -31,36 +31,8 @@ function isFallbackableStatus(status){
 }
 
 function requestJson(path,method,payload,extraHeaders){
-  var bases=getBackendCandidates();
-  var headers={'Content-Type':'application/json'};
-  if(extraHeaders&&typeof extraHeaders==='object'){
-    Object.keys(extraHeaders).forEach(function(key){headers[key]=extraHeaders[key];});
-  }
-
-  function tryBase(index,lastError){
-    if(index>=bases.length)return Promise.reject(lastError||new Error('Kein KI-Backend erreichbar.'));
-    var endpoint=bases[index]+path;
-    var options={method:method,headers:headers};
-    if(method==='POST'&&payload!==undefined){
-      options.body=JSON.stringify(payload||{});
-    }
-
-    return fetch(endpoint,options).then(function(res){
-      return res.json().catch(function(){return {};}).then(function(body){
-        if(!res.ok){
-          var err=new Error(body&&body.error?body.error:('HTTP '+res.status+' @ '+endpoint));
-          if(isFallbackableStatus(res.status))return tryBase(index+1,err);
-          throw err;
-        }
-        return {endpoint:endpoint,body:body};
-      });
-    }).catch(function(err){
-      if(index+1<bases.length)return tryBase(index+1,err);
-      throw err;
-    });
-  }
-
-  return tryBase(0,null);
+  if(!window.LocalOllama)return Promise.reject(new Error('Lokaler Ollama-Client wurde nicht geladen.'));
+  return window.LocalOllama.request(path,method,payload||{});
 }
 
 function getProjectSnapshot(project){

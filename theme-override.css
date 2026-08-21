@@ -2067,6 +2067,13 @@ body.light-mode .nav-menu li a:hover {
   flex: 1;
 }
 
+.task-cockpit-assignee-meta {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
 .task-cockpit-list {
   display: flex;
   flex-direction: column;
@@ -2241,6 +2248,29 @@ body.light-mode .nav-menu li a:hover {
   color: var(--text-primary);
   background: linear-gradient(135deg, rgba(99, 226, 255, 0.28), rgba(94, 162, 255, 0.22));
   border: 1px solid rgba(99, 226, 255, 0.2);
+}
+
+.kanban-assignee-avatars {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+.kanban-assignee-avatars .kanban-assignee-avatar {
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 0.65rem;
+  margin-left: -0.45rem;
+  box-shadow: 0 0 0 1px rgba(7, 16, 29, 0.9);
+}
+
+.kanban-assignee-avatars .kanban-assignee-avatar:first-child {
+  margin-left: 0;
+}
+
+.kanban-assignee-avatar-more {
+  font-size: 0.7rem;
+  letter-spacing: 0.01em;
 }
 
 .kanban-team-load-content {
@@ -4560,6 +4590,765 @@ body.light-mode .employee-distribution-donut {
   }
 }
 
+/* Light theme: complete surface and contrast pass */
+body.light-mode {
+  --bg-primary: #e4edf2;
+  --bg-secondary: rgba(232, 241, 246, 0.96);
+  --bg-card: rgba(224, 235, 242, 0.94);
+  --bg-sidebar: rgba(226, 237, 243, 0.98);
+  --bg-sidebar-accent: rgba(210, 226, 235, 0.98);
+  --text-primary: #172438;
+  --text-secondary: #465a72;
+  --text-muted: #60758b;
+  --text-inverse: #ffffff;
+  --border-color: rgba(70, 97, 128, 0.18);
+  --border-strong: rgba(48, 102, 153, 0.32);
+  --accent-blue: #276fae;
+  --accent-cyan: #167b98;
+  --accent-green: #16845a;
+  --accent-yellow: #a66a08;
+  --accent-red: #c33f50;
+  --accent-purple: #6d5bb4;
+  --shadow-color: rgba(31, 55, 80, 0.12);
+  --overlay-bg: rgba(20, 35, 52, 0.34);
+  --progress-bg: #dce6ef;
+  --scrollbar-bg: #edf3f8;
+  --scrollbar-thumb: #9caebe;
+  --focus-color: #277db8;
+  --btn-default-bg: rgba(229, 239, 244, 0.92);
+  --btn-default-bg-hover: rgba(242, 248, 250, 0.98);
+  --btn-default-border: rgba(61, 92, 124, 0.22);
+  --btn-default-text: #172438;
+  --btn-primary-text: #15324c;
+  --btn-primary-from: rgba(61, 177, 202, 0.18);
+  --btn-primary-to: rgba(54, 126, 190, 0.24);
+  --btn-primary-from-hover: rgba(61, 177, 202, 0.26);
+  --btn-primary-to-hover: rgba(54, 126, 190, 0.32);
+  --btn-secondary-bg: rgba(220, 233, 240, 0.94);
+  --btn-secondary-bg-hover: rgba(39, 111, 174, 0.12);
+  --btn-secondary-border: rgba(39, 111, 174, 0.28);
+  background:
+    radial-gradient(circle at 8% 0%, rgba(61, 141, 190, 0.18), transparent 30rem),
+    radial-gradient(circle at 94% 8%, rgba(52, 157, 151, 0.14), transparent 28rem),
+    linear-gradient(145deg, #edf4f6 0%, #dfeaf0 48%, #d6e6e9 100%);
+}
+
+body.light-mode::before {
+  background-image:
+    linear-gradient(rgba(44, 86, 122, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(44, 86, 122, 0.035) 1px, transparent 1px);
+  opacity: 0.45;
+}
+
+body.light-mode .app-shell-glow {
+  opacity: 0.14;
+}
+
+body.light-mode .app-shell-glow-left {
+  background: rgba(55, 133, 190, 0.2);
+}
+
+body.light-mode .app-shell-glow-right {
+  background: rgba(46, 157, 154, 0.16);
+}
+
+body.light-mode .admin-pin-gate {
+  background:
+    radial-gradient(circle at 18% 8%, rgba(55, 133, 190, 0.16), transparent 38%),
+    radial-gradient(circle at 82% 86%, rgba(46, 157, 154, 0.12), transparent 42%),
+    rgba(235, 242, 248, 0.92);
+}
+
+body.light-mode .admin-pin-panel,
+body.light-mode .toolbar,
+body.light-mode .stat-card,
+body.light-mode .chart-container,
+body.light-mode .projects-panel,
+body.light-mode .project-card,
+body.light-mode .employee-card,
+body.light-mode .release-card,
+body.light-mode .standup-form,
+body.light-mode .standup-entry,
+body.light-mode .notification-item,
+body.light-mode .sprint-card,
+body.light-mode .health-result-item,
+body.light-mode .modal,
+body.light-mode .kanban-overview-card,
+body.light-mode .kanban-team-load-card,
+body.light-mode .kanban-day-column,
+body.light-mode .kanban-card,
+body.light-mode .kanban-column,
+body.light-mode .task-history-metric,
+body.light-mode .task-history-filters,
+body.light-mode .task-history-card,
+body.light-mode .task-history-empty {
+  background: linear-gradient(150deg, rgba(235, 244, 247, 0.97), rgba(216, 231, 238, 0.94));
+  border-color: var(--border-color);
+  box-shadow: 0 12px 32px rgba(31, 55, 80, 0.11), inset 0 1px 0 rgba(255, 255, 255, 0.58);
+}
+
+body.light-mode .sidebar {
+  background: linear-gradient(180deg, var(--bg-sidebar) 0%, var(--bg-sidebar-accent) 100%);
+  box-shadow: 12px 0 34px rgba(31, 55, 80, 0.1);
+}
+
+body.light-mode .sidebar-status,
+body.light-mode .sidebar-footer,
+body.light-mode .toolbar-group,
+body.light-mode .kanban-view-switch,
+body.light-mode .quicktask-chain-row,
+body.light-mode .task-cockpit-blocker,
+body.light-mode .employee-load-row,
+body.light-mode .employee-github-project,
+body.light-mode .employee-capacity-row output,
+body.light-mode .cooc-item {
+  background: rgba(215, 229, 236, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.54);
+}
+
+body.light-mode .nav-menu li a::before {
+  background: linear-gradient(90deg, rgba(39, 111, 174, 0.12), transparent 72%);
+}
+
+body.light-mode .nav-menu li a:hover {
+  background: rgba(226, 238, 243, 0.82);
+  border-color: var(--border-color);
+}
+
+body.light-mode .nav-menu li a.active,
+body.light-mode .kanban-view-btn.is-active,
+body.light-mode .kanban-view-btn:hover {
+  background: linear-gradient(135deg, rgba(51, 153, 181, 0.13), rgba(39, 111, 174, 0.16));
+  border-color: rgba(39, 111, 174, 0.32);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+body.light-mode .nav-icon {
+  color: var(--accent-cyan);
+  background: rgba(22, 123, 152, 0.08);
+  border-color: rgba(22, 123, 152, 0.14);
+}
+
+body.light-mode .btn,
+body.light-mode button {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86), 0 3px 10px rgba(31, 55, 80, 0.06);
+}
+
+body.light-mode .btn-primary {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 7px 16px rgba(39, 111, 174, 0.13);
+}
+
+body.light-mode input[type='text'],
+body.light-mode input[type='number'],
+body.light-mode input[type='email'],
+body.light-mode input[type='date'],
+body.light-mode input[type='search'],
+body.light-mode input[type='file'],
+body.light-mode input[type='password'],
+body.light-mode textarea,
+body.light-mode select {
+  background: rgba(249, 251, 253, 0.96);
+  border-color: rgba(70, 97, 128, 0.22);
+  color: var(--text-primary);
+  box-shadow: inset 0 1px 2px rgba(31, 55, 80, 0.035);
+}
+
+body.light-mode input::placeholder,
+body.light-mode textarea::placeholder {
+  color: #76889a;
+  opacity: 1;
+}
+
+body.light-mode input:focus,
+body.light-mode textarea:focus,
+body.light-mode select:focus {
+  background: #ffffff;
+  border-color: var(--focus-color);
+  box-shadow: 0 0 0 3px rgba(39, 125, 184, 0.14);
+}
+
+body.light-mode .team-week-matrix-wrap,
+body.light-mode .team-week-row-header {
+  background: linear-gradient(180deg, #ffffff, #edf4f8);
+}
+
+body.light-mode .team-week-row-employee,
+body.light-mode .team-week-col-head {
+  background: rgba(247, 250, 252, 0.98);
+}
+
+body.light-mode .team-week-col-head.is-today {
+  background: linear-gradient(180deg, rgba(55, 133, 190, 0.17), rgba(55, 133, 190, 0.08));
+}
+
+body.light-mode .quicktask-action-menu {
+  background: linear-gradient(165deg, #ffffff, #eef5f8);
+  box-shadow: 0 18px 38px rgba(31, 55, 80, 0.18), inset 0 1px 0 #ffffff;
+}
+
+/* Dashboard Team-Gruppenchat */
+#chart-task-distribution {
+  display: grid;
+  grid-template-rows: auto minmax(18rem, 1fr) auto;
+  gap: 0.9rem;
+  min-height: 34rem;
+  container-type: inline-size;
+}
+
+#chart-task-distribution.is-expanded {
+  position: fixed;
+  inset: 1.25rem;
+  z-index: 900;
+  min-height: 0;
+  margin: 0;
+  padding: 1.25rem;
+  background: var(--bg-card);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.48);
+}
+
+#dashboard.team-chat-expanded {
+  transform: none !important;
+}
+
+body.team-chat-open {
+  overflow: hidden;
+}
+
+.team-chat-titlebar,
+.team-chat-compose-row,
+.team-chat-message-head,
+.team-chat-message-actions,
+.team-chat-replying {
+  display: flex;
+  align-items: center;
+}
+
+.team-chat-titlebar {
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.team-chat-titlebar h3 {
+  margin: 0 0 0.16rem;
+}
+
+.team-chat-titlebar span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.team-chat-expand,
+.team-chat-reply,
+.team-chat-replying button {
+  border: 0;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.team-chat-expand {
+  width: 2.35rem;
+  height: 2.35rem;
+  flex: 0 0 2.35rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.65rem;
+  background: rgba(74, 158, 255, 0.12);
+  font-size: 1.15rem;
+}
+
+.team-chat-expand:hover,
+.team-chat-reply:hover {
+  color: var(--accent-blue);
+}
+
+.team-chat-messages {
+  min-height: 18rem;
+  max-height: 25rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.25rem 0.35rem 0.25rem 0;
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+}
+
+#chart-task-distribution.is-expanded .team-chat-messages {
+  max-height: none;
+}
+
+.team-chat-message {
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  gap: 0.65rem;
+  padding: 0.72rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.team-chat-message.is-own {
+  margin-left: clamp(0rem, 8cqi, 3rem);
+  border-color: rgba(77, 192, 161, 0.32);
+  background: rgba(77, 192, 161, 0.08);
+}
+
+.team-chat-message.is-addressed:not(.is-own) {
+  border-left: 3px solid var(--accent-blue);
+}
+
+.team-chat-message.needs-reply {
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.65);
+}
+
+.team-chat-avatar {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg-secondary);
+}
+
+.team-chat-message-main {
+  min-width: 0;
+}
+
+.team-chat-message-head {
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.team-chat-message-head strong {
+  font-size: 0.84rem;
+}
+
+.team-chat-message-head time {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.team-chat-target,
+.team-chat-required {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 0.32rem;
+  border-radius: 999px;
+  padding: 0.14rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.team-chat-target {
+  color: var(--text-secondary);
+  background: rgba(132, 170, 225, 0.12);
+}
+
+.team-chat-target.is-addressed {
+  color: #dff2ff;
+  background: rgba(74, 158, 255, 0.28);
+}
+
+.team-chat-body {
+  margin-top: 0.5rem;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.team-chat-parent,
+.team-chat-replying {
+  margin-top: 0.4rem;
+  padding: 0.42rem 0.55rem;
+  border-left: 2px solid rgba(132, 170, 225, 0.55);
+  color: var(--text-secondary);
+  background: rgba(132, 170, 225, 0.08);
+  font-size: 0.72rem;
+}
+
+.team-chat-message-actions {
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-height: 1.4rem;
+  margin-top: 0.45rem;
+}
+
+.team-chat-required {
+  margin: 0;
+  color: #ffd99a;
+  background: rgba(245, 158, 11, 0.14);
+}
+
+.team-chat-required.is-mine {
+  background: rgba(245, 158, 11, 0.3);
+}
+
+.team-chat-required.is-done {
+  color: #9de5c9;
+  background: rgba(77, 192, 161, 0.14);
+}
+
+.team-chat-reply {
+  margin-left: auto;
+  padding: 0.2rem 0;
+  background: transparent;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.team-chat-composer {
+  display: grid;
+  gap: 0.55rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.team-chat-composer textarea {
+  width: 100%;
+  min-height: 4.4rem;
+  max-height: 10rem;
+  resize: vertical;
+}
+
+.team-chat-compose-row {
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.team-chat-compose-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.team-chat-compose-row select {
+  min-width: 8rem;
+  max-width: 12rem;
+}
+
+.team-chat-compose-row .btn {
+  margin-left: auto;
+}
+
+.team-chat-replying {
+  justify-content: space-between;
+  margin: 0;
+  border-radius: 0.4rem;
+}
+
+.team-chat-replying button {
+  width: 1.5rem;
+  height: 1.5rem;
+  background: transparent;
+  font-size: 1.05rem;
+}
+
+.team-chat-empty,
+.team-chat-login-note {
+  display: grid;
+  place-items: center;
+  min-height: 8rem;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 0.82rem;
+}
+
+body.light-mode .team-chat-message {
+  background: rgba(255, 255, 255, 0.58);
+}
+
+body.light-mode .team-chat-message.is-own {
+  background: rgba(38, 142, 115, 0.08);
+}
+
+body.light-mode .team-chat-target.is-addressed {
+  color: #15527e;
+  background: rgba(39, 125, 184, 0.16);
+}
+
+body.light-mode .team-chat-required {
+  color: #8a5100;
+}
+
+body.light-mode .team-chat-required.is-done {
+  color: #176b55;
+}
+
+@media (max-width: 640px) {
+  #chart-task-distribution.is-expanded {
+    inset: 0;
+    border-radius: 0;
+    padding: 0.85rem;
+  }
+
+  .team-chat-message.is-own {
+    margin-left: 0;
+  }
+
+  .team-chat-message-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .team-chat-compose-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .team-chat-compose-row label,
+  .team-chat-compose-row select,
+  .team-chat-compose-row .btn {
+    width: 100%;
+    max-width: none;
+    margin-left: 0;
+  }
+}
+
+body.light-mode .quicktask-action-item,
+body.light-mode .task-ai-status,
+body.light-mode .task-ai-hint,
+body.light-mode .dashboard-notice-card,
+body.light-mode .meeting-task-draft-preview,
+body.light-mode .meeting-draft-suggestion-card,
+body.light-mode .meeting-workflow-card,
+body.light-mode .meeting-output {
+  background: rgba(247, 250, 252, 0.94);
+  color: var(--text-primary);
+}
+
+body.light-mode .meeting-draft-assignment-panel,
+body.light-mode .meeting-draft-section,
+body.light-mode .meeting-draft-fold,
+body.light-mode .meeting-draft-fold-summary,
+body.light-mode .meeting-draft-meta-card,
+body.light-mode .meeting-draft-suggestions,
+body.light-mode .meeting-task-card {
+  background-color: rgba(255, 255, 255, 0.66);
+  border-color: var(--border-color);
+}
+
+body.light-mode .meeting-task-draft-panel .meeting-collapsible-title,
+body.light-mode .meeting-task-draft-panel .meeting-workflow-head h3 {
+  color: #79510c;
+}
+
+body.light-mode .meeting-draft-badge {
+  border-color: rgba(70, 97, 128, 0.2);
+}
+
+/* Light dashboard surfaces use color, not dark-mode glass or plain white. */
+body.light-mode .dashboard-project-row {
+  --dashboard-row-surface: rgba(105, 159, 190, 0.13);
+  --dashboard-row-accent: rgba(72, 154, 183, 0.17);
+  --dashboard-card-tint: rgba(77, 151, 187, 0.13);
+  border-color: rgba(63, 112, 143, 0.2);
+  background:
+    radial-gradient(125% 135% at 0% 0%, var(--dashboard-row-accent) 0%, transparent 58%),
+    linear-gradient(145deg, rgba(220, 234, 240, 0.92), rgba(204, 223, 231, 0.86));
+}
+
+body.light-mode .dashboard-projects-layout > .dashboard-project-row:nth-child(even) {
+  --dashboard-row-surface: rgba(91, 164, 146, 0.13);
+  --dashboard-row-accent: rgba(73, 163, 139, 0.17);
+  --dashboard-card-tint: rgba(75, 157, 139, 0.12);
+}
+
+body.light-mode .dashboard-project-row > .project-card,
+body.light-mode .dashboard-project-schedule-card {
+  background:
+    linear-gradient(145deg, var(--dashboard-card-tint), rgba(201, 221, 230, 0.2) 55%),
+    linear-gradient(155deg, rgba(231, 241, 244, 0.97), rgba(209, 226, 233, 0.95));
+  border-color: rgba(63, 112, 143, 0.2);
+  box-shadow: 0 12px 30px rgba(36, 65, 85, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+body.light-mode .project-card-head-summary {
+  background:
+    radial-gradient(circle at 78% 15%, rgba(69, 156, 164, 0.15), transparent 38%),
+    linear-gradient(135deg, rgba(204, 224, 233, 0.94), rgba(218, 232, 236, 0.88));
+  border-color: rgba(57, 111, 139, 0.23);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
+}
+
+body.light-mode .project-card-head-matrix-label {
+  color: #536b7d;
+  background: #cbdde4;
+  border: 1px solid rgba(57, 111, 139, 0.16);
+}
+
+body.light-mode .project-head-task-row.is-active-task .project-head-task-title {
+  color: #146f82;
+  text-shadow: none;
+  animation-name: active-task-title-pulse-light;
+}
+
+body.light-mode .project-head-contact-avatar,
+body.light-mode .project-progress-contact-avatar {
+  background-color: rgba(189, 212, 222, 0.72);
+  border-color: rgba(57, 111, 139, 0.24);
+}
+
+body.light-mode .project-head-progress,
+body.light-mode .project-head-progress.is-mid,
+body.light-mode .project-head-progress.is-low {
+  background: linear-gradient(135deg, rgba(187, 222, 215, 0.94), rgba(194, 216, 229, 0.92));
+  border-color: rgba(38, 126, 116, 0.34);
+  color: var(--text-primary);
+}
+
+body.light-mode .project-head-progress.is-mid {
+  background: linear-gradient(135deg, rgba(191, 219, 235, 0.96), rgba(206, 224, 235, 0.92));
+  border-color: rgba(39, 111, 174, 0.32);
+}
+
+body.light-mode .project-head-progress.is-low {
+  background: linear-gradient(135deg, rgba(239, 220, 183, 0.94), rgba(227, 218, 203, 0.92));
+  border-color: rgba(166, 106, 8, 0.32);
+}
+
+body.light-mode .project-card-active-work,
+body.light-mode .project-head-progress.is-running {
+  animation-name: project-active-work-shell-light;
+}
+
+body.light-mode .project-head-progress.is-running {
+  background: linear-gradient(135deg, rgba(176, 219, 213, 0.98), rgba(184, 211, 226, 0.96));
+  border-color: rgba(31, 118, 133, 0.48);
+}
+
+body.light-mode .project-head-progress-track {
+  background: rgba(71, 96, 112, 0.2);
+}
+
+body.light-mode .project-head-timeline-summary,
+body.light-mode .project-head-timeline-week-range {
+  color: #276790;
+}
+
+body.light-mode .project-head-timeline-item,
+body.light-mode .project-head-timeline-week-day,
+body.light-mode .project-head-timeline-week-agenda-item {
+  background: linear-gradient(135deg, rgba(215, 230, 236, 0.94), rgba(202, 222, 230, 0.88));
+  border-color: rgba(61, 108, 137, 0.2);
+}
+
+body.light-mode .project-head-timeline-item.is-this-week {
+  background: linear-gradient(135deg, rgba(177, 218, 204, 0.96), rgba(188, 216, 225, 0.94));
+  border-color: rgba(30, 132, 92, 0.4);
+  box-shadow: 0 0 0 1px rgba(30, 132, 92, 0.08), 0 8px 20px rgba(38, 99, 91, 0.12);
+}
+
+body.light-mode .project-head-timeline-item.is-this-week::after {
+  background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.3) 44%, transparent 62%);
+}
+
+body.light-mode .project-head-timeline-week {
+  border-top-color: rgba(57, 111, 139, 0.18);
+}
+
+body.light-mode .project-head-timeline-week-day:hover,
+body.light-mode .project-head-timeline-week-day:focus-visible,
+body.light-mode .project-head-timeline-week-day.has-entry {
+  background: linear-gradient(145deg, rgba(181, 216, 230, 0.96), rgba(194, 224, 225, 0.92));
+  border-color: rgba(39, 111, 174, 0.34);
+  box-shadow: 0 8px 18px rgba(38, 76, 98, 0.14);
+}
+
+body.light-mode .project-head-timeline-week-count {
+  color: #204b68;
+  background: rgba(69, 143, 184, 0.2);
+}
+
+body.light-mode .project-head-timeline-week-day-popover {
+  background: linear-gradient(155deg, rgba(225, 237, 241, 0.99), rgba(198, 219, 227, 0.99));
+  border-color: rgba(49, 106, 140, 0.28);
+  box-shadow: 0 16px 34px rgba(31, 55, 80, 0.2);
+}
+
+body.light-mode .project-head-timeline-week-day-popover-item {
+  background: rgba(229, 239, 242, 0.78);
+  border-color: rgba(61, 108, 137, 0.16);
+}
+
+body.light-mode .project-head-timeline-week-day-popover-time {
+  color: #3f647d;
+}
+
+@keyframes project-active-work-shell-light {
+  0%, 12%, 32%, 52%, 100% {
+    box-shadow: 0 12px 30px rgba(36, 65, 85, 0.12), 0 0 0 1px rgba(39, 125, 145, 0.28), 0 0 20px rgba(55, 148, 160, 0.2);
+  }
+  13%, 15%, 53%, 56% {
+    box-shadow: 0 12px 30px rgba(36, 65, 85, 0.14), 0 0 0 1px rgba(39, 125, 145, 0.38), 0 0 28px rgba(55, 148, 160, 0.3);
+  }
+}
+
+@keyframes active-task-title-pulse-light {
+  0%, 100% {
+    color: #146f82;
+  }
+  50% {
+    color: #0d5f72;
+  }
+}
+
+body.light-mode .employee-work-card,
+body.light-mode .employee-github-panel {
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.97), rgba(240, 246, 250, 0.94));
+  border-color: var(--border-color);
+}
+
+body.light-mode .employee-load-zone,
+body.light-mode .employee-task-panel {
+  background: rgba(226, 237, 245, 0.58);
+}
+
+body.light-mode .employee-task-item {
+  background: rgba(255, 255, 255, 0.86);
+}
+
+body.light-mode .employee-github-cell.lvl-0 {
+  background: rgba(79, 111, 128, 0.14);
+  border-color: rgba(55, 79, 105, 0.1);
+}
+
+body.light-mode .employee-github-cell.lvl-1 {
+  background: #9bcfc1;
+  border-color: rgba(35, 119, 96, 0.18);
+}
+
+body.light-mode .employee-github-cell.lvl-2 {
+  background: #63b79e;
+  border-color: rgba(24, 111, 82, 0.24);
+}
+
+body.light-mode .employee-github-cell.lvl-3 {
+  background: #2f9678;
+  border-color: rgba(18, 91, 67, 0.3);
+}
+
+body.light-mode .employee-github-cell.lvl-4 {
+  background: #126b54;
+  border-color: rgba(10, 70, 51, 0.36);
+}
+
+body.light-mode .employee-github-cell.is-future {
+  background: transparent;
+  border-color: transparent;
+}
+
+body.light-mode .resolution-dialog {
+  background: #ffffff;
+  box-shadow: 0 20px 48px rgba(31, 55, 80, 0.2);
+}
+
+body.light-mode .resolution-dialog::backdrop {
+  background: rgba(30, 47, 64, 0.34);
+}
+
   .meeting-root {
     display: block;
   }
@@ -4626,6 +5415,16 @@ body.light-mode .employee-distribution-donut {
     display: grid;
     gap: 0.5rem;
     align-content: end;
+  }
+
+  .meeting-editor-actions {
+    display: grid;
+    grid-template-columns: 2.8rem minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  .meeting-editor-actions .btn {
+    min-height: 2.8rem;
   }
 
   #meeting-add-entry {
@@ -4865,6 +5664,26 @@ body.light-mode .employee-distribution-donut {
 
   .meeting-draft-section-event::before {
     background: linear-gradient(180deg, var(--accent-yellow), #ff9f43);
+  }
+
+  .meeting-draft-additional-events {
+    display: grid;
+    gap: 0.65rem;
+    padding-top: 0.25rem;
+    border-top: 1px solid rgba(246, 199, 96, 0.2);
+  }
+
+  .meeting-draft-additional-events h5 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+  }
+
+  .meeting-draft-additional-event {
+    display: grid;
+    gap: 0.6rem;
+    padding: 0.7rem 0 0;
+    border-top: 1px dashed rgba(246, 199, 96, 0.22);
   }
 
   .meeting-draft-section-subtasks {
@@ -5353,4 +6172,33 @@ body.light-mode .employee-distribution-donut {
   display: grid;
   grid-template-columns: repeat(5, minmax(240px, 1fr));
   overflow-x: auto;
+}
+
+body.light-mode .meeting-task-draft-preview,
+body.light-mode .meeting-draft-suggestion-card,
+body.light-mode .meeting-workflow-card,
+body.light-mode .meeting-output {
+  background: rgba(247, 250, 252, 0.94);
+  color: var(--text-primary);
+}
+
+body.light-mode .meeting-draft-assignment-panel,
+body.light-mode .meeting-draft-section,
+body.light-mode .meeting-draft-fold,
+body.light-mode .meeting-draft-fold-summary,
+body.light-mode .meeting-draft-meta-card,
+body.light-mode .meeting-draft-suggestions,
+body.light-mode .meeting-task-card,
+body.light-mode .prompt-preset-btn {
+  background-color: rgba(255, 255, 255, 0.68);
+  border-color: var(--border-color);
+}
+
+body.light-mode .meeting-task-draft-panel .meeting-collapsible-title,
+body.light-mode .meeting-task-draft-panel .meeting-workflow-head h3 {
+  color: #79510c;
+}
+
+body.light-mode .meeting-draft-badge {
+  border-color: rgba(70, 97, 128, 0.2);
 }

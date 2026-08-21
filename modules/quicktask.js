@@ -3,8 +3,6 @@
    ======================================== */
 (function(){'use strict';
 
-var AI_BACKEND_URL=(window.location&&/^https?:/i.test(window.location.origin||''))?window.location.origin.replace(/\/$/,''):'';
-
 function escapeHtml(str){
   if(!str)return'';
   var div=document.createElement('div');
@@ -78,48 +76,11 @@ function isAdminMode(auth){
   return mode==='setup'||mode==='admin';
 }
 
-function isLocalDevelopmentHost(){
-  try{
-    var hostname=(window.location&&window.location.hostname)?String(window.location.hostname):'';
-    return hostname==='localhost'||hostname==='127.0.0.1';
-  }catch(_err){
-    return false;
-  }
-}
-
-function getAiBackendCandidates(){
-  var origin=(window.location&&window.location.origin)?window.location.origin:'';
-  var list=[origin,AI_BACKEND_URL];
-  if(isLocalDevelopmentHost()){
-    list.push('http://localhost:8766','http://127.0.0.1:8766','http://127.0.0.1:8765');
-  }
-  if(origin)list.push(origin);
-  return list.filter(function(item,idx){return item&&list.indexOf(item)===idx;});
-}
-
 function requestAiTaskDraft(payload){
-  var bases=getAiBackendCandidates();
-
-  function tryBase(index,lastError){
-    if(index>=bases.length)return Promise.reject(lastError||new Error('Kein KI-Backend erreichbar.'));
-    var endpoint=bases[index]+'/api/ai/meeting-task-draft';
-    var options={method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})};
-    return fetch(endpoint,options).then(function(res){
-      return res.json().catch(function(){return {};}).then(function(body){
-        if(!res.ok){
-          var err=new Error(body&&body.error?body.error:('HTTP '+res.status+' @ '+endpoint));
-          if(res.status===404||res.status===405||res.status===501)return tryBase(index+1,err);
-          throw err;
-        }
-        return body;
-      });
-    }).catch(function(err){
-      if(index+1<bases.length)return tryBase(index+1,err);
-      throw err;
-    });
+  if(!window.LocalOllama||typeof window.LocalOllama.generate!=='function'){
+    return Promise.reject(new Error('Lokaler Ollama-Client wurde nicht geladen.'));
   }
-
-  return tryBase(0,null);
+  return window.LocalOllama.generate('/api/ai/meeting-task-draft',payload||{});
 }
 
 function setMultiSelectValues(selectEl,values){
@@ -138,19 +99,45 @@ function normalizeText(value){
   return String(value||'').toLowerCase();
 }
 
+function normalizeAssigneeIds(values){
+  var out=[];
+  var seen={};
+  (Array.isArray(values)?values:[]).forEach(function(value){
+    var id=String(value||'').trim();
+    if(!id||seen[id])return;
+    seen[id]=true;
+    out.push(id);
+  });
+  return out;
+}
+
+function getTaskAssigneeIds(task){
+  if(!task||typeof task!=='object')return [];
+  var ids=[];
+  if(Array.isArray(task.assigneeIds)){
+    ids=ids.concat(task.assigneeIds);
+  }
+  if(task.assigneeId)ids.push(task.assigneeId);
+  return normalizeAssigneeIds(ids);
+}
+
 function collectEmployeeLoad(projectId){
   var tasks=(window.DataLayer&&typeof window.DataLayer.getTasks==='function')?window.DataLayer.getTasks():[];
   var loads={};
   tasks.forEach(function(task){
-    if(!task||!task.assigneeId)return;
+    if(!task)return;
+    var assigneeIds=getTaskAssigneeIds(task);
+    if(!assigneeIds.length)return;
     var status=String(task.status||'').toLowerCase();
     if(status==='done'||status==='closed')return;
-    var key=String(task.assigneeId);
-    if(!loads[key])loads[key]={open:0,openInProject:0,highPressure:0};
-    loads[key].open++;
-    if(projectId&&String(task.projectId||'')===String(projectId))loads[key].openInProject++;
     var isCritical=String(task.priority||'')==='blocker'||String(task.priority||'')==='high'||String(task.urgency||'')==='critical'||String(task.urgency||'')==='high'||!!task.blocked;
-    if(isCritical)loads[key].highPressure++;
+    assigneeIds.forEach(function(id){
+      var key=String(id);
+      if(!loads[key])loads[key]={open:0,openInProject:0,highPressure:0};
+      loads[key].open++;
+      if(projectId&&String(task.projectId||'')===String(projectId))loads[key].openInProject++;
+      if(isCritical)loads[key].highPressure++;
+    });
   });
   return loads;
 }
@@ -236,13 +223,19 @@ function buildSchedule(mode,deadline,fixedAt,rangeStart,rangeEnd){
 
 function buildTaskPayloadFromFields(fields){
   var noteText=(fields.noteText||'').trim();
+  var normalizedAssigneeIds=normalizeAssigneeIds(
+    Array.isArray(fields.assigneeIds)&&fields.assigneeIds.length
+      ? fields.assigneeIds
+      : (fields.assigneeId?[fields.assigneeId]:[])
+  );
   return {
     title:(fields.title||'').trim(),
     description:(fields.description||'').trim(),
     priority:fields.priority||'medium',
     urgency:fields.urgency||'normal',
     projectId:fields.projectId||null,
-    assigneeId:fields.assigneeId||null,
+    assigneeId:normalizedAssigneeIds.length?normalizedAssigneeIds[0]:null,
+    assigneeIds:normalizedAssigneeIds,
     labels:Array.isArray(fields.labels)?fields.labels:[],
     status:fields.status||'todo',
     effortHours:parseFloat(fields.effortHours||'0')||0,
@@ -303,7 +296,6 @@ function openQuickTaskModal(){
     var adminMode=isAdminMode(auth);
     
     var pOpts=buildProjectOptions(projects,'-- Projekt waehlen --');
-    var eOpts=buildEmployeeOptions(employees,'-- Zuweisen --');
     var lOpts=buildLabelOptions(labels);
     var aiToolsHtml=adminMode
       ? '<div class="task-ai-panel">'
@@ -330,7 +322,7 @@ function openQuickTaskModal(){
       '</div>' +
       '<div class="task-cockpit-grid">' +
       '  <div class="form-group"><label>Projekt</label><select id="qtm-project">'+pOpts+'</select></div>' +
-      '  <div class="form-group"><label>Mitarbeiter</label><select id="qtm-assignee">'+eOpts+'</select></div>' +
+      '  <div class="form-group"><label>Mitarbeiter</label><div id="qtm-assignee-picker" class="qtm-assignee-picker"></div><small style="color:var(--text-muted)">Mehrfachauswahl: Mitarbeiter per Klick zuweisen</small></div>' +
       '</div>' +
       '<div class="form-group"><label>Labels</label><select id="qtm-labels" multiple style="height:80px;">'+lOpts+'</select><br><small style="color:var(--text-muted)">STRG+Klick für mehrere</small></div>' +
       '<div class="form-group"><label>Terminart</label><select id="qtm-schedule-mode"><option value="none">Kein Termin</option><option value="deadline">Deadline</option><option value="fixed">Fester Termin</option><option value="range">Zeitraum</option><option value="asap">Umgehend</option></select></div>' +
@@ -343,6 +335,58 @@ function openQuickTaskModal(){
       '<button class="btn btn-primary" id="qt-submit">Erstellen</button></div>';
 
     var aiState={loading:false,draft:null,suggestions:[]};
+    var selectedAssigneeIds=[];
+
+    function renderAssigneePicker(){
+      var picker=document.getElementById('qtm-assignee-picker');
+      if(!picker)return;
+      if(!employees.length){
+        picker.innerHTML='<p class="text-muted" style="margin:0;">Keine Mitarbeiter verfuegbar.</p>';
+        return;
+      }
+      var selectedMap={};
+      selectedAssigneeIds.forEach(function(id){selectedMap[String(id)]=true;});
+      picker.innerHTML=employees.map(function(employee){
+        var id=String(employee&&employee.id||'').trim();
+        if(!id)return '';
+        var label=(employee.name||'Mitarbeiter')+(employee.role?' ('+employee.role+')':'');
+        var selectedClass=selectedMap[id]?' is-selected':'';
+        return '<button type="button" class="qtm-assignee-chip'+selectedClass+'" data-assignee-id="'+escapeAttr(id)+'" aria-pressed="'+(selectedMap[id]?'true':'false')+'">'+escapeHtml(label)+'</button>';
+      }).join('')
+      +'<button type="button" class="qtm-assignee-clear" data-clear-assignees="1">Zuweisung entfernen</button>';
+    }
+
+    function setSelectedAssigneeIds(ids){
+      selectedAssigneeIds=normalizeAssigneeIds(ids);
+      renderAssigneePicker();
+    }
+
+    function toggleAssigneeSelection(employeeId){
+      var id=String(employeeId||'').trim();
+      if(!id)return;
+      var index=selectedAssigneeIds.indexOf(id);
+      if(index===-1)selectedAssigneeIds.push(id);
+      else selectedAssigneeIds.splice(index,1);
+      renderAssigneePicker();
+    }
+
+    setSelectedAssigneeIds([]);
+
+    var assigneePicker=document.getElementById('qtm-assignee-picker');
+    if(assigneePicker){
+      assigneePicker.addEventListener('click',function(event){
+        var clearBtn=event.target.closest('[data-clear-assignees]');
+        if(clearBtn){
+          event.preventDefault();
+          setSelectedAssigneeIds([]);
+          return;
+        }
+        var chip=event.target.closest('[data-assignee-id]');
+        if(!chip)return;
+        event.preventDefault();
+        toggleAssigneeSelection(chip.getAttribute('data-assignee-id')||'');
+      });
+    }
 
     function updateAiStatus(message,isError){
       var statusEl=document.getElementById('qtm-ai-status');
@@ -430,9 +474,8 @@ function openQuickTaskModal(){
         return;
       }
       var best=ranking[0];
-      var assigneeSelect=document.getElementById('qtm-assignee');
-      if(assigneeSelect&&best&&best.employee&&best.employee.id){
-        assigneeSelect.value=String(best.employee.id);
+      if(best&&best.employee&&best.employee.id){
+        setSelectedAssigneeIds([String(best.employee.id)]);
         updateAiStatus('Vorgeschlagene Zuweisung: '+String(best.employee.name||'Mitarbeiter')+'.',false);
       }
     }
@@ -496,6 +539,12 @@ function openQuickTaskModal(){
 
       applyLabelSuggestions(task.labels);
 
+      if(Array.isArray(task.assigneeIds)&&task.assigneeIds.length){
+        setSelectedAssigneeIds(task.assigneeIds);
+      }else if(task.assigneeId){
+        setSelectedAssigneeIds([task.assigneeId]);
+      }
+
       var chainBtn=document.getElementById('qtm-ai-chain');
       if(chainBtn){
         chainBtn.classList.toggle('hidden',taskSuggestions.length<2);
@@ -511,13 +560,15 @@ function openQuickTaskModal(){
       var projectTasks=tasks.filter(function(task){
         return task&&String(task.projectId||'')===String(project.id||'');
       }).slice(0,120).map(function(task){
+        var assigneeIds=getTaskAssigneeIds(task);
         return {
           id:task.id,
           title:task.title||'',
           status:task.status||'',
           priority:task.priority||'',
           urgency:task.urgency||'',
-          assigneeId:task.assigneeId||'',
+          assigneeId:assigneeIds[0]||'',
+          assigneeIds:assigneeIds,
           effortHours:task.effortHours||0
         };
       });
@@ -635,7 +686,7 @@ function openQuickTaskModal(){
             return;
           }
           var projectId=((document.getElementById('qtm-project')||{}).value||'').trim();
-          var assigneeId=((document.getElementById('qtm-assignee')||{}).value||'').trim();
+          var assigneeId=selectedAssigneeIds[0]||'';
           var priority=((document.getElementById('qtm-prio')||{}).value||'medium').trim();
           var urgency=((document.getElementById('qtm-urgency')||{}).value||'normal').trim();
           var noteText=((document.getElementById('qtm-note')||{}).value||'').trim();
@@ -678,7 +729,8 @@ function openQuickTaskModal(){
         priority:document.getElementById('qtm-prio').value,
         urgency:document.getElementById('qtm-urgency').value,
         projectId:document.getElementById('qtm-project').value,
-        assigneeId:document.getElementById('qtm-assignee').value,
+        assigneeId:selectedAssigneeIds[0]||null,
+        assigneeIds:selectedAssigneeIds,
         labels:selLabels,
         effortHours:document.getElementById('qtm-effort').value,
         scheduleMode:mode,
@@ -1309,14 +1361,23 @@ function renderRecentTasks(){
     }
     
     var recent=sorted.slice(0,10);
+    var employees=window.DataLayer.getEmployees()||[];
+    var employeeNameById={};
+    employees.forEach(function(employee){
+      if(!employee||!employee.id)return;
+      employeeNameById[String(employee.id)]=String(employee.name||'');
+    });
     var html='';
     for(var i=0;i<recent.length;i++){
       var t=recent[i];
       var prioClass=t.priority||'medium';
       var empName='—';
-      if(t.assigneeId){
-        var emp=window.DataLayer.getEmployees().find(function(e){return e.id===t.assigneeId;});
-        if(emp)empName=emp.name;
+      var assigneeIds=getTaskAssigneeIds(t);
+      if(assigneeIds.length){
+        var names=assigneeIds.map(function(id){
+          return employeeNameById[String(id)]||String(id);
+        }).filter(Boolean);
+        if(names.length)empName=names.join(', ');
       }
       var dateStr=(t.createdAt)?new Date(t.createdAt).toLocaleDateString('de-DE'):'';
       html+='<div class="recent-task-item">' +

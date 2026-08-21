@@ -200,14 +200,27 @@
   }
 
   function getEmployeeGitHubAvatarUrl(employee) {
-    if (!employee || !employee.github) return '';
+    if (!employee) return '';
 
-    var github = normalizeGitHubProfile(employee.github, employee.name);
-    var username = github.username || extractGitHubUsername(github.profileUrl || '');
-    if (!username) return '';
+    // Check if there's a custom avatar stored
+    var customAvatar = employee.customAvatarBase64 ? String(employee.customAvatarBase64).trim() : '';
+    
+    // GitHub avatar takes priority if linked
+    if (employee.github) {
+      var github = normalizeGitHubProfile(employee.github, employee.name);
+      var username = github.username || extractGitHubUsername(github.profileUrl || '');
+      if (username) {
+        if (github.avatarUrl) return github.avatarUrl;
+        return 'https://github.com/' + encodeURIComponent(username) + '.png?size=200';
+      }
+    }
+    
+    // Fall back to custom avatar if no GitHub
+    if (customAvatar) {
+      return customAvatar;
+    }
 
-    if (github.avatarUrl) return github.avatarUrl;
-    return 'https://github.com/' + encodeURIComponent(username) + '.png?size=200';
+    return '';
   }
 
   function getDefaultEmployeeAvatarDataUrl(employee) {
@@ -231,7 +244,12 @@
 
   function renderEmployeeAvatar(emp) {
     var avatarUrl = getEmployeeGitHubAvatarUrl(emp) || getDefaultEmployeeAvatarDataUrl(emp);
-    return '<div class="employee-avatar employee-avatar-image" style="background-color:' + getRoleColor(emp.role) + '; background-image:url(\'' + escapeHtml(avatarUrl) + '\'); background-size:cover; background-position:center;" title="' + escapeHtml(emp.role) + '"></div>';
+    var isUploadable = canEditEmployeeProfile(emp.id);
+    var hasCustomAvatar = !!(emp.customAvatarBase64 && String(emp.customAvatarBase64).trim());
+    var hasGitHubAvatar = !!(emp.github && (emp.github.username || emp.github.profileUrl));
+    var actionTitle = isUploadable ? (hasCustomAvatar ? 'Bild ändern oder zu GitHub zurücksetzen' : 'Profilbild hochladen') : (hasGitHubAvatar ? 'GitHub-Profil' : emp.role);
+    var clickAttrs = isUploadable ? ' data-action="upload-avatar" data-emp-id="' + escapeHtml(emp.id) + '" role="button" tabindex="0" style="cursor: pointer;"' : '';
+    return '<div class="employee-avatar employee-avatar-image" ' + clickAttrs + ' style="background-color:' + getRoleColor(emp.role) + '; background-image:url(\'' + escapeHtml(avatarUrl) + '\'); background-size:cover; background-position:center;" title="' + escapeHtml(actionTitle) + '"></div>';
   }
 
   function formatDateTime(value) {
@@ -1503,6 +1521,10 @@
       }
     }
 
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'customAvatarBase64')) {
+      target.customAvatarBase64 = String(patch.customAvatarBase64 || '').trim();
+    }
+
     target.updatedAt = new Date().toISOString();
     persistEmployee(target);
   }
@@ -1964,6 +1986,85 @@
     });
   }
 
+  function uploadEmployeeAvatar(employeeId) {
+    if (!canEditEmployeeProfile(employeeId)) return;
+
+    var employees = getEmployees();
+    var employee = employees.find(function(emp) { return emp.id === employeeId; });
+    if (!employee) return;
+
+    var hasGitHubAvatar = !!(employee.github && (employee.github.username || employee.github.profileUrl));
+    var hasCustomAvatar = !!(employee.customAvatarBase64 && String(employee.customAvatarBase64).trim());
+
+    // If there's a custom avatar, offer to reset or change it
+    if (hasCustomAvatar) {
+      var options = [];
+      options.push('Neues Bild hochladen');
+      if (hasGitHubAvatar) {
+        options.push('Zurück zu GitHub-Profil');
+      }
+      options.push('Abbrechen');
+
+      var choice = window.confirm(
+        hasGitHubAvatar 
+          ? 'Neues Bild hochladen?\n\n(Drücke OK für neues Bild, oder ABBRECHEN um zu GitHub-Profil zurückzukehren)'
+          : 'Neues Bild hochladen?'
+      );
+
+      if (!choice) {
+        if (hasGitHubAvatar) {
+          updateEmployeeProfile(employeeId, {
+            customAvatarBase64: ''
+          });
+          createNotification('Avatar zurückgesetzt auf GitHub-Profil.');
+          renderEmployeeList('employee-list');
+        }
+        return;
+      }
+    }
+
+    var fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = 'image/*';
+    fileInput.style.display = 'none';
+
+    fileInput.addEventListener('change', function(event) {
+      var file = event.target.files[0];
+      if (!file) return;
+
+      // Validate file size (max 2MB)
+      var maxSize = 2 * 1024 * 1024;
+      if (file.size > maxSize) {
+        alert('Datei ist zu groß. Maximale Größe: 2MB');
+        return;
+      }
+
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        alert('Bitte wählen Sie eine Bilddatei aus.');
+        return;
+      }
+
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        var base64Data = e.target.result;
+        updateEmployeeProfile(employeeId, {
+          customAvatarBase64: base64Data
+        });
+        createNotification('Profilbild wurde aktualisiert.');
+        renderEmployeeList('employee-list');
+      };
+      reader.onerror = function() {
+        alert('Fehler beim Lesen der Datei.');
+      };
+      reader.readAsDataURL(file);
+    });
+
+    document.body.appendChild(fileInput);
+    fileInput.click();
+    document.body.removeChild(fileInput);
+  }
+
   function wireControls() {
     if (isWired) return;
     isWired = true;
@@ -2133,6 +2234,10 @@
 
       var action = trigger.dataset.action;
       var empId = trigger.dataset.empId;
+
+      if (action === 'upload-avatar') {
+        uploadEmployeeAvatar(empId);
+      }
 
       if (action === 'assign-task') {
         var employee = getEmployees().find(function(item) { return item.id === empId; });

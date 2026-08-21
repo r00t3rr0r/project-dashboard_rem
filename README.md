@@ -60,7 +60,7 @@ Empfohlene Struktur fuer den produktiven Betrieb:
 4. Geschuetzter API-Zugriff per Admin-PIN Header
 5. Clients mit periodischem Remote-Sync (automatisches Nachladen)
 
-Damit koennen mehrere Mitarbeiter parallel arbeiten: jede Aenderung wird zentral in `data/projekt-dashboard.sqlite` gespeichert und andere Clients laden Aenderungen automatisch nach.
+Damit koennen mehrere Mitarbeiter parallel arbeiten: jede Aenderung wird zentral in `data/projekt-dashboard.sqlite` gespeichert und andere Clients laden Aenderungen automatisch nach. Der Server bestaetigt KV-Schreibvorgaenge erst nach einem voll synchronisierten SQLite-Commit, WAL-Checkpoint und atomar aktualisierten SQLite-/JSON-Backups.
 
 ## Server-Setup (Linux, produktionsnah)
 
@@ -82,7 +82,6 @@ PROJECT_DASHBOARD_STORAGE_HOST=127.0.0.1
 PROJECT_DASHBOARD_STORAGE_PORT=8766
 PROJECT_DASHBOARD_ADMIN_PIN=1337
 PROJECT_DASHBOARD_TRUSTED_ORIGINS=https://dashboard.example.com
-PROJECT_DASHBOARD_OLLAMA_AUTOSTART=0
 EOF
 ```
 
@@ -202,14 +201,14 @@ python3 storage_server.py
 2. Storage-Server intern binden oder per Firewall auf Proxy-Host beschraenken.
 3. `PROJECT_DASHBOARD_TRUSTED_ORIGINS` nur auf echte Frontend-Domains setzen.
 4. PIN regelmaessig wechseln (`PROJECT_DASHBOARD_ADMIN_PIN`).
-5. Tägliche Backups in `data/` pruefen und extern sichern.
+5. Backups in `data/` pruefen und zusaetzlich extern sichern.
 
 Beim Start werden automatisch vorbereitet:
 
 - KV-Datenbank (`data/projekt-dashboard.sqlite`)
-- taegliches Backup (`data/projekt-dashboard.backup.sqlite` + `data/projekt-dashboard.backup.json`)
+- bei jeder KV-Aenderung atomar aktualisierte Backups (`data/projekt-dashboard.backup.sqlite` + `data/projekt-dashboard.backup.json`)
 - automatische Wiederherstellung aus Backup, falls die KV-DB leer ist
-- lokale KI-Infrastruktur-Pruefung (Ollama), optionaler Autostart via `PROJECT_DASHBOARD_OLLAMA_AUTOSTART`
+- keine serverseitige KI; Ollama wird ausschliesslich im Browser ueber die Loopback-Adresse des Besuchers angesprochen
 
 ### Alternative: separater Static-Server
 
@@ -278,11 +277,19 @@ Diese Datei definiert:
 
 Die Anwendung kann pro Projekt KI-aufbereitetes Wissen erzeugen und als Markdown ablegen.
 
-### 1) Ollama (optional manuell)
+### 1) Ollama auf jedem Besucher-Rechner
 
 ```bash
 ollama pull hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M
-ollama serve
+OLLAMA_ORIGINS="http://178.105.213.50,http://178.105.213.50:8766" ollama serve
+```
+
+`OLLAMA_ORIGINS` muss die Origin enthalten, unter der das Dashboard geoeffnet wird. Bei mehreren Origins werden die Werte kommasepariert angegeben. Das Frontend spricht ausschliesslich `http://127.0.0.1:11434` beziehungsweise `http://localhost:11434` auf dem Rechner des Besuchers an.
+
+Bei Verwendung der Ollama-App unter macOS muss die Variable vor dem vollstaendigen Neustart der App gesetzt werden:
+
+```bash
+launchctl setenv OLLAMA_ORIGINS "http://178.105.213.50,http://178.105.213.50:8766"
 ```
 
 ### 2) Storage-Server starten
@@ -294,12 +301,7 @@ python3 storage_server.py
 
 Standard-Port ist 8766 (konfigurierbar ueber PROJECT_DASHBOARD_STORAGE_PORT).
 
-Standardmaessig versucht der Storage-Server Ollama bei Bedarf automatisch zu starten.
-Deaktivieren mit:
-
-```bash
-PROJECT_DASHBOARD_OLLAMA_AUTOSTART=0 python3 storage_server.py
-```
+Der Storage-Server startet und verwendet kein Ollama. Aufrufe an seine alten `/api/ai/*`-Routen werden mit HTTP 410 abgewiesen.
 
 ### 3) UI oeffnen
 
@@ -307,7 +309,7 @@ Beispiel:
 
 - [http://127.0.0.1:8766/app.html](http://127.0.0.1:8766/app.html)
 
-Die KI-Endpunkte werden vom Storage-Server bedient; generierte Inhalte landen unter [data/project-knowledge](data/project-knowledge).
+KI-Antworten werden direkt zwischen dem Browser und der lokalen Ollama-Instanz des Besuchers ausgetauscht. Der zentrale Server erhaelt weder Prompts noch KI-Antworten.
 
 ## Projektstruktur
 
