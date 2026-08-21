@@ -16,7 +16,8 @@
     templates:      'pd_templates',
     releases:       'pd_releases',
     notifications:  'pd_notifications',
-    calendarEvents: 'pd_calendar_events'
+    calendarEvents: 'pd_calendar_events',
+    teamChatMessages: 'pd_team_chat_messages'
   };
 
   var nativeStorageApi = {
@@ -66,6 +67,7 @@
   var remoteStreamSource = null;
   var remoteStreamReconnectTimer = null;
   var remoteStreamEventQueued = false;
+  var remoteStreamQueuedKeys = Object.create(null);
   var REMOTE_SYNC_INTERVAL_MS = 8000;
   var REMOTE_STREAM_RETRY_MS = 3000;
   var pendingLocalWritesCount = 0;
@@ -206,11 +208,12 @@
     return endpoint + separator + 'pin=' + encodeURIComponent(pin);
   }
 
-  function fetchRemoteKv(method, payload) {
+  function fetchRemoteKv(method, payload, queryString) {
     if (!remoteKvEnabled || typeof fetch !== 'function') {
       return Promise.resolve({ ok: false, path: '', payload: null });
     }
-    if (method === 'GET' && remoteKvGetInFlight) {
+    var isSnapshotGet = method === 'GET' && !queryString;
+    if (isSnapshotGet && remoteKvGetInFlight) {
       return remoteKvGetInFlight;
     }
 
@@ -225,7 +228,7 @@
       headers: {}
     };
     var receivedEtag = '';
-    if (method === 'GET' && remoteKvSnapshotEtag) {
+    if (isSnapshotGet && remoteKvSnapshotEtag) {
       requestOptions.headers['If-None-Match'] = remoteKvSnapshotEtag;
     }
     if (payload !== undefined) {
@@ -243,7 +246,10 @@
       }
 
       var endpoint = candidates[index];
-      return fetch(endpoint, requestOptions)
+      var requestEndpoint = queryString
+        ? endpoint + (endpoint.indexOf('?') === -1 ? '?' : '&') + queryString
+        : endpoint;
+      return fetch(requestEndpoint, requestOptions)
         .then(function (res) {
           receivedEtag = res.headers && typeof res.headers.get === 'function'
             ? String(res.headers.get('ETag') || '')
@@ -287,7 +293,7 @@
           remoteKvLastError = '';
           remoteKvReachable = true;
           remoteKvActivePath = endpoint;
-          if (method === 'GET') {
+          if (isSnapshotGet) {
             remoteKvSnapshotEtag = receivedEtag;
           }
           emitStorageStatusChanged();
@@ -299,7 +305,7 @@
     }
 
     var requestPromise = tryNext(0);
-    if (method !== 'GET') return requestPromise;
+    if (!isSnapshotGet) return requestPromise;
 
     remoteKvGetInFlight = requestPromise.finally(function () {
       remoteKvGetInFlight = null;
@@ -742,6 +748,62 @@
     return true;
   }
 
+  function entityForStorageKey(key) {
+    var names = Object.keys(KEYS);
+    for (var index = 0; index < names.length; index++) {
+      if (KEYS[names[index]] === key) return names[index];
+    }
+    return 'all';
+  }
+
+  function hydrateCollectionForKey(key) {
+    var entity = entityForStorageKey(key);
+    if (entity === 'projects') {
+      replaceArray(projects, read(KEYS.projects, []));
+      if (normalizeProjectsCollection()) saveProjects();
+    } else if (entity === 'tasks') {
+      replaceArray(tasks, read(KEYS.tasks, []));
+      normalizeTasksCollection();
+      if (reconcileTaskDependencies()) saveTasks();
+      if (syncAllTaskCalendarEvents()) saveCalendarEvents();
+    } else if (entity === 'employees') {
+      replaceArray(employees, read(KEYS.employees, []));
+    } else if (entity === 'labels') {
+      replaceArray(labels, read(KEYS.labels, []));
+    } else if (entity === 'templates') {
+      replaceArray(templates, read(KEYS.templates, []));
+    } else if (entity === 'releases') {
+      replaceArray(releases, read(KEYS.releases, []));
+    } else if (entity === 'notifications') {
+      replaceArray(notifications, read(KEYS.notifications, []));
+    } else if (entity === 'calendarEvents') {
+      replaceArray(calendarEvents, read(KEYS.calendarEvents, []));
+    } else if (entity === 'teamChatMessages') {
+      replaceArray(teamChatMessages, read(KEYS.teamChatMessages, []));
+    } else {
+      hydrateCollections();
+    }
+    return entity;
+  }
+
+  function applyRemoteKeyPayload(payload) {
+    if (!payload || typeof payload !== 'object' || !payload.key) return false;
+    var key = normalizeStorageKey(payload.key);
+    if (Object.prototype.hasOwnProperty.call(dirtyRemoteSyncKeys, key)) return false;
+
+    var previousValue = Object.prototype.hasOwnProperty.call(memoryStorage, key)
+      ? memoryStorage[key]
+      : null;
+    var nextValue = payload.exists ? normalizeStorageValue(payload.value) : null;
+    if (nextValue === null) delete memoryStorage[key];
+    else memoryStorage[key] = nextValue;
+    if (previousValue === nextValue) return false;
+
+    var entity = hydrateCollectionForKey(key);
+    emitDataChanged('hydrate', entity);
+    return true;
+  }
+
   function loadRemoteSnapshot() {
     return fetchRemoteKv('GET').then(function (result) {
       if (result && result.ok && result.notModified) {
@@ -849,11 +911,44 @@
       return false;
     }).finally(function () {
       remoteSyncInFlight = false;
-      if (remoteStreamEventQueued) {
-        remoteStreamEventQueued = false;
-        runRemoteSyncTick();
-      }
+      drainRemoteSyncQueue();
     });
+  }
+
+  function runRemoteKeySync(key) {
+    if (!key) return runRemoteSyncTick();
+    if (remoteSyncInFlight) {
+      remoteStreamQueuedKeys[key] = true;
+      return Promise.resolve(false);
+    }
+
+    remoteSyncInFlight = true;
+    return fetchRemoteKv('GET', undefined, 'key=' + encodeURIComponent(key)).then(function (result) {
+      if (!result || !result.ok || !result.payload) return false;
+      return applyRemoteKeyPayload(result.payload);
+    }).catch(function () {
+      remoteStreamEventQueued = true;
+      return false;
+    }).finally(function () {
+      remoteSyncInFlight = false;
+      drainRemoteSyncQueue();
+    });
+  }
+
+  function drainRemoteSyncQueue() {
+    if (remoteSyncInFlight) return;
+    if (remoteStreamEventQueued) {
+      remoteStreamEventQueued = false;
+      remoteStreamQueuedKeys = Object.create(null);
+      runRemoteSyncTick();
+      return;
+    }
+
+    var keys = Object.keys(remoteStreamQueuedKeys);
+    if (!keys.length) return;
+    var key = keys[0];
+    delete remoteStreamQueuedKeys[key];
+    runRemoteKeySync(key);
   }
 
   function closeRemoteKvStream() {
@@ -891,11 +986,20 @@
     var source = new window.EventSource(buildRemoteKvStreamUrl(streamCandidates[0]));
     remoteStreamSource = source;
 
-    function handleKvEvent() {
-      runRemoteSyncTick();
+    function handleKvEvent(event) {
+      var payload = null;
+      try {
+        payload = JSON.parse(String(event && event.data ? event.data : ''));
+      } catch (_err) {}
+
+      if (!payload || payload.action === 'clear' || !payload.key) {
+        runRemoteSyncTick();
+        return;
+      }
+      runRemoteKeySync(String(payload.key));
     }
 
-    source.addEventListener('ready', handleKvEvent);
+    source.addEventListener('ready', function () { runRemoteSyncTick(); });
     source.addEventListener('kv-update', handleKvEvent);
 
     source.onerror = function () {
@@ -1173,6 +1277,9 @@
   /** @type {CalendarEvent[]} — Kalenderereignisse */
   var calendarEvents = [];
 
+  /** @type {TeamChatMessage[]} — Öffentlicher Teamchat */
+  var teamChatMessages = [];
+
   function hydrateCollections() {
     replaceArray(projects, read(KEYS.projects, []));
     replaceArray(tasks, read(KEYS.tasks, []));
@@ -1182,6 +1289,7 @@
     replaceArray(releases, read(KEYS.releases, []));
     replaceArray(notifications, read(KEYS.notifications, []));
     replaceArray(calendarEvents, read(KEYS.calendarEvents, []));
+    replaceArray(teamChatMessages, read(KEYS.teamChatMessages, []));
     var commitsCompacted = normalizeProjectsCollection();
     normalizeTasksCollection();
     if (reconcileTaskDependencies()) saveTasks();
@@ -1198,7 +1306,8 @@
       templates.length > 0 ||
       releases.length > 0 ||
       notifications.length > 0 ||
-      calendarEvents.length > 0
+      calendarEvents.length > 0 ||
+      teamChatMessages.length > 0
     );
   }
 
@@ -1213,6 +1322,7 @@
     if (Array.isArray(data.releases)) replaceArray(releases, data.releases);
     if (Array.isArray(data.notifications)) replaceArray(notifications, data.notifications);
     if (Array.isArray(data.calendarEvents)) replaceArray(calendarEvents, data.calendarEvents);
+    if (Array.isArray(data.teamChatMessages)) replaceArray(teamChatMessages, data.teamChatMessages);
 
     normalizeProjectsCollection();
     normalizeTasksCollection();
@@ -1227,6 +1337,7 @@
     saveReleases();
     saveNotifications();
     saveCalendarEvents();
+    saveTeamChatMessages();
 
     emitDataChanged('seed', 'all');
     return true;
@@ -1295,6 +1406,7 @@
   function saveReleases()  { write(KEYS.releases, releases); }
   function saveNotifications() { write(KEYS.notifications, notifications); }
   function saveCalendarEvents() { write(KEYS.calendarEvents, calendarEvents); }
+  function saveTeamChatMessages() { write(KEYS.teamChatMessages, teamChatMessages); }
 
   function emitDataChanged(action, entity) {
     emit('dataChanged', {
@@ -1844,7 +1956,22 @@
     if (!task.priority) task.priority = 'medium';
     if (!task.urgency) task.urgency = 'normal';
     if (typeof task.projectId !== 'string' || !task.projectId.trim()) task.projectId = null;
-    if (typeof task.assigneeId !== 'string' || !task.assigneeId.trim()) task.assigneeId = null;
+    var normalizedAssigneeIds = [];
+    var seenAssigneeIds = {};
+    function addAssigneeId(value) {
+      var id = typeof value === 'string' ? value.trim() : '';
+      if (!id || seenAssigneeIds[id]) return;
+      seenAssigneeIds[id] = true;
+      normalizedAssigneeIds.push(id);
+    }
+    if (Array.isArray(task.assigneeIds)) {
+      task.assigneeIds.forEach(addAssigneeId);
+    }
+    if (typeof task.assigneeId === 'string' && task.assigneeId.trim()) {
+      addAssigneeId(task.assigneeId);
+    }
+    task.assigneeIds = normalizedAssigneeIds;
+    task.assigneeId = normalizedAssigneeIds.length ? normalizedAssigneeIds[0] : null;
     if (!Array.isArray(task.labels)) task.labels = [];
     if (typeof task.effortHours !== 'number' || isNaN(task.effortHours)) task.effortHours = 0;
     task.sequenceIndex = normalizeTaskSequenceIndex(task.sequenceIndex);
@@ -1891,7 +2018,17 @@
     refreshTaskDependencyState(task);
 
     if (!Array.isArray(task.subtasks)) task.subtasks = [];
-    task.subtasks = task.subtasks.map(normalizeSubtask).filter(function (st) { return !!st.title; });
+    task.subtasks = task.subtasks.map(function (st) {
+      if (typeof st === 'string') {
+        return normalizeSubtask({
+          id: generateId(),
+          title: st,
+          completed: false,
+          createdAt: new Date().toISOString()
+        });
+      }
+      return normalizeSubtask(st);
+    }).filter(function (st) { return !!st.title; });
 
     if (!Array.isArray(task.notes)) task.notes = [];
     task.notes = task.notes.map(normalizeTaskNote).filter(function (note) { return !!note.text; });
@@ -2358,7 +2495,11 @@
     }
     if (filter && filter.assigneeId && filter.assigneeId.length > 0) {
       result = result.filter(function (t) {
-        return t.assigneeId && filter.assigneeId.indexOf(t.assigneeId) !== -1;
+        var ids = [];
+        if (Array.isArray(t.assigneeIds)) ids = ids.concat(t.assigneeIds);
+        if (t.assigneeId) ids.push(t.assigneeId);
+        if (!ids.length) return false;
+        return ids.some(function (id) { return filter.assigneeId.indexOf(id) !== -1; });
       });
     }
 
@@ -2698,6 +2839,21 @@
     return false;
   }
 
+  /* ---------- Team Chat CRUD ---------- */
+
+  /** @returns {TeamChatMessage[]} */
+  function getTeamChatMessages() { return teamChatMessages; }
+
+  /** @param {TeamChatMessage} message */
+  function createTeamChatMessage(message) {
+    if (!message.id) message.id = generateId();
+    if (!message.createdAt) message.createdAt = new Date().toISOString();
+    teamChatMessages.push(message);
+    saveTeamChatMessages();
+    emitDataChanged('create', 'teamChatMessages');
+    return message;
+  }
+
   /* ---------- Import / Export ---------- */
 
   /**
@@ -2714,7 +2870,8 @@
       templates:      templates,
       releases:       releases,
       notifications:  notifications,
-      calendarEvents: calendarEvents
+      calendarEvents: calendarEvents,
+      teamChatMessages: teamChatMessages
     };
 
     var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -2751,6 +2908,7 @@
           if (data.releases  && Array.isArray(data.releases))  replaceArray(releases, data.releases);
           if (data.notifications  && Array.isArray(data.notifications))  replaceArray(notifications, data.notifications);
           if (data.calendarEvents && Array.isArray(data.calendarEvents)) replaceArray(calendarEvents, data.calendarEvents);
+          if (data.teamChatMessages && Array.isArray(data.teamChatMessages)) replaceArray(teamChatMessages, data.teamChatMessages);
 
           normalizeProjectsCollection();
           normalizeTasksCollection();
@@ -2764,6 +2922,7 @@
           saveReleases();
           saveNotifications();
           saveCalendarEvents();
+          saveTeamChatMessages();
 
           emitDataChanged('import', 'all');
 
@@ -2794,6 +2953,7 @@
     replaceArray(releases, []);
     replaceArray(notifications, []);
     replaceArray(calendarEvents, []);
+    replaceArray(teamChatMessages, []);
 
     saveProjects();
     saveTasks();
@@ -2803,6 +2963,7 @@
     saveReleases();
     saveNotifications();
     saveCalendarEvents();
+    saveTeamChatMessages();
     emitDataChanged('reset', 'all');
   }
 
@@ -2832,6 +2993,7 @@
     releases:       releases,
     notifications:  notifications,
     calendarEvents: calendarEvents,
+    teamChatMessages: teamChatMessages,
 
     // Projects CRUD
     getProjects:     getProjects,
@@ -2892,6 +3054,10 @@
     getCalendarEventById:   getCalendarEventById,
     updateCalendarEvent:    updateCalendarEvent,
     deleteCalendarEvent:    deleteCalendarEvent,
+
+    // Team Chat CRUD
+    getTeamChatMessages:    getTeamChatMessages,
+    createTeamChatMessage:  createTeamChatMessage,
 
     // Blocker orchestration
     linkBlockerToTarget: linkBlockerToTarget,

@@ -144,6 +144,13 @@
     return match ? (match.name || match.title || String(id)) : String(id);
   }
 
+  function getEmployeeWorkplace(id) {
+    if (!id) return '';
+    var employees = getEmployees();
+    var match = employees.find(function (emp) { return String(emp.id) === String(id); });
+    return match ? String(match.workplace || '').trim() : '';
+  }
+
   function getProjectLabel(id) {
     if (!id) return '';
     var projects = window.DataLayer && window.DataLayer.getProjects ? window.DataLayer.getProjects() : [];
@@ -389,7 +396,10 @@
     var chip = document.createElement('div');
     var meta = getActivityTypeMeta(activity.type);
     var assigneeName = activity.assigneeId ? getEmployeeName(activity.assigneeId) : 'Nicht zugewiesen';
-    var metaParts = [meta.label, assigneeName, activity.progress + '%'];
+    var workplace = activity.assigneeId ? getEmployeeWorkplace(activity.assigneeId) : '';
+    var metaParts = [meta.label, assigneeName];
+    if (workplace) metaParts.push(workplace);
+    metaParts.push(activity.progress + '%');
     var totalProgress = clampProgress(activity.progress);
     var dayStart = clampProgress(activity.dayStartProgress);
     var dayGain = Math.max(0, totalProgress - dayStart);
@@ -967,6 +977,7 @@
         var card = document.createElement('article');
         var typeMeta = getActivityTypeMeta(activity.type);
         var assigneeName = activity.assigneeId ? getEmployeeName(activity.assigneeId) : 'Nicht zugewiesen';
+        var workplace = activity.assigneeId ? getEmployeeWorkplace(activity.assigneeId) : '';
         var projectLabel = getProjectLabel(activity.projectId);
         var displayTime = getDisplayTime(activity.updatedAt);
         var totalProgress = clampProgress(activity.progress);
@@ -981,6 +992,7 @@
           '</div>' +
           '<h3>' + escapeHtml(activity.taskTitle || 'Aufgabe') + '</h3>' +
           '<div class="calendar-event-meta">' + escapeHtml(assigneeName + (projectLabel ? ' • ' + projectLabel : '')) + '</div>' +
+          (workplace ? '<div class="calendar-activity-workplace"><span class="material-symbols-rounded" aria-hidden="true">location_on</span><span>' + escapeHtml(workplace) + '</span></div>' : '') +
           '<div class="calendar-activity-progress-row"><span>Gesamtfortschritt</span><strong>' + escapeHtml(String(totalProgress)) + '%</strong></div>' +
           '<div class="calendar-activity-growth-bar" aria-hidden="true">' +
           '<span class="calendar-activity-growth-total" style="width:' + totalProgress + '%"></span>' +

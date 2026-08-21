@@ -1,14 +1,18 @@
 import json
+import gzip
 import os
 import re
 import hmac
 import queue
 import sqlite3
 import shutil
+import socket
+import sys
 import threading
 import uuid
 import urllib.error
 import subprocess
+import tempfile
 import time
 import urllib.request
 from datetime import date, datetime, timezone
@@ -20,6 +24,8 @@ DB_PATH = os.path.join(ROOT, 'data', 'projekt-dashboard.sqlite')
 BACKUP_PATH = os.path.join(ROOT, 'data', 'projekt-dashboard.backup.sqlite')
 BACKUP_JSON_PATH = os.path.join(ROOT, 'data', 'projekt-dashboard.backup.json')
 BACKUP_STAMP_PATH = os.path.join(ROOT, 'data', 'projekt-dashboard.backup.stamp')
+KV_SNAPSHOT_PATH = os.path.join(ROOT, 'data', '.projekt-dashboard.snapshot.json')
+KV_SNAPSHOT_GZIP_PATH = KV_SNAPSHOT_PATH + '.gz'
 KNOWLEDGE_DIR = os.path.join(ROOT, 'data', 'project-knowledge')
 MEETINGS_DIR = os.path.join(ROOT, 'data', 'meetings')
 HOST = os.environ.get('PROJECT_DASHBOARD_STORAGE_HOST', '0.0.0.0')
@@ -34,18 +40,95 @@ BOOTSTRAP_STATUS = {
     'dbRestore': {'restored': False, 'source': 'unknown', 'rows': 0},
     'ollama': {'status': 'unknown', 'autostart': OLLAMA_AUTOSTART, 'detail': ''}
 }
+STORAGE_LOCK = threading.RLock()
+BACKUP_SCHEDULE_LOCK = threading.Lock()
+BACKUP_RUN_LOCK = threading.Lock()
+BACKUP_TIMER = None
+BACKUP_DELAY_SECONDS = max(0.1, float(os.environ.get('PROJECT_DASHBOARD_BACKUP_DELAY_SECONDS', '1.0')))
+KV_SNAPSHOT_LOCK = threading.Lock()
+KV_SNAPSHOT_METADATA = None
+KV_SNAPSHOT_REVISION = 0
+KV_STREAM_CHUNK_SIZE = 64 * 1024
 
 
 def utc_now_iso_z():
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
-def open_db_connection(path=DB_PATH):
+def open_db_connection(path=None):
+    if path is None:
+        path = DB_PATH
     conn = sqlite3.connect(path, timeout=10)
     conn.execute('PRAGMA journal_mode=WAL')
     conn.execute('PRAGMA busy_timeout=10000')
-    conn.execute('PRAGMA synchronous=NORMAL')
+    conn.execute('PRAGMA synchronous=FULL')
     return conn
+
+
+def _fsync_directory(path):
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_file(path):
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_write_text(path, content):
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    descriptor, temp_path = tempfile.mkstemp(prefix='.' + os.path.basename(path) + '.', suffix='.tmp', dir=directory)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+        _fsync_directory(directory)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _commit_durably(conn):
+    conn.commit()
+
+
+def schedule_full_backup():
+    global BACKUP_TIMER
+
+    def run_backup():
+        global BACKUP_TIMER
+        try:
+            ensure_daily_backup(force=True)
+        except Exception as exc:
+            print('[Storage] Background backup failed: ' + str(exc))
+        finally:
+            with BACKUP_SCHEDULE_LOCK:
+                BACKUP_TIMER = None
+
+    with BACKUP_SCHEDULE_LOCK:
+        if BACKUP_TIMER is not None:
+            return
+        BACKUP_TIMER = threading.Timer(BACKUP_DELAY_SECONDS, run_backup)
+        BACKUP_TIMER.daemon = True
+        BACKUP_TIMER.start()
 
 
 def _read_kv_rows(path):
@@ -84,34 +167,35 @@ def _read_kv_json(path):
 
 
 def restore_db_if_empty():
-    conn = open_db_connection(DB_PATH)
-    try:
-        existing_count = conn.execute('SELECT COUNT(*) FROM kv_store').fetchone()[0]
-        if existing_count > 0:
-            return {'restored': False, 'source': 'db', 'rows': existing_count}
+    with STORAGE_LOCK:
+        conn = open_db_connection(DB_PATH)
+        try:
+            existing_count = conn.execute('SELECT COUNT(*) FROM kv_store').fetchone()[0]
+            if existing_count > 0:
+                return {'restored': False, 'source': 'db', 'rows': existing_count}
 
-        rows = _read_kv_rows(BACKUP_PATH)
-        if rows:
-            conn.executemany(
-                'INSERT OR REPLACE INTO kv_store(key, value, updatedAt) VALUES (?, ?, ?)',
-                [(str(k), str(v), str(ts or utc_now_iso_z())) for k, v, ts in rows if k is not None and v is not None]
-            )
-            conn.commit()
-            return {'restored': True, 'source': 'backup-sqlite', 'rows': len(rows)}
+            rows = _read_kv_rows(BACKUP_PATH)
+            if rows:
+                conn.executemany(
+                    'INSERT OR REPLACE INTO kv_store(key, value, updatedAt) VALUES (?, ?, ?)',
+                    [(str(k), str(v), str(ts or utc_now_iso_z())) for k, v, ts in rows if k is not None and v is not None]
+                )
+                _commit_durably(conn)
+                return {'restored': True, 'source': 'backup-sqlite', 'rows': len(rows)}
 
-        kv_payload = _read_kv_json(BACKUP_JSON_PATH)
-        if kv_payload:
-            now = utc_now_iso_z()
-            conn.executemany(
-                'INSERT OR REPLACE INTO kv_store(key, value, updatedAt) VALUES (?, ?, ?)',
-                [(key, value, now) for key, value in kv_payload.items()]
-            )
-            conn.commit()
-            return {'restored': True, 'source': 'backup-json', 'rows': len(kv_payload)}
+            kv_payload = _read_kv_json(BACKUP_JSON_PATH)
+            if kv_payload:
+                now = utc_now_iso_z()
+                conn.executemany(
+                    'INSERT OR REPLACE INTO kv_store(key, value, updatedAt) VALUES (?, ?, ?)',
+                    [(key, value, now) for key, value in kv_payload.items()]
+                )
+                _commit_durably(conn)
+                return {'restored': True, 'source': 'backup-json', 'rows': len(kv_payload)}
 
-        return {'restored': False, 'source': 'none', 'rows': 0}
-    finally:
-        conn.close()
+            return {'restored': False, 'source': 'none', 'rows': 0}
+        finally:
+            conn.close()
 
 
 def _is_ollama_ready():
@@ -155,56 +239,74 @@ def ensure_ollama_runtime():
 
 
 def ensure_daily_backup(force=False):
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    if not os.path.exists(DB_PATH):
-        return False
+    with BACKUP_RUN_LOCK:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        if not os.path.exists(DB_PATH):
+            return False
 
-    today = date.today().isoformat()
-    last_backup_day = ''
-    if os.path.exists(BACKUP_STAMP_PATH):
+        today = date.today().isoformat()
+        last_backup_day = ''
+        if os.path.exists(BACKUP_STAMP_PATH):
+            try:
+                with open(BACKUP_STAMP_PATH, 'r', encoding='utf-8') as handle:
+                    last_backup_day = handle.read().strip()
+            except Exception:
+                last_backup_day = ''
+
+        if not force and last_backup_day == today and os.path.exists(BACKUP_PATH) and os.path.exists(BACKUP_JSON_PATH):
+            return False
+
+        backup_descriptor, backup_temp_path = tempfile.mkstemp(
+            prefix='.projekt-dashboard.backup.', suffix='.sqlite.tmp', dir=os.path.dirname(BACKUP_PATH)
+        )
+        os.close(backup_descriptor)
         try:
-            with open(BACKUP_STAMP_PATH, 'r', encoding='utf-8') as handle:
-                last_backup_day = handle.read().strip()
+            source_conn = open_db_connection(DB_PATH)
+            backup_conn = sqlite3.connect(backup_temp_path, timeout=10)
+            backup_conn.execute('PRAGMA journal_mode=DELETE')
+            backup_conn.execute('PRAGMA synchronous=FULL')
+            try:
+                source_conn.backup(backup_conn)
+                backup_conn.commit()
+            finally:
+                backup_conn.close()
+                source_conn.close()
+            _fsync_file(backup_temp_path)
+            os.replace(backup_temp_path, BACKUP_PATH)
+            _fsync_directory(os.path.dirname(BACKUP_PATH))
         except Exception:
-            last_backup_day = ''
+            try:
+                os.unlink(backup_temp_path)
+            except OSError:
+                pass
+            raise
 
-    if not force and last_backup_day == today and os.path.exists(BACKUP_PATH) and os.path.exists(BACKUP_JSON_PATH):
-        return False
+        snapshot_conn = open_db_connection(DB_PATH)
+        try:
+            rows = snapshot_conn.execute('SELECT key, value FROM kv_store ORDER BY key').fetchall()
+            payload = {
+                'exportedAt': utc_now_iso_z(),
+                'data': {key: value for key, value in rows}
+            }
+            _atomic_write_text(BACKUP_JSON_PATH, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+        finally:
+            snapshot_conn.close()
 
-    source_conn = open_db_connection(DB_PATH)
-    backup_conn = open_db_connection(BACKUP_PATH)
-    try:
-        source_conn.backup(backup_conn)
-    finally:
-        backup_conn.close()
-        source_conn.close()
-
-    snapshot_conn = open_db_connection(DB_PATH)
-    try:
-        rows = snapshot_conn.execute('SELECT key, value FROM kv_store ORDER BY key').fetchall()
-        payload = {
-            'exportedAt': utc_now_iso_z(),
-            'data': {key: value for key, value in rows}
-        }
-        with open(BACKUP_JSON_PATH, 'w', encoding='utf-8') as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-            handle.write('\n')
-    finally:
-        snapshot_conn.close()
-
-    with open(BACKUP_STAMP_PATH, 'w', encoding='utf-8') as handle:
-        handle.write(today)
-    return True
+        _atomic_write_text(BACKUP_STAMP_PATH, today)
+        return True
 
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
     os.makedirs(MEETINGS_DIR, exist_ok=True)
-    conn = open_db_connection(DB_PATH)
-    conn.execute('CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt TEXT NOT NULL)')
-    conn.commit()
-    conn.close()
+    with STORAGE_LOCK:
+        conn = open_db_connection(DB_PATH)
+        try:
+            conn.execute('CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT NOT NULL, updatedAt TEXT NOT NULL)')
+            _commit_durably(conn)
+        finally:
+            conn.close()
     restore_result = restore_db_if_empty()
     BOOTSTRAP_STATUS['dbRestore'] = restore_result
     if restore_result.get('restored'):
@@ -219,9 +321,6 @@ def init_db():
             detail=BOOTSTRAP_STATUS['ollama'].get('detail', '')
         ))
     ensure_daily_backup(force=True)
-
-
-init_db()
 
 
 def _build_trusted_origins():
@@ -295,7 +394,10 @@ class StorageHandler(BaseHTTPRequestHandler):
             self._send_json({'ok': True})
             return
         if parsed.path == '/api/kv':
-            self._send_json(self._read_all())
+            if 'key' in parse_qs(parsed.query or '', keep_blank_values=True):
+                self._send_kv_value(parsed)
+                return
+            self._send_kv_snapshot()
             return
         if parsed.path == '/api/github/repo':
             self._handle_github_repo_get(parsed)
@@ -362,7 +464,12 @@ class StorageHandler(BaseHTTPRequestHandler):
             return
 
         if payload.get('clear') is True:
-            self._clear_all_values()
+            try:
+                self._clear_all_values()
+            except Exception as exc:
+                print('[Storage] Durable clear failed: ' + str(exc))
+                self._send_json({'error': 'Serverseitige Speicherung fehlgeschlagen.'}, status=500)
+                return
             _next_kv_stream_event('clear', '')
             self._send_json({'ok': True, 'cleared': True})
             return
@@ -373,7 +480,12 @@ class StorageHandler(BaseHTTPRequestHandler):
             self._send_json({'error': 'Missing key'}, status=400)
             return
 
-        self._write_value(key, value)
+        try:
+            self._write_value(key, value)
+        except Exception as exc:
+            print('[Storage] Durable write failed for key {key}: {error}'.format(key=key, error=exc))
+            self._send_json({'error': 'Serverseitige Speicherung fehlgeschlagen.'}, status=500)
+            return
         _next_kv_stream_event('delete' if value is None else 'set', key)
         self._send_json({'ok': True, 'key': key})
 
@@ -457,8 +569,7 @@ class StorageHandler(BaseHTTPRequestHandler):
             ai_text=ai_text
         )
 
-        with open(full_path, 'w', encoding='utf-8') as handle:
-            handle.write(document)
+        _atomic_write_text(full_path, document)
 
         self._send_json({
             'ok': True,
@@ -539,9 +650,10 @@ class StorageHandler(BaseHTTPRequestHandler):
             'notes': sanitized
         }
 
-        with open(self._meeting_file_path(project_id), 'w', encoding='utf-8') as handle:
-            json.dump(record, handle, ensure_ascii=False, indent=2)
-            handle.write('\n')
+        _atomic_write_text(
+            self._meeting_file_path(project_id),
+            json.dumps(record, ensure_ascii=False, indent=2) + '\n'
+        )
 
         self._send_json({
             'ok': True,
@@ -988,7 +1100,7 @@ class StorageHandler(BaseHTTPRequestHandler):
         split_multi = bool(options.get('splitIntoMultiple'))
         return (
             'Du bist ein zweisprachiger Projektassistent (Deutsch/Englisch) fuer die operative Aufgabenplanung. '
-            'Nutze Meeting-Notizen und User-Input, um eine realistische Aufgabe und optional einen Termin zu entwerfen.\\n\\n'
+            'Nutze Meeting-Notizen und User-Input, um Aufgaben, Unteraufgaben und eigenstaendige Termine zu erkennen und getrennt aufzubereiten.\\n\\n'
             'Projekt: ' + project_title + '\\n'
             'Vorgaben aus der UI:\\n'
             '- Terminart (Task-Schedule): ' + schedule_mode + '\\n'
@@ -1006,6 +1118,8 @@ class StorageHandler(BaseHTTPRequestHandler):
             '- Wenn "Mehrere Aufgaben aufteilen" = ja und die Eingabe mehrere eigenstaendige Arbeitspakete enthaelt, fuelle taskSuggestions mit 2-8 Aufgaben.\\n'
             '- Nummeriere Hauptaufgabe und Vorschlaege mit sequenceIndex. Setze dependsOnPrevious=true fuer jede Folgeaufgabe, die inhaltlich auf der vorherigen aufbaut.\n'
             '- Wenn keine sinnvolle Aufteilung moeglich ist, liefere taskSuggestions als leeres Array.\\n'
+            '- Unterscheide Aufgaben-Deadlines von eigenstaendigen Kalenderterminen. Aufgaben-Deadlines gehoeren in task.schedule; Meetings, Abnahmen und andere feste Termine in events.\\n'
+            '- Erfasse jeden erkannten eigenstaendigen Termin als separates Element in events. Wenn kein Termin erkannt wird, liefere events als leeres Array.\\n'
             '- Gib Datumswerte im Format YYYY-MM-DD aus, Zeiten als HH:MM oder leer.\\n'
             '- Erfinde keine harten Fakten, wenn sie nicht aus den Eingaben ableitbar sind.\\n\\n'
             'Antworte nur mit einem gueltigen JSON-Objekt in exakt diesem Format (ohne Markdown, ohne Codeblock):\\n'
@@ -1030,15 +1144,9 @@ class StorageHandler(BaseHTTPRequestHandler):
             '  "taskSuggestions": [\\n'
             '    {"titleDe":"...","titleEn":"...","descriptionDe":"...","descriptionEn":"...","priority":"medium","urgency":"normal","effortHours":2,"labels":["..."],"sequenceIndex":1,"dependsOnPrevious":false,"note":"..."}\n'
             '  ],\\n'
-            '  "event": {\\n'
-            '    "create": true,\\n'
-            '    "title": "...",\\n'
-            '    "description": "...",\\n'
-            '    "type": "meeting",\\n'
-            '    "date": "YYYY-MM-DD",\\n'
-            '    "startTime": "HH:MM",\\n'
-            '    "endTime": "HH:MM"\\n'
-            '  }\n'
+            '  "events": [\\n'
+            '    {"create":true,"title":"...","description":"...","type":"meeting","date":"YYYY-MM-DD","startTime":"HH:MM","endTime":"HH:MM"}\\n'
+            '  ]\n'
             '}\n'
             'Wichtig: Nur JSON zurueckgeben. Kein Vorwort, keine Analyse, keine Schritt-fuer-Schritt-Erklaerung.'
         )
@@ -1122,6 +1230,7 @@ class StorageHandler(BaseHTTPRequestHandler):
                 'note': ''
             },
             'taskSuggestions': [],
+            'events': [],
             'event': {
                 'create': False,
                 'title': '',
@@ -1144,7 +1253,28 @@ class StorageHandler(BaseHTTPRequestHandler):
         task = payload.get('task') if isinstance(payload.get('task'), dict) else {}
         task_suggestions = payload.get('taskSuggestions') if isinstance(payload.get('taskSuggestions'), list) else []
         event = payload.get('event') if isinstance(payload.get('event'), dict) else {}
+        events = payload.get('events') if isinstance(payload.get('events'), list) else []
+        if not events and event:
+            events = [event]
         schedule = task.get('schedule') if isinstance(task.get('schedule'), dict) else {}
+
+        normalized_events = []
+        for item in events[:12]:
+            if not isinstance(item, dict):
+                continue
+            normalized_event = {
+                'create': bool(item.get('create', True)),
+                'title': str(item.get('title') or '').strip(),
+                'description': str(item.get('description') or '').strip(),
+                'type': self._normalize_event_type(str(item.get('type') or fallback_event_type)),
+                'date': self._normalize_date_value(item.get('date')),
+                'startTime': self._normalize_time_value(item.get('startTime')),
+                'endTime': self._normalize_time_value(item.get('endTime'))
+            }
+            if normalized_event['title'] or normalized_event['date']:
+                normalized_events.append(normalized_event)
+
+        primary_event = normalized_events[0] if normalized_events else fallback['event']
 
         schedule_mode = self._normalize_schedule_mode(str(schedule.get('mode') or fallback_schedule_mode))
         normalized = {
@@ -1172,15 +1302,8 @@ class StorageHandler(BaseHTTPRequestHandler):
                 'note': str(task.get('note') or '').strip()
             },
             'taskSuggestions': self._normalize_task_suggestions(task_suggestions),
-            'event': {
-                'create': bool(event.get('create')),
-                'title': str(event.get('title') or '').strip(),
-                'description': str(event.get('description') or '').strip(),
-                'type': self._normalize_event_type(str(event.get('type') or fallback_event_type)),
-                'date': self._normalize_date_value(event.get('date')),
-                'startTime': self._normalize_time_value(event.get('startTime')),
-                'endTime': self._normalize_time_value(event.get('endTime'))
-            }
+            'events': normalized_events,
+            'event': primary_event
         }
 
         if not bool(options.get('createSubtasks')):
@@ -1331,8 +1454,7 @@ class StorageHandler(BaseHTTPRequestHandler):
         ]
         document = '\n'.join(header) + '\n## Prompt\n\n```\n' + prompt.strip() + '\n```\n\n## Ergebnis\n\n' + content.strip() + '\n'
 
-        with open(full_path, 'w', encoding='utf-8') as handle:
-            handle.write(document)
+        _atomic_write_text(full_path, document)
 
         return {
             'generatedAt': generated_at,
@@ -1661,7 +1783,14 @@ class StorageHandler(BaseHTTPRequestHandler):
     def _is_allowed_origin(self, origin):
         if not origin:
             return True
-        return origin in TRUSTED_ORIGINS
+        if origin in TRUSTED_ORIGINS:
+            return True
+        try:
+            parsed = urlparse(origin)
+            request_host = str(self.headers.get('Host', '') or '').strip().lower()
+            return parsed.scheme in ('http', 'https') and parsed.netloc.lower() == request_host
+        except Exception:
+            return False
 
     def _is_request_origin_allowed(self):
         return self._is_allowed_origin(self._request_origin())
@@ -1721,23 +1850,166 @@ class StorageHandler(BaseHTTPRequestHandler):
         conn.close()
         return {key: value for key, value in rows}
 
-    def _write_value(self, key, value):
+    def _send_kv_value(self, parsed):
+        params = parse_qs(parsed.query or '', keep_blank_values=True)
+        key = str((params.get('key') or [''])[0] or '')
+        if not key:
+            self._send_json({'error': 'Missing key'}, status=400)
+            return
+
         conn = open_db_connection(DB_PATH)
-        if value is None:
-            conn.execute('DELETE FROM kv_store WHERE key = ?', (key,))
-        else:
-            conn.execute(
-                'INSERT OR REPLACE INTO kv_store(key, value, updatedAt) VALUES (?, ?, ?)',
-                (key, str(value), utc_now_iso_z())
-            )
-        conn.commit()
-        conn.close()
+        try:
+            row = conn.execute(
+                'SELECT value, updatedAt FROM kv_store WHERE key = ?',
+                (key,)
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self._send_json({
+            'key': key,
+            'exists': row is not None,
+            'value': row[0] if row is not None else None,
+            'updatedAt': row[1] if row is not None else None
+        })
+
+    def _send_kv_snapshot(self):
+        global KV_SNAPSHOT_METADATA
+
+        accepts_gzip = 'gzip' in str(self.headers.get('Accept-Encoding', '') or '').lower()
+        requested_etag = str(self.headers.get('If-None-Match', '') or '').strip()
+        payload_file = None
+        with KV_SNAPSHOT_LOCK:
+            if KV_SNAPSHOT_METADATA is None:
+                KV_SNAPSHOT_METADATA = self._build_kv_snapshot_files()
+            snapshot = KV_SNAPSHOT_METADATA
+            if requested_etag != snapshot['etag']:
+                path = snapshot['gzipPath'] if accepts_gzip else snapshot['path']
+                size = snapshot['gzipSize'] if accepts_gzip else snapshot['size']
+                try:
+                    payload_file = open(path, 'rb')
+                except OSError:
+                    KV_SNAPSHOT_METADATA = None
+
+        if requested_etag == snapshot['etag']:
+            self.send_response(304)
+            self.send_header('ETag', snapshot['etag'])
+            self.send_header('Cache-Control', 'no-cache')
+            self._apply_cors_headers()
+            self._apply_security_headers()
+            self.end_headers()
+            return
+
+        if payload_file is None:
+            self._send_json({'error': 'Snapshot konnte nicht geladen werden.'}, status=503)
+            return
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(size))
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('ETag', snapshot['etag'])
+        self.send_header('Vary', 'Accept-Encoding, Origin')
+        if accepts_gzip:
+            self.send_header('Content-Encoding', 'gzip')
+        self._apply_cors_headers()
+        self._apply_security_headers()
+        self.end_headers()
+        try:
+            while True:
+                chunk = payload_file.read(KV_STREAM_CHUNK_SIZE)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        finally:
+            payload_file.close()
+
+    def _build_kv_snapshot_files(self):
+        directory = os.path.dirname(KV_SNAPSHOT_PATH)
+        os.makedirs(directory, exist_ok=True)
+        raw_descriptor, raw_temp_path = tempfile.mkstemp(prefix='.kv-snapshot.', suffix='.json.tmp', dir=directory)
+        gzip_descriptor, gzip_temp_path = tempfile.mkstemp(prefix='.kv-snapshot.', suffix='.json.gz.tmp', dir=directory)
+        conn = None
+
+        try:
+            conn = open_db_connection(DB_PATH)
+            cursor = conn.execute('SELECT key, value FROM kv_store ORDER BY key')
+            with os.fdopen(raw_descriptor, 'wb') as raw_file, os.fdopen(gzip_descriptor, 'wb') as gzip_file:
+                with gzip.GzipFile(fileobj=gzip_file, mode='wb', compresslevel=5, mtime=0) as compressed_file:
+                    first = True
+                    opening = b'{'
+                    raw_file.write(opening)
+                    compressed_file.write(opening)
+                    for key, value in cursor:
+                        prefix = b'' if first else b','
+                        entry = prefix + json.dumps(str(key), ensure_ascii=False).encode('utf-8') + b':' + json.dumps(str(value), ensure_ascii=False).encode('utf-8')
+                        raw_file.write(entry)
+                        compressed_file.write(entry)
+                        first = False
+                    closing = b'}'
+                    raw_file.write(closing)
+                    compressed_file.write(closing)
+                raw_file.flush()
+                gzip_file.flush()
+                os.fsync(raw_file.fileno())
+                os.fsync(gzip_file.fileno())
+
+            os.replace(raw_temp_path, KV_SNAPSHOT_PATH)
+            os.replace(gzip_temp_path, KV_SNAPSHOT_GZIP_PATH)
+            _fsync_directory(directory)
+            return {
+                'path': KV_SNAPSHOT_PATH,
+                'gzipPath': KV_SNAPSHOT_GZIP_PATH,
+                'size': os.path.getsize(KV_SNAPSHOT_PATH),
+                'gzipSize': os.path.getsize(KV_SNAPSHOT_GZIP_PATH),
+                'etag': '"kv-' + str(KV_SNAPSHOT_REVISION) + '-' + uuid.uuid4().hex + '"'
+            }
+        except Exception:
+            for temp_path in (raw_temp_path, gzip_temp_path):
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
+            raise
+        finally:
+            if conn is not None:
+                conn.close()
+
+    def _invalidate_kv_snapshot(self):
+        global KV_SNAPSHOT_METADATA, KV_SNAPSHOT_REVISION
+        with KV_SNAPSHOT_LOCK:
+            KV_SNAPSHOT_REVISION += 1
+            KV_SNAPSHOT_METADATA = None
+
+    def _write_value(self, key, value):
+        with STORAGE_LOCK:
+            conn = open_db_connection(DB_PATH)
+            try:
+                if value is None:
+                    conn.execute('DELETE FROM kv_store WHERE key = ?', (key,))
+                else:
+                    conn.execute(
+                        'INSERT OR REPLACE INTO kv_store(key, value, updatedAt) VALUES (?, ?, ?)',
+                        (key, str(value), utc_now_iso_z())
+                    )
+                _commit_durably(conn)
+            finally:
+                conn.close()
+        self._invalidate_kv_snapshot()
+        schedule_full_backup()
 
     def _clear_all_values(self):
-        conn = open_db_connection(DB_PATH)
-        conn.execute('DELETE FROM kv_store')
-        conn.commit()
-        conn.close()
+        with STORAGE_LOCK:
+            conn = open_db_connection(DB_PATH)
+            try:
+                conn.execute('DELETE FROM kv_store')
+                _commit_durably(conn)
+            finally:
+                conn.close()
+        self._invalidate_kv_snapshot()
+        schedule_full_backup()
 
     def _send_json(self, data, status=200):
         payload = json.dumps(data).encode('utf-8')
@@ -1795,7 +2067,20 @@ class StorageHandler(BaseHTTPRequestHandler):
         }.get(ext, 'application/octet-stream')
 
 
+class DashboardHTTPServer(ThreadingHTTPServer):
+    request_queue_size = 128
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, OSError)):
+            return
+        super().handle_error(request, client_address)
+
+
 if __name__ == '__main__':
-    httpd = ThreadingHTTPServer((HOST, PORT), StorageHandler)
+    init_db()
+    httpd = DashboardHTTPServer((HOST, PORT), StorageHandler)
     print(f'Storage server listening on http://{HOST}:{PORT}')
     httpd.serve_forever()

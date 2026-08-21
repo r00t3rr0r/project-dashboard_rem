@@ -154,14 +154,14 @@
     var themeBtn = document.getElementById('theme-toggle');
     if (!themeBtn) return;
 
-    // Gespeicherten Theme-Lookup aus localStorage
+    // Theme beim Start immer auf Light setzen, damit das Projekt nicht im Dark Modus startet
     var savedTheme = localStorage.getItem(NAMESPACE + '_theme');
-    if (savedTheme === 'light') {
-      document.body.classList.add('light-mode');
-      themeBtn.textContent = '\u2601\uFE0F'; // Cloud
-    } else {
-      themeBtn.textContent = '\uD83C\uDF13';  // Moon
+    if (savedTheme !== 'light') {
+      localStorage.setItem(NAMESPACE + '_theme', 'light');
     }
+
+    document.body.classList.add('light-mode');
+    themeBtn.textContent = '\u2601\uFE0F'; // Cloud
 
     themeBtn.addEventListener('click', function() {
       document.body.classList.toggle('light-mode');

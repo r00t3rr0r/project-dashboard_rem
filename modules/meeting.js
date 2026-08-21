@@ -377,9 +377,35 @@ function normalizeTaskDraft(rawDraft,options){
   var draft=rawDraft&&typeof rawDraft==='object'?rawDraft:{};
   var task=draft.task&&typeof draft.task==='object'?draft.task:{};
   var event=draft.event&&typeof draft.event==='object'?draft.event:{};
+  var sourceEvents=Array.isArray(draft.events)?draft.events:[];
+  if(!sourceEvents.length&&Object.keys(event).length)sourceEvents=[event];
   var fallbackScheduleMode=String(options&&options.scheduleMode||'none').trim().toLowerCase();
   var fallbackEventType=String(options&&options.eventType||'meeting').trim().toLowerCase();
   var sourceSuggestions=Array.isArray(draft.taskSuggestions)?draft.taskSuggestions:[];
+
+  var normalizedEvents=sourceEvents.slice(0,12).map(function(item){
+    var entry=item&&typeof item==='object'?item:{};
+    var eventType=String(entry.type||fallbackEventType||'meeting').trim().toLowerCase();
+    if(['meeting','deadline','release','holiday','task'].indexOf(eventType)===-1)eventType='meeting';
+    return {
+      create:entry.create!==false,
+      title:String(entry.title||'').trim(),
+      description:String(entry.description||'').trim(),
+      type:eventType,
+      date:toDateValue(entry.date),
+      startTime:toTimeValue(entry.startTime),
+      endTime:toTimeValue(entry.endTime)
+    };
+  }).filter(function(item){return !!(item.title||item.date);});
+  var primaryEvent=normalizedEvents[0]||{
+    create:!!event.create,
+    title:String(event.title||'').trim(),
+    description:String(event.description||'').trim(),
+    type:String(event.type||fallbackEventType||'meeting').trim().toLowerCase(),
+    date:toDateValue(event.date),
+    startTime:toTimeValue(event.startTime),
+    endTime:toTimeValue(event.endTime)
+  };
 
   var normalized={
     summaryMarkdown:String(draft.summaryMarkdown||'').trim(),
@@ -418,15 +444,8 @@ function normalizeTaskDraft(rawDraft,options){
         dependencyTaskId:normalizeTaskDependencyId(entry.dependencyTaskId||''),
       };
     }).filter(function(item){return !!(item.titleDe||item.titleEn);}),
-    event:{
-      create:!!event.create,
-      title:String(event.title||'').trim(),
-      description:String(event.description||'').trim(),
-      type:String(event.type||fallbackEventType||'meeting').trim().toLowerCase(),
-      date:toDateValue(event.date),
-      startTime:toTimeValue(event.startTime),
-      endTime:toTimeValue(event.endTime)
-    }
+    events:normalizedEvents,
+    event:primaryEvent
   };
 
   if(['low','medium','high','blocker'].indexOf(normalized.task.priority)===-1)normalized.task.priority='medium';
@@ -560,6 +579,11 @@ function fallbackPopulateDraftFromInput(draft,inputText,options){
   }
   if(mode==='asap'&&!normalized.event.date){
     normalized.event.date=new Date().toISOString().slice(0,10);
+  }
+  if(!Array.isArray(normalized.events)||!normalized.events.length){
+    normalized.events=normalized.event.create?[normalized.event]:[];
+  }else{
+    normalized.event=normalized.events[0];
   }
 
   if(options&&options.splitIntoMultiple&&parts.length>1&&!normalized.taskSuggestions.length){
@@ -777,7 +801,7 @@ function setBusy(stage,isBusy){
   if(spinner){
     spinner.textContent=isBusy?('KI arbeitet: '+stage+' ...'):state.saveStatus;
   }
-  ['meeting-add-entry','meeting-run-concept','meeting-run-concept-inline','meeting-run-plan','meeting-run-tasks','meeting-save','meeting-run-task-draft','meeting-apply-task-draft','meeting-apply-bulk-task-draft','meeting-apply-suggested-tasks','meeting-apply-event-draft'].forEach(function(id){
+  ['meeting-add-entry','meeting-analyze-note','meeting-run-concept','meeting-run-concept-inline','meeting-run-plan','meeting-run-tasks','meeting-save','meeting-run-task-draft','meeting-apply-task-draft','meeting-apply-bulk-task-draft','meeting-apply-suggested-tasks','meeting-apply-event-draft'].forEach(function(id){
     var btn=byId(id);
     if(btn)btn.disabled=!!isBusy;
   });
@@ -894,6 +918,27 @@ function renderDraftScheduleFields(containerId,schedule){
   wrap.innerHTML=html;
 }
 
+function buildDraftSubtaskListHtml(task){
+  var subtasks=normalizeQueuedSubtaskList([
+    ...(Array.isArray(task&&task.subtasksDe)?task.subtasksDe:[]),
+    ...(Array.isArray(task&&task.subtasksEn)?task.subtasksEn:[])
+  ]);
+  if(!subtasks.length){
+    return '<div class="task-cockpit-list"><p class="text-muted">Noch keine Teilaufgaben.</p></div>';
+  }
+
+  var html='<div class="task-cockpit-list">';
+  subtasks.forEach(function(st, index){
+    if(!st||!st.title)return;
+    html+='<div class="task-cockpit-list-item" data-draft-subtask-item="'+escapeAttr(String(st.id||index))+'">';
+    html+='<label><input type="checkbox" data-draft-subtask-toggle="'+escapeAttr(String(st.id||index))+'" '+(st.completed?'checked':'')+'> '+escapeHtml(st.title)+'</label>';
+    html+='<button type="button" class="btn btn-secondary" data-draft-subtask-remove="'+escapeAttr(String(st.id||index))+'">Entfernen</button>';
+    html+='</div>';
+  });
+  html+='</div>';
+  return html;
+}
+
 function renderTaskDraftPreview(){
   var host=byId('meeting-task-draft-preview');
   if(!host)return;
@@ -905,11 +950,13 @@ function renderTaskDraftPreview(){
 
   var task=state.taskDraft.task||{};
   var event=state.taskDraft.event||{};
+  var events=Array.isArray(state.taskDraft.events)&&state.taskDraft.events.length?state.taskDraft.events:[event];
   var summary=state.taskDraft.summaryMarkdown?'<div class="meeting-draft-summary">'+renderStructuredMarkdown(state.taskDraft.summaryMarkdown,'tasks')+'</div>':'';
   var projectId=((byId('meeting-draft-project-select')||{}).value||state.draftProjectId||state.projectId||'').trim();
   var subtasksDe=(Array.isArray(task.subtasksDe)?task.subtasksDe:[]).join('\n');
   var subtasksEn=(Array.isArray(task.subtasksEn)?task.subtasksEn:[]).join('\n');
   var suggestions=Array.isArray(state.taskDraft.taskSuggestions)?state.taskDraft.taskSuggestions:[];
+  var draftSubtaskListHtml=buildDraftSubtaskListHtml(task);
   var allAssigneeOptions=buildEmployeeSelectOptions(state.draftAssigneeAll);
   var mainAssigneeOptions=buildEmployeeSelectOptions(state.draftAssigneeMain);
   var mainDependencyOptions=buildTaskDependencySelectOptions(projectId,task.dependencyTaskId||'');
@@ -919,13 +966,13 @@ function renderTaskDraftPreview(){
     suggestionsHtml=''
       +'<details class="meeting-draft-fold meeting-draft-fold-suggestions" open>'
         +'<summary class="meeting-draft-fold-summary">'
-          +'<div><span class="meeting-draft-eyebrow">Unteraufgaben</span><strong>Vorschlag: Mehrere Aufgaben</strong><small>'+suggestions.length+' Vorschlaege</small></div>'
+          +'<div><span class="meeting-draft-eyebrow">Teilaufgaben</span><strong>Vorschlag: Teilaufgaben der Hauptaufgabe</strong><small>'+suggestions.length+' Vorschlaege</small></div>'
           +'<span class="meeting-draft-fold-toggle">Details</span>'
         +'</summary>'
         +'<section class="meeting-draft-section meeting-draft-section-subtasks meeting-draft-suggestions">'
           +'<div class="meeting-draft-section-head">'
-            +'<div><span class="meeting-draft-eyebrow">Unteraufgaben</span><h4>Vorschlag: Mehrere Aufgaben</h4><p>Mehrere eigenstaendige Arbeitspakete, direkt waehlbar und editierbar.</p></div>'
-            +'<button type="button" class="btn btn-secondary" id="meeting-apply-suggested-tasks">Auswahl in Startvorlage speichern</button>'
+            +'<div><span class="meeting-draft-eyebrow">Teilaufgaben</span><h4>Vorschlag: Teilaufgaben der Hauptaufgabe</h4><p>Mehrere Arbeitspakete werden als Unterpunkte der Hauptaufgabe angelegt und verwaltet.</p></div>'
+            +'<button type="button" class="btn btn-secondary" id="meeting-apply-suggested-tasks">Auswahl als Teilaufgaben speichern</button>'
           +'</div>'
           +'<div class="meeting-draft-suggestions-list">'
             +suggestions.map(function(item,idx){
@@ -972,6 +1019,34 @@ function renderTaskDraftPreview(){
         +'</section>'
       +'</details>';
   }
+
+  var additionalEventsHtml=events.slice(1).map(function(item,offset){
+    var idx=offset+1;
+    return ''
+      +'<article class="meeting-draft-additional-event">'
+        +'<div class="meeting-draft-suggestion-head">'
+          +'<label class="meeting-draft-check"><input type="checkbox" id="meeting-draft-event-create-'+idx+'"'+(item.create!==false?' checked':'')+'> Termin '+(idx+1)+' uebernehmen</label>'
+          +'<span class="meeting-draft-badge meeting-draft-badge-event">Termin</span>'
+        +'</div>'
+        +'<div class="meeting-draft-grid meeting-draft-grid-3">'
+          +'<label class="form-group"><span>Titel</span><input type="text" id="meeting-draft-event-title-'+idx+'" value="'+escapeAttr(item.title||'')+'"></label>'
+          +'<label class="form-group"><span>Datum</span><input type="date" id="meeting-draft-event-date-'+idx+'" value="'+escapeAttr(item.date||'')+'"></label>'
+          +'<label class="form-group"><span>Typ</span><select id="meeting-draft-event-type-'+idx+'">'
+            +'<option value="meeting"'+((item.type||'meeting')==='meeting'?' selected':'')+'>Meeting</option>'
+            +'<option value="deadline"'+((item.type||'')==='deadline'?' selected':'')+'>Deadline</option>'
+            +'<option value="release"'+((item.type||'')==='release'?' selected':'')+'>Release</option>'
+            +'<option value="holiday"'+((item.type||'')==='holiday'?' selected':'')+'>Urlaub</option>'
+            +'<option value="task"'+((item.type||'')==='task'?' selected':'')+'>Task</option>'
+          +'</select></label>'
+        +'</div>'
+        +'<div class="meeting-draft-grid meeting-draft-grid-3">'
+          +'<label class="form-group"><span>Start</span><input type="time" id="meeting-draft-event-start-'+idx+'" value="'+escapeAttr(item.startTime||'')+'"></label>'
+          +'<label class="form-group"><span>Ende</span><input type="time" id="meeting-draft-event-end-'+idx+'" value="'+escapeAttr(item.endTime||'')+'"></label>'
+          +'<span></span>'
+        +'</div>'
+        +'<label class="form-group"><span>Beschreibung</span><textarea id="meeting-draft-event-description-'+idx+'" rows="2">'+escapeHtml(item.description||'')+'</textarea></label>'
+      +'</article>';
+  }).join('');
 
   host.innerHTML=''
     +summary
@@ -1064,18 +1139,26 @@ function renderTaskDraftPreview(){
             +'<div class="meeting-draft-meta-card"><span>Dauer</span><strong>'+(event.startTime&&event.endTime?escapeHtml(event.startTime+' - '+event.endTime):'Flexibel')+'</strong></div>'
           +'</div>'
           +'<label class="form-group"><span>Termin Beschreibung</span><textarea id="meeting-draft-event-description" rows="3">'+escapeHtml(event.description||'')+'</textarea></label>'
-          +'<div class="meeting-draft-inline-actions"><button type="button" class="btn btn-secondary" id="meeting-apply-event-draft">Termin in Startvorlage speichern</button></div>'
+          +(additionalEventsHtml?'<div class="meeting-draft-additional-events"><h5>Weitere erkannte Termine</h5>'+additionalEventsHtml+'</div>':'')
+          +'<div class="meeting-draft-inline-actions"><button type="button" class="btn btn-secondary" id="meeting-apply-event-draft">Termin(e) in Startvorlage speichern</button></div>'
         +'</section>'
       +'</div>'
-      +'<details class="meeting-draft-fold meeting-draft-fold-subtasks">'
+      +'<details class="meeting-draft-fold meeting-draft-fold-subtasks" open>'
         +'<summary class="meeting-draft-fold-summary">'
-          +'<div><span class="meeting-draft-eyebrow">Unteraufgaben</span><strong>Arbeitspakete im Detail</strong><small>'+(subtasksDe||subtasksEn?'Vorhanden':'Leer')+'</small></div>'
+          +'<div><span class="meeting-draft-eyebrow">Teilaufgaben</span><strong>Kanban-Teilaufgaben</strong><small>'+(subtasksDe||subtasksEn?'Vorhanden':'Leer')+'</small></div>'
           +'<span class="meeting-draft-fold-toggle">Details</span>'
         +'</summary>'
         +'<section class="meeting-draft-section meeting-draft-section-subtasks">'
           +'<div class="meeting-draft-section-head">'
-            +'<div><span class="meeting-draft-eyebrow">Unteraufgaben</span><h4>Arbeitspakete im Detail</h4><p>Teilaufgaben in Deutsch und Englisch fuer schnellere Durchsicht und Weitergabe.</p></div>'
-            +'<span class="meeting-draft-badge meeting-draft-badge-subtask">Subtasks</span>'
+            +'<div><span class="meeting-draft-eyebrow">Teilaufgaben</span><h4>Kanban-Teilaufgaben</h4><p>Diese Eintraege werden als Teilaufgaben der Hauptaufgabe gespeichert und im Kanban Board bearbeitet.</p></div>'
+            +'<span class="meeting-draft-badge meeting-draft-badge-subtask">Teilaufgaben</span>'
+          +'</div>'
+          +'<div class="task-cockpit-panel">'
+            +'<div id="meeting-draft-subtask-list">'+draftSubtaskListHtml+'</div>'
+            +'<div class="task-cockpit-inline">'
+              +'<input type="text" id="meeting-draft-subtask-input" placeholder="Neue Teilaufgabe">'
+              +'<button type="button" class="btn btn-secondary" id="meeting-draft-subtask-add">Hinzufügen</button>'
+            +'</div>'
           +'</div>'
           +'<div class="meeting-draft-grid">'
             +'<label class="form-group"><span>Teilaufgaben (DE, eine pro Zeile)</span><textarea id="meeting-draft-subtasks-de" rows="4">'+escapeHtml(subtasksDe)+'</textarea></label>'
@@ -1085,7 +1168,7 @@ function renderTaskDraftPreview(){
       +'</details>'
       +suggestionsHtml
       +'<div class="meeting-draft-actions">'
-        +'<button type="button" class="btn btn-secondary" id="meeting-apply-bulk-task-draft">Hauptaufgabe + Unteraufgaben in Startvorlage</button>'
+        +'<button type="button" class="btn btn-secondary" id="meeting-apply-bulk-task-draft">Hauptaufgabe mit Teilaufgaben in Startvorlage</button>'
         +'<button type="button" class="btn btn-primary" id="meeting-apply-task-draft">In Startvorlage speichern</button>'
       +'</div>'
     +'</div>';
@@ -1127,6 +1210,109 @@ function renderTaskDraftPreview(){
   });
   updateDraftAssigneeVisibility();
   syncDraftAssigneeStateFromUi();
+}
+
+function syncTaskDraftSubtaskListFromInputs(){
+  var deInput=byId('meeting-draft-subtasks-de');
+  var enInput=byId('meeting-draft-subtasks-en');
+  var deItems=splitLines(deInput?deInput.value:'');
+  var enItems=splitLines(enInput?enInput.value:'');
+  var max=Math.max(deItems.length,enItems.length);
+  var combined=[];
+  for(var i=0;i<max;i++){
+    var item=(deItems[i]||enItems[i]||'').trim();
+    if(item)combined.push(item);
+  }
+  if(state.taskDraft&&state.taskDraft.task){
+    state.taskDraft.task.subtasksDe=combined.slice();
+    state.taskDraft.task.subtasksEn=combined.slice();
+  }
+  return combined;
+}
+
+function handleTaskDraftSubtaskUi(event){
+  var addBtn=event.target && event.target.closest ? event.target.closest('#meeting-draft-subtask-add') : null;
+  if(addBtn){
+    var input=byId('meeting-draft-subtask-input');
+    var value=(input?input.value:'').trim();
+    if(!value){
+      notify('Bitte eine Teilaufgabe eingeben.',true);
+      return;
+    }
+    var deInput=byId('meeting-draft-subtasks-de');
+    var enInput=byId('meeting-draft-subtasks-en');
+    var deList=splitLines(deInput?deInput.value:'');
+    var enList=splitLines(enInput?enInput.value:'');
+    deList.push(value);
+    enList.push(value);
+    if(deInput)deInput.value=deList.join('\n');
+    if(enInput)enInput.value=enList.join('\n');
+    if(input)input.value='';
+    renderTaskDraftPreview();
+    return;
+  }
+
+  var removeBtn=event.target && event.target.closest ? event.target.closest('[data-draft-subtask-remove]') : null;
+  if(removeBtn){
+    var removeId=String(removeBtn.getAttribute('data-draft-subtask-remove')||'');
+    var deInput=byId('meeting-draft-subtasks-de');
+    var enInput=byId('meeting-draft-subtasks-en');
+    var deList=splitLines(deInput?deInput.value:'');
+    var enList=splitLines(enInput?enInput.value:'');
+    var nextDe = [];
+    var nextEn = [];
+    for(var i=0;i<Math.max(deList.length,enList.length);i++){
+      var de = deList[i]||'';
+      var en = enList[i]||'';
+      if(!de&&!en)continue;
+      var itemId = String((de||en)+'-'+i);
+      if(itemId!==removeId && itemId!==String((de||en)||'')){
+        nextDe.push(de || en);
+        nextEn.push(en || de);
+      }
+    }
+    if(deInput)deInput.value=nextDe.join('\n');
+    if(enInput)enInput.value=nextEn.join('\n');
+    renderTaskDraftPreview();
+    return;
+  }
+
+  var toggle=event.target && event.target.closest ? event.target.closest('[data-draft-subtask-toggle]') : null;
+  if(toggle){
+    var isChecked=!!toggle.checked;
+    var deInput=byId('meeting-draft-subtasks-de');
+    var enInput=byId('meeting-draft-subtasks-en');
+    var deList=splitLines(deInput?deInput.value:'');
+    var enList=splitLines(enInput?enInput.value:'');
+    if(deInput)deInput.value=deList.join('\n');
+    if(enInput)enInput.value=enList.join('\n');
+    syncTaskDraftSubtaskListFromInputs();
+    if(state.taskDraft&&state.taskDraft.task){
+      state.taskDraft.task.subtasksDe = state.taskDraft.task.subtasksDe.map(function(item){
+        return item;
+      });
+    }
+    renderTaskDraftPreview();
+  }
+}
+
+var taskDraftPreviewUiHandled=false;
+if(!taskDraftPreviewUiHandled){
+  taskDraftPreviewUiHandled=true;
+  document.addEventListener('click',function(event){
+    var target=event.target;
+    if(!target||!target.closest)return;
+    if(target.closest('#meeting-draft-subtask-add')||target.closest('[data-draft-subtask-remove]')){
+      handleTaskDraftSubtaskUi(event);
+    }
+  });
+  document.addEventListener('change',function(event){
+    var target=event.target;
+    if(!target||!target.closest)return;
+    if(target.closest('[data-draft-subtask-toggle]')){
+      handleTaskDraftSubtaskUi(event);
+    }
+  });
 }
 
 function readSuggestedTasksFromPreview(){
@@ -1179,51 +1365,85 @@ function applySuggestedTasks(){
     return;
   }
 
-  var queued=[];
-  selected.sort(function(a,b){
+  var base=readDraftTaskPayload();
+  var parentTitle=(base.title||'').trim()||selected.map(function(item){
+    return item.titleDe||item.titleEn||'';
+  }).filter(Boolean).join(' | ')||'KI-Analyse';
+  var transformedSubtasks=selected.sort(function(a,b){
     var aSeq=Number(a.sequenceIndex||0)||0;
     var bSeq=Number(b.sequenceIndex||0)||0;
     if(aSeq&&!bSeq)return -1;
     if(!aSeq&&bSeq)return 1;
     if(aSeq!==bSeq)return aSeq-bSeq;
     return 0;
-  }).forEach(function(item,idx){
+  }).map(function(item){
     var title=(item.titleDe||item.titleEn)+(item.titleDe&&item.titleEn?' | '+item.titleEn:'');
-    var description='DE:\n'+(item.descriptionDe||'')+'\n\nEN:\n'+(item.descriptionEn||'');
-    if(item.note){
-      description+='\n\nHinweis:\n'+item.note;
-    }
-    queued.push({
-      kind:'task',
-      payload:{
-        id:createId('qtask'),
-        source:'meeting-task-draft-suggestion',
-        title:title,
-        description:description,
-        assigneeId:item.assigneeId||null,
-        priority:item.priority||'medium',
-        urgency:item.urgency||'normal',
-        effortHours:item.effortHours||0,
-        labels:resolveLabelIdsByNames(item.labels),
-        schedule:{mode:'none',deadline:'',fixedAt:'',rangeStart:'',rangeEnd:''},
-        sequenceIndex:item.sequenceIndex||idx+1,
-        dependsOnPrevious:!!item.dependsOnPrevious || idx>0,
-        chainWithPrevious:!!item.dependsOnPrevious || idx>0,
-        externalDependencyTaskId:normalizeTaskDependencyId(item.dependencyTaskId||''),
-        subtasks:[],
-        notes:item.note?[{id:createId('note'),text:item.note,createdAt:new Date().toISOString()}]:[],
-        queuedAt:new Date().toISOString()
-      }
-    });
+    return {
+      id:createId('subtask'),
+      title:title,
+      completed:false,
+      createdAt:new Date().toISOString()
+    };
   });
+
+  var queued=[{
+    kind:'task',
+    payload:{
+      id:createId('qtask'),
+      source:'meeting-task-draft-suggestion-parent',
+      title:parentTitle,
+      description:base.description||selected.map(function(item){
+        var text='DE:\n'+(item.descriptionDe||'')+'\n\nEN:\n'+(item.descriptionEn||'');
+        if(item.note){
+          text+='\n\nHinweis:\n'+item.note;
+        }
+        return text;
+      }).join('\n\n---\n\n'),
+      assigneeId:resolveAssigneeForMainTask(),
+      priority:base.priority||'medium',
+      urgency:base.urgency||'normal',
+      effortHours:base.effortHours||0,
+      labels:Array.isArray(base.labels)?base.labels.slice():[],
+      schedule:base.schedule||{mode:'none',deadline:'',fixedAt:'',rangeStart:'',rangeEnd:''},
+      sequenceIndex:Number(base.sequenceIndex||1)||1,
+      dependsOnPrevious:!!base.dependsOnPrevious,
+      chainWithPrevious:!!base.dependsOnPrevious,
+      externalDependencyTaskId:normalizeTaskDependencyId(base.dependencyTaskId||''),
+      subtasks:transformedSubtasks,
+      notes:Array.isArray(base.notes)?base.notes.slice():[],
+      queuedAt:new Date().toISOString()
+    }
+  }];
 
   try{
     var result=queueExecutionPlanItems(projectId,queued);
     touchMeetingProtocol(state.projectId);
-    notify(result.tasks+' KI-Vorschlaege in Projekt-Startvorlage gespeichert.',false);
+    notify(result.tasks+' Aufgabe mit '+transformedSubtasks.length+' Teilaufgaben in Projekt-Startvorlage gespeichert.',false);
   }catch(err){
     notify('Speichern in Startvorlage fehlgeschlagen: '+(err.message||String(err)),true);
   }
+}
+
+function normalizeQueuedSubtaskList(items){
+  var source=Array.isArray(items)?items:[];
+  return source.map(function(item){
+    if(typeof item==='string'){
+      var title=item.trim();
+      if(!title)return null;
+      return {id:createId('subtask'), title:title, completed:false, createdAt:new Date().toISOString()};
+    }
+    if(item&&typeof item==='object'){
+      var title=String(item.title||item.text||'').trim();
+      if(!title)return null;
+      return {
+        id:item.id||createId('subtask'),
+        title:title,
+        completed:!!item.completed,
+        createdAt:item.createdAt||new Date().toISOString()
+      };
+    }
+    return null;
+  }).filter(function(item){return !!item && !!item.title;});
 }
 
 function readDraftSubtaskPairs(){
@@ -1263,8 +1483,7 @@ function readDraftTaskPayload(){
   }
 
   var pairs=readDraftSubtaskPairs();
-  var subtasks=[];
-  for(var i=0;i<pairs.length;i++)subtasks.push(pairs[i].title);
+  var subtasks=normalizeQueuedSubtaskList(pairs.map(function(pair){return pair.title;}));
 
   return {
     title:(titleDe||titleEn)+(titleDe&&titleEn?' | '+titleEn:''),
@@ -1282,16 +1501,25 @@ function readDraftTaskPayload(){
   };
 }
 
-function readDraftEventPayload(){
+function readDraftEventPayload(index){
+  var suffix=index?'-'+index:'';
   return {
-    create:!!((byId('meeting-draft-event-create')||{}).checked),
-    type:String((byId('meeting-draft-event-type')||{}).value||'meeting').toLowerCase(),
-    title:String((byId('meeting-draft-event-title')||{}).value||'').trim(),
-    description:String((byId('meeting-draft-event-description')||{}).value||'').trim(),
-    date:toDateValue((byId('meeting-draft-event-date')||{}).value),
-    startTime:toTimeValue((byId('meeting-draft-event-start')||{}).value),
-    endTime:toTimeValue((byId('meeting-draft-event-end')||{}).value)
+    create:!!((byId('meeting-draft-event-create'+suffix)||{}).checked),
+    type:String((byId('meeting-draft-event-type'+suffix)||{}).value||'meeting').toLowerCase(),
+    title:String((byId('meeting-draft-event-title'+suffix)||{}).value||'').trim(),
+    description:String((byId('meeting-draft-event-description'+suffix)||{}).value||'').trim(),
+    date:toDateValue((byId('meeting-draft-event-date'+suffix)||{}).value),
+    startTime:toTimeValue((byId('meeting-draft-event-start'+suffix)||{}).value),
+    endTime:toTimeValue((byId('meeting-draft-event-end'+suffix)||{}).value)
   };
+}
+
+function readDraftEventPayloads(){
+  var source=Array.isArray(state.taskDraft&&state.taskDraft.events)?state.taskDraft.events:[];
+  var count=Math.max(source.length,1);
+  var events=[];
+  for(var i=0;i<count;i++)events.push(readDraftEventPayload(i));
+  return events;
 }
 
 function applyDraftEventOnly(){
@@ -1310,27 +1538,26 @@ function applyDraftEventOnly(){
     return;
   }
 
-  var eventPayload=readDraftEventPayload();
-  if(!eventPayload.title){
-    notify('Bitte einen Termin-Titel eintragen.',true);
+  var eventPayloads=readDraftEventPayloads().filter(function(item){return item.create;});
+  if(!eventPayloads.length){
+    notify('Bitte mindestens einen Termin zur Uebernahme auswaehlen.',true);
     return;
   }
-  if(!eventPayload.date){
-    notify('Bitte ein Termin-Datum eintragen.',true);
+  if(eventPayloads.some(function(item){return !item.title||!item.date;})){
+    notify('Jeder ausgewaehlte Termin braucht Titel und Datum.',true);
     return;
   }
 
   try{
-    queueExecutionPlanItems(projectId,[{
-      kind:'event',
-      payload:Object.assign({
+    queueExecutionPlanItems(projectId,eventPayloads.map(function(eventPayload){
+      return {kind:'event',payload:Object.assign({
         id:createId('qevent'),
         source:'meeting-task-draft-event',
         queuedAt:new Date().toISOString()
-      },buildCalendarEventPayload(projectId,eventPayload,eventPayload.title))
-    }]);
+      },buildCalendarEventPayload(projectId,eventPayload,eventPayload.title))};
+    }));
     touchMeetingProtocol(state.projectId);
-    notify('Termin in Projekt-Startvorlage gespeichert.',false);
+    notify(eventPayloads.length+' Termin(e) in Projekt-Startvorlage gespeichert.',false);
   }catch(err){
     notify('Speichern in Startvorlage fehlgeschlagen: '+(err.message||String(err)),true);
   }
@@ -1369,6 +1596,28 @@ function runTaskDraft(){
   }).finally(function(){
     setBusy('',false);
   });
+}
+
+function analyzeNoteInput(){
+  var noteInput=byId('meeting-note-input');
+  var draftInput=byId('meeting-task-draft-input');
+  var text=String(noteInput&&noteInput.value||'').trim();
+  if(!text){
+    notify('Bitte zuerst Stichpunkte fuer die KI-Analyse eingeben.',true);
+    return;
+  }
+
+  if(draftInput)draftInput.value=text;
+  var createSubtasks=byId('meeting-task-draft-subtasks');
+  var splitMultiple=byId('meeting-task-draft-multi');
+  if(createSubtasks)createSubtasks.checked=true;
+  if(splitMultiple)splitMultiple.checked=true;
+  var scheduleMode=byId('meeting-task-draft-schedule-mode');
+  if(scheduleMode)scheduleMode.value='auto';
+  var details=byId('meeting-task-draft-collapsible');
+  if(details)details.open=true;
+  if(details&&details.scrollIntoView)details.scrollIntoView({behavior:'smooth',block:'start'});
+  runTaskDraft();
 }
 
 function applyTaskDraft(){
@@ -1416,9 +1665,9 @@ function applyTaskDraft(){
     }
   }];
 
-  var queuedEvent=false;
-  var eventPayload=readDraftEventPayload();
-  if(eventPayload.create&&eventPayload.date){
+  var queuedEvents=0;
+  readDraftEventPayloads().forEach(function(eventPayload){
+    if(!eventPayload.create||!eventPayload.date||!eventPayload.title)return;
     queueItems.push({
       kind:'event',
       payload:Object.assign({
@@ -1427,13 +1676,13 @@ function applyTaskDraft(){
         queuedAt:new Date().toISOString()
       },buildCalendarEventPayload(projectId,eventPayload,'Termin: '+payload.title))
     });
-    queuedEvent=true;
-  }
+    queuedEvents++;
+  });
 
   try{
     queueExecutionPlanItems(projectId,queueItems);
     touchMeetingProtocol(state.projectId);
-    notify('Aufgabe in Projekt-Startvorlage gespeichert'+(queuedEvent?' und Termin vorgemerkt':'')+'.',false);
+    notify('Aufgabe in Projekt-Startvorlage gespeichert'+(queuedEvents?' und '+queuedEvents+' Termin(e) vorgemerkt':'')+'.',false);
   }catch(err){
     notify('Speichern in Startvorlage fehlgeschlagen: '+(err.message||String(err)),true);
   }
@@ -1472,6 +1721,8 @@ function applyTaskDraftBulk(){
   base.sequenceIndex=Number(base.sequenceIndex||1)||1;
   base.dependsOnPrevious=!!base.dependsOnPrevious;
 
+  var bulkSubtasks=normalizeQueuedSubtaskList(pairs.map(function(pair){return pair.title;}));
+
   queueItems.push({
     kind:'task',
     payload:{
@@ -1489,43 +1740,15 @@ function applyTaskDraftBulk(){
       dependsOnPrevious:base.dependsOnPrevious,
       chainWithPrevious:base.dependsOnPrevious,
       externalDependencyTaskId:normalizeTaskDependencyId(base.dependencyTaskId||''),
-      subtasks:Array.isArray(base.subtasks)?base.subtasks.slice():[],
+      subtasks:bulkSubtasks,
       notes:Array.isArray(base.notes)?base.notes.slice():[],
       queuedAt:new Date().toISOString()
     }
   });
 
-  var perTaskEffort=base.effortHours>0?Math.round((base.effortHours/pairs.length)*100)/100:0;
-  var subtaskAssigneeId=resolveAssigneeForBulkSubtasks();
-  for(var i=0;i<pairs.length;i++){
-    var pair=pairs[i];
-    queueItems.push({
-      kind:'task',
-      payload:{
-        id:createId('qtask'),
-        source:'meeting-task-draft-bulk-subtask',
-        title:pair.title,
-        description:'DE:\n'+pair.de+'\n\nEN:\n'+pair.en+'\n\nKontext:\n'+(base.description||''),
-        priority:base.priority,
-        urgency:base.urgency,
-        effortHours:perTaskEffort,
-        labels:Array.isArray(base.labels)?base.labels.slice():[],
-        schedule:{mode:'none',deadline:'',fixedAt:'',rangeStart:'',rangeEnd:''},
-        subtasks:[],
-        notes:Array.isArray(base.notes)?base.notes.slice():[],
-        assigneeId:subtaskAssigneeId,
-        sequenceIndex:base.sequenceIndex+i+1,
-        dependsOnPrevious:true,
-        chainWithPrevious:true,
-        externalDependencyTaskId:normalizeTaskDependencyId(base.dependencyTaskId||''),
-        queuedAt:new Date().toISOString()
-      }
-    });
-  }
-
-  var createdEvent=false;
-  var eventPayload=readDraftEventPayload();
-  if(eventPayload.create&&eventPayload.date){
+  var createdEvents=0;
+  readDraftEventPayloads().forEach(function(eventPayload){
+    if(!eventPayload.create||!eventPayload.date||!eventPayload.title)return;
     queueItems.push({
       kind:'event',
       payload:Object.assign({
@@ -1534,13 +1757,13 @@ function applyTaskDraftBulk(){
         queuedAt:new Date().toISOString()
       },buildCalendarEventPayload(projectId,eventPayload,'Termin: '+base.title))
     });
-    createdEvent=true;
-  }
+    createdEvents++;
+  });
 
   try{
     var result=queueExecutionPlanItems(projectId,queueItems);
     touchMeetingProtocol(state.projectId);
-    notify(result.tasks+' Aufgaben in Startvorlage gespeichert'+(createdEvent?' und Termin vorgemerkt':'')+'.',false);
+    notify(result.tasks+' Aufgaben in Startvorlage gespeichert'+(createdEvents?' und '+createdEvents+' Termin(e) vorgemerkt':'')+'.',false);
   }catch(err){
     notify('Speichern in Startvorlage fehlgeschlagen: '+(err.message||String(err)),true);
   }
@@ -2096,7 +2319,10 @@ function bind(){
             +'<label class="form-group meeting-editor-field"><span>Neuer Stichpunkt</span><textarea id="meeting-note-input" rows="5" placeholder="z. B. Budgetrahmen ca. 50k, Deadline Q4, Team: Max/Julia/Tom"></textarea></label>'
             +'<div class="meeting-editor-side">'
               +'<label class="form-group"><span>Label (optional)</span><select id="meeting-label-select"></select></label>'
-              +'<button type="button" class="btn btn-primary" id="meeting-add-entry">+</button>'
+              +'<div class="meeting-editor-actions">'
+                +'<button type="button" class="btn btn-primary" id="meeting-add-entry" title="Stichpunkt speichern" aria-label="Stichpunkt speichern">+</button>'
+                +'<button type="button" class="btn btn-secondary" id="meeting-analyze-note">Mit KI analysieren</button>'
+              +'</div>'
             +'</div>'
           +'</div>'
           +'<div class="meeting-entry-list" id="meeting-entry-list"></div>'
@@ -2138,6 +2364,7 @@ function bind(){
                 +'<div class="meeting-draft-grid meeting-draft-grid-3">'
                   +'<label class="form-group"><span>Projekt</span><select id="meeting-draft-project-select"></select></label>'
                   +'<label class="form-group"><span>Terminart</span><select id="meeting-task-draft-schedule-mode">'
+                    +'<option value="auto" selected>Automatisch erkennen</option>'
                     +'<option value="none">Kein Termin</option>'
                     +'<option value="deadline">Deadline</option>'
                     +'<option value="fixed">Fester Termin</option>'
@@ -2153,7 +2380,7 @@ function bind(){
                   +'</select></label>'
                 +'</div>'
                 +'<label class="meeting-draft-check"><input type="checkbox" id="meeting-task-draft-subtasks" checked> Unteraufgaben automatisch erzeugen</label>'
-                +'<label class="meeting-draft-check"><input type="checkbox" id="meeting-task-draft-multi" checked> Bei Bedarf in mehrere Aufgaben aufteilen</label>'
+                +'<label class="meeting-draft-check"><input type="checkbox" id="meeting-task-draft-multi" checked> Bei Bedarf als Teilaufgaben der Hauptaufgabe vorschlagen</label>'
                 +'<label class="form-group"><span>Input fuer KI (Stichpunkte oder Freitext)</span><textarea id="meeting-task-draft-input" rows="4" placeholder="z. B. Kundenabnahme vorbereiten, bis Ende naechster Woche, Risiko: fehlende Testdaten, Team DE+EN"></textarea></label>'
                 +'<div id="meeting-task-draft-preview" class="meeting-task-draft-preview"></div>'
               +'</div>'
@@ -2194,6 +2421,7 @@ function bind(){
   byId('meeting-toggle-closed').addEventListener('click',toggleMeetingProtocolStatus);
   byId('meeting-save').addEventListener('click',saveMeetingState);
   byId('meeting-add-entry').addEventListener('click',addEntry);
+  byId('meeting-analyze-note').addEventListener('click',analyzeNoteInput);
   byId('meeting-export-md').addEventListener('click',exportMarkdown);
   byId('meeting-export-json').addEventListener('click',exportJson);
   byId('meeting-run-concept').addEventListener('click',runConcept);

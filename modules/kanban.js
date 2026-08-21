@@ -114,6 +114,26 @@
     return String(value).trim();
   }
 
+  function normalizeAssigneeIds(values) {
+    var out = [];
+    var seen = Object.create(null);
+    (Array.isArray(values) ? values : []).forEach(function (value) {
+      var id = normalizeComparableId(value);
+      if (!id || seen[id]) return;
+      seen[id] = true;
+      out.push(id);
+    });
+    return out;
+  }
+
+  function getTaskAssigneeIds(task) {
+    if (!task || typeof task !== 'object') return [];
+    var ids = [];
+    if (Array.isArray(task.assigneeIds)) ids = ids.concat(task.assigneeIds);
+    if (task.assigneeId) ids.push(task.assigneeId);
+    return normalizeAssigneeIds(ids);
+  }
+
   function loadPersistedAssigneeFilter() {
     try {
       if (!window.localStorage) return '';
@@ -689,17 +709,33 @@
   }
 
   function getAssignee(task) {
-    if (!task || !task.assigneeId) return null;
-    var taskAssigneeId = normalizeComparableId(task.assigneeId);
+    if (!task) return null;
+    var taskAssigneeId = getTaskAssigneeIds(task)[0] || '';
     if (!taskAssigneeId) return null;
     return (window.DataLayer.getEmployees() || []).find(function (employee) {
       return normalizeComparableId(employee && employee.id) === taskAssigneeId;
     }) || null;
   }
 
+  function getTaskAssignees(task) {
+    var byId = Object.create(null);
+    (window.DataLayer.getEmployees() || []).forEach(function (employee) {
+      var employeeId = normalizeComparableId(employee && employee.id);
+      if (!employeeId) return;
+      byId[employeeId] = employee;
+    });
+
+    return getTaskAssigneeIds(task).map(function (id) {
+      return byId[id] || { id: id, name: 'Mitarbeiter ' + id };
+    });
+  }
+
   function getAssigneeName(task) {
-    var assignee = getAssignee(task);
-    return assignee ? assignee.name : 'Nicht zugewiesen';
+    var list = getTaskAssignees(task);
+    if (!list.length) return 'Nicht zugewiesen';
+    return list.map(function (assignee) {
+      return String(assignee && assignee.name || '').trim() || 'Mitarbeiter';
+    }).join(', ');
   }
 
   function getAssigneeGroupInfo(task) {
@@ -721,6 +757,19 @@
     };
   }
 
+  function getAssigneeGroupInfos(task) {
+    var assignees = getTaskAssignees(task);
+    if (!assignees.length) return [getAssigneeGroupInfo(task)];
+    return assignees.map(function (assignee) {
+      return {
+        id: normalizeComparableId(assignee && assignee.id) || 'unassigned',
+        name: assignee && assignee.name ? assignee.name : 'Mitarbeiter',
+        initials: getAssigneeInitials(assignee && assignee.name ? assignee.name : ''),
+        isUnassigned: false
+      };
+    });
+  }
+
   function isTaskOverdue(task) {
     return !!(task && task.dueDate && toDateOnly(task.dueDate) < getTodayDateKey() && task.status !== 'done');
   }
@@ -730,25 +779,27 @@
 
     (tasks || []).forEach(function (task) {
       if (!task) return;
-      var info = getAssigneeGroupInfo(task);
-      var groupId = info.id;
-      if (!grouped[groupId]) {
-        grouped[groupId] = {
-          id: groupId,
-          name: info.name,
-          initials: info.initials,
-          isUnassigned: info.isUnassigned,
-          taskCount: 0,
-          overdueCount: 0,
-          blockerCount: 0,
-          tasks: []
-        };
-      }
+      var infos = getAssigneeGroupInfos(task);
+      infos.forEach(function (info) {
+        var groupId = info.id;
+        if (!grouped[groupId]) {
+          grouped[groupId] = {
+            id: groupId,
+            name: info.name,
+            initials: info.initials,
+            isUnassigned: info.isUnassigned,
+            taskCount: 0,
+            overdueCount: 0,
+            blockerCount: 0,
+            tasks: []
+          };
+        }
 
-      grouped[groupId].tasks.push(task);
-      grouped[groupId].taskCount += 1;
-      if (isTaskOverdue(task)) grouped[groupId].overdueCount += 1;
-      if (task.priority === 'blocker') grouped[groupId].blockerCount += 1;
+        grouped[groupId].tasks.push(task);
+        grouped[groupId].taskCount += 1;
+        if (isTaskOverdue(task)) grouped[groupId].overdueCount += 1;
+        if (task.priority === 'blocker') grouped[groupId].blockerCount += 1;
+      });
     });
 
     return Object.keys(grouped).map(function (key) {
@@ -825,8 +876,7 @@
     return direct;
   }
 
-  function getAssigneeGitHubAvatarUrl(task) {
-    var assignee = getAssignee(task);
+  function getEmployeeGitHubAvatarUrl(assignee) {
     if (!assignee || !assignee.github || typeof assignee.github !== 'object') return '';
 
     var github = assignee.github;
@@ -836,6 +886,10 @@
     var username = sanitizeGitHubUsername(github.username || extractGitHubUsername(github.profileUrl || ''));
     if (!username) return '';
     return 'https://github.com/' + encodeURIComponent(username) + '.png?size=200';
+  }
+
+  function getAssigneeGitHubAvatarUrl(task) {
+    return getEmployeeGitHubAvatarUrl(getAssignee(task));
   }
 
   function getAssigneeInitials(name) {
@@ -853,6 +907,37 @@
 
     var safeUrl = String(avatarUrl).replace(/'/g, '%27');
     return '<span class="kanban-assignee-avatar kanban-assignee-avatar-image" title="' + escapeHtml(assigneeName) + '" style="background-image:url(\'' + escapeHtml(safeUrl) + '\')" aria-label="' + escapeHtml(assigneeName) + '"></span>';
+  }
+
+  function getAssigneeAvatarStackHtml(task) {
+    var assignees = getTaskAssignees(task);
+    if (!assignees.length) {
+      return getAssigneeAvatarHtml(task, 'Nicht zugewiesen', getAssigneeInitials('Nicht zugewiesen'));
+    }
+
+    var shown = assignees.slice(0, 3);
+    var hiddenCount = assignees.length - shown.length;
+    var tooltip = assignees.map(function (assignee) {
+      return String(assignee && assignee.name || '').trim() || 'Mitarbeiter';
+    }).join(', ');
+
+    var html = '<span class="kanban-assignee-avatars" title="' + escapeHtml(tooltip) + '">';
+    shown.forEach(function (assignee) {
+      var name = String(assignee && assignee.name || '').trim() || 'Mitarbeiter';
+      var initials = getAssigneeInitials(name);
+      var avatarUrl = getEmployeeGitHubAvatarUrl(assignee);
+      if (avatarUrl) {
+        var safeUrl = String(avatarUrl).replace(/'/g, '%27');
+        html += '<span class="kanban-assignee-avatar kanban-assignee-avatar-image" style="background-image:url(\'' + escapeHtml(safeUrl) + '\')" aria-label="' + escapeHtml(name) + '"></span>';
+      } else {
+        html += '<span class="kanban-assignee-avatar" aria-label="' + escapeHtml(name) + '">' + escapeHtml(initials) + '</span>';
+      }
+    });
+    if (hiddenCount > 0) {
+      html += '<span class="kanban-assignee-avatar kanban-assignee-avatar-more">+' + hiddenCount + '</span>';
+    }
+    html += '</span>';
+    return html;
   }
 
   function getEffortPercent(task) {
@@ -893,10 +978,10 @@
   function matchesCurrentFilters(task, status) {
     if (!task) return false;
     if (status && task.status !== status) return false;
-    var taskAssigneeId = normalizeComparableId(task.assigneeId);
+    var taskAssigneeIds = getTaskAssigneeIds(task).map(normalizeComparableId);
     var selectedAssigneeId = normalizeComparableId(filterAssigneeId);
-    if (selectedAssigneeId === UNASSIGNED_FILTER_VALUE && taskAssigneeId) return false;
-    if (selectedAssigneeId && selectedAssigneeId !== UNASSIGNED_FILTER_VALUE && taskAssigneeId !== selectedAssigneeId) return false;
+    if (selectedAssigneeId === UNASSIGNED_FILTER_VALUE && taskAssigneeIds.length) return false;
+    if (selectedAssigneeId && selectedAssigneeId !== UNASSIGNED_FILTER_VALUE && taskAssigneeIds.indexOf(selectedAssigneeId) === -1) return false;
     if (filterPriority && task.priority !== filterPriority) return false;
     if (filterUrgency && task.urgency !== filterUrgency) return false;
     if (filterProjectId && task.projectId !== filterProjectId) return false;
@@ -926,10 +1011,12 @@
       });
 
       tasks.forEach(function (task) {
-        var taskAssigneeId = normalizeComparableId(task && task.assigneeId);
-        if (!taskAssigneeId || assigneeById[taskAssigneeId]) return;
-        assigneeById[taskAssigneeId] = true;
-        assigneeList.push({ id: taskAssigneeId, name: 'Mitarbeiter ' + taskAssigneeId });
+        getTaskAssigneeIds(task).forEach(function (id) {
+          var taskAssigneeId = normalizeComparableId(id);
+          if (!taskAssigneeId || assigneeById[taskAssigneeId]) return;
+          assigneeById[taskAssigneeId] = true;
+          assigneeList.push({ id: taskAssigneeId, name: 'Mitarbeiter ' + taskAssigneeId });
+        });
       });
 
       assigneeList.sort(function (left, right) {
@@ -1120,22 +1207,24 @@
     var groups = Object.create(null);
 
     getVisibleTasks().filter(isTaskRelevantToday).forEach(function (task) {
-      var assignee = getAssignee(task);
-      var groupId = assignee ? assignee.id : 'unassigned';
-      if (!groups[groupId]) {
-        groups[groupId] = {
-          id: groupId,
-          name: assignee ? assignee.name : 'Nicht zugewiesen',
-          initials: getAssigneeInitials(assignee ? assignee.name : 'Nicht zugewiesen'),
-          totalHours: 0,
-          taskCount: 0,
-          tasks: []
-        };
-      }
+      var infos = getAssigneeGroupInfos(task);
+      infos.forEach(function (info) {
+        var groupId = info.id;
+        if (!groups[groupId]) {
+          groups[groupId] = {
+            id: groupId,
+            name: info.isUnassigned ? 'Nicht zugewiesen' : (info.name || 'Mitarbeiter'),
+            initials: info.isUnassigned ? getAssigneeInitials('Nicht zugewiesen') : info.initials,
+            totalHours: 0,
+            taskCount: 0,
+            tasks: []
+          };
+        }
 
-      groups[groupId].tasks.push(task);
-      groups[groupId].taskCount += 1;
-      groups[groupId].totalHours += getTaskTrackedMinutesToday(task) / 60;
+        groups[groupId].tasks.push(task);
+        groups[groupId].taskCount += 1;
+        groups[groupId].totalHours += getTaskTrackedMinutesToday(task) / 60;
+      });
     });
 
     return Object.keys(groups).map(function (key) {
@@ -1253,11 +1342,11 @@
 
   function buildStatusSteps(task) {
     var auth = getAuthManager();
-    var editable = !auth || typeof auth.canEditTask !== 'function' || auth.canEditTask(task);
+    var movable = !auth || typeof auth.canMoveTask !== 'function' || auth.canMoveTask(task);
     var html = '<div class="kanban-status-strip" role="group" aria-label="Status schnell wechseln">';
     COLUMNS.forEach(function (status) {
       var activeClass = task.status === status ? ' is-active' : '';
-      html += '<button type="button" class="kanban-status-step' + activeClass + '" data-task-id="' + escapeHtml(task.id) + '" data-task-status="' + escapeHtml(status) + '" title="Status: ' + escapeHtml(getStatusLabel(status)) + '" ' + (editable ? '' : 'disabled') + '>' +
+      html += '<button type="button" class="kanban-status-step' + activeClass + '" data-task-id="' + escapeHtml(task.id) + '" data-task-status="' + escapeHtml(status) + '" title="Status: ' + escapeHtml(getStatusLabel(status)) + '" ' + (movable ? '' : 'disabled') + '>' +
         '<span class="material-symbols-rounded" aria-hidden="true">' + getStatusIcon(status) + '</span>' +
         '</button>';
     });
@@ -1269,6 +1358,7 @@
   function createTaskCard(task) {
     var auth = getAuthManager();
     var editable = !auth || typeof auth.canEditTask !== 'function' || auth.canEditTask(task);
+    var movable = !auth || typeof auth.canMoveTask !== 'function' || auth.canMoveTask(task);
     var priorityClass = task.priority === 'high' || task.priority === 'blocker' ? 'priority-high' :
                         task.priority === 'medium' ? 'priority-medium' :
                         task.priority === 'low' ? 'priority-low' : '';
@@ -1276,7 +1366,7 @@
     var subtaskStats = getTaskSubtaskStats(task);
     var urgency = task.urgency || 'normal';
     var assigneeName = getAssigneeName(task);
-    var assigneeInitials = getAssigneeInitials(assigneeName);
+    var assigneeAvatarStack = getAssigneeAvatarStackHtml(task);
     var effortSnapshot = buildTaskEffortSnapshot(task);
     var confirmationState = getInProgressConfirmationState(task);
     var timingState = effortSnapshot.state;
@@ -1311,7 +1401,7 @@
       : '';
     var effortMetaLabel = effortSnapshot.timingLabel + (effortSnapshot.pauseHint ? ' · ' + effortSnapshot.pauseHint : '');
 
-    var html = '<div class="kanban-card ' + priorityClass + (timingState === 'paused' ? ' is-paused' : '') + (isCompactMode ? ' is-compact' : '') + (editable ? '' : ' auth-readonly-card') + '" data-task-id="' + escapeHtml(task.id) + '" draggable="' + (editable ? 'true' : 'false') + '">';
+    var html = '<div class="kanban-card ' + priorityClass + (timingState === 'paused' ? ' is-paused' : '') + (isCompactMode ? ' is-compact' : '') + (editable ? '' : ' auth-readonly-card') + '" data-task-id="' + escapeHtml(task.id) + '" draggable="' + (movable ? 'true' : 'false') + '">';
 
     if (isCompactMode) {
       html += '<div class="kanban-card-head kanban-card-compact-head">';
@@ -1320,7 +1410,7 @@
       html += chainBadge;
       html += attachmentBadge;
       html += '</div>';
-      html += getAssigneeAvatarHtml(task, assigneeName, assigneeInitials);
+      html += assigneeAvatarStack;
       html += '<button class="kanban-icon-btn kanban-expand-btn" type="button" data-task-open="' + escapeHtml(task.id) + '" title="Aufgabe erweitern" ' + (editable ? '' : 'disabled') + '>';
       html += '<span class="material-symbols-rounded" aria-hidden="true">open_in_full</span>';
       html += '</button>';
@@ -1337,7 +1427,7 @@
     html += '<span class="kanban-card-project">' + escapeHtml(getProjectTitle(task.projectId)) + '</span>';
     html += pauseBadge;
     html += '</div>';
-    html += getAssigneeAvatarHtml(task, assigneeName, assigneeInitials);
+    html += assigneeAvatarStack;
     html += '</div>';
 
     html += '<div class="kanban-card-title-row">';
@@ -1458,7 +1548,7 @@
 
     var visibleTasks = getVisibleTasks();
     var todayGroups = getTodayTaskGroups();
-    var todayTaskCount = todayGroups.reduce(function (sum, group) { return sum + group.taskCount; }, 0);
+    var todayTaskCount = visibleTasks.filter(isTaskRelevantToday).length;
     var todayHours = todayGroups.reduce(function (sum, group) { return sum + group.totalHours; }, 0);
     var overdueCount = visibleTasks.filter(function (task) {
       return task.dueDate && toDateOnly(task.dueDate) < getTodayDateKey() && task.status !== 'done';
@@ -1690,7 +1780,7 @@
     if (!task || !nextStatus || task.status === nextStatus) return;
 
     var auth = getAuthManager();
-    if (auth && typeof auth.canEditTask === 'function' && !auth.canEditTask(task)) return;
+    if (auth && typeof auth.canMoveTask === 'function' && !auth.canMoveTask(task)) return;
 
     if (nextStatus === 'in-progress' && task.dependencyBlocked) {
       alert('Diese Aufgabe ist noch von einer vorherigen Aufgabe abhaengig und kann erst danach gestartet werden.');
@@ -1715,9 +1805,10 @@
       if (!block) return;
       var card = block.closest('.kanban-card');
       if (!card) return;
+      var wasDraggable = card.getAttribute('draggable');
       card.setAttribute('draggable', 'false');
       function restore() {
-        card.setAttribute('draggable', 'true');
+        card.setAttribute('draggable', wasDraggable === 'true' ? 'true' : 'false');
         document.removeEventListener('pointerup', restore);
         document.removeEventListener('pointercancel', restore);
       }
@@ -1730,6 +1821,12 @@
       if (e.target.closest('.kanban-progress-block')) { e.preventDefault(); return; }
       var card = e.target.closest('.kanban-card');
       if (!card) return;
+      var task = window.DataLayer.getTaskById(card.dataset.taskId);
+      var auth = getAuthManager();
+      if (auth && typeof auth.canMoveTask === 'function' && !auth.canMoveTask(task)) {
+        e.preventDefault();
+        return;
+      }
       e.dataTransfer.setData('text/plain', card.dataset.taskId);
       e.dataTransfer.effectAllowed = 'move';
       setTimeout(function() { card.classList.add('dragging'); }, 0);
@@ -1776,6 +1873,8 @@
 
           var task = window.DataLayer.getTaskById(taskId);
           if (task && task.status !== status) {
+            var auth = getAuthManager();
+            if (auth && typeof auth.canMoveTask === 'function' && !auth.canMoveTask(task)) return;
             applyTaskStatusTransition(task, status, { at: getNowIsoString() });
             window.DataLayer.updateTask(task);
             renderAllColumns();
@@ -2046,6 +2145,8 @@
     if (!Array.isArray(task.subtasks)) task.subtasks = [];
     if (!Array.isArray(task.notes)) task.notes = [];
     if (!Array.isArray(task.attachments)) task.attachments = [];
+    task.assigneeIds = getTaskAssigneeIds(task);
+    task.assigneeId = task.assigneeIds.length ? task.assigneeIds[0] : null;
     if (!task.schedule || typeof task.schedule !== 'object') {
       task.schedule = { mode: 'none', deadline: '', fixedAt: '', rangeStart: '', rangeEnd: '' };
     }
@@ -2316,6 +2417,7 @@
         urgency: currentTask.urgency || 'normal',
         projectId: currentTask.projectId || null,
         assigneeId: currentTask.assigneeId || null,
+        assigneeIds: Array.isArray(currentTask.assigneeIds) ? currentTask.assigneeIds.slice() : (currentTask.assigneeId ? [currentTask.assigneeId] : []),
         labels: Array.isArray(currentTask.labels) ? currentTask.labels.slice() : [],
         status: 'todo',
         effortHours: row.effortHours,
@@ -2360,11 +2462,7 @@
     var employees = window.DataLayer.getEmployees() || [];
     var projects = window.DataLayer.getProjects() || [];
     var labels = window.DataLayer.getLabels() || [];
-
-    var employeeOptions = '<option value="">-- Nicht zugewiesen --</option>' + employees.map(function (emp) {
-      var selected = currentTaskDraft.assigneeId === emp.id ? ' selected' : '';
-      return '<option value="' + escapeHtml(emp.id) + '"' + selected + '>' + escapeHtml(emp.name) + '</option>';
-    }).join('');
+    var selectedAssigneeIds = getTaskAssigneeIds(currentTaskDraft);
 
     var projectOptions = '<option value="">-- Kein Projekt --</option>' + projects.map(function (project) {
       var selected = currentTaskDraft.projectId === project.id ? ' selected' : '';
@@ -2390,7 +2488,7 @@
       '  <div class="form-group"><label for="task-cockpit-effort">Aufwand (h)</label><input type="number" min="0" step="0.5" id="task-cockpit-effort" value="' + escapeHtml(String(currentTaskDraft.effortHours || 0)) + '"></div>' +
       '</div>' +
       '<div class="task-cockpit-grid">' +
-      '  <div class="form-group"><label for="task-cockpit-assignee">Zuweisung</label><select id="task-cockpit-assignee">' + employeeOptions + '</select></div>' +
+      '  <div class="form-group"><label>Zuweisung</label><div id="task-cockpit-assignee-picker" class="qtm-assignee-picker"></div><small class="task-cockpit-assignee-meta">Mehrfachauswahl: Mitarbeiter per Klick zuweisen</small></div>' +
       '  <div class="form-group"><label for="task-cockpit-project">Projekt</label><select id="task-cockpit-project">' + projectOptions + '</select></div>' +
       '</div>' +
       '<div class="form-group"><label for="task-cockpit-labels">Labels</label><select id="task-cockpit-labels" multiple style="min-height:96px;">' + labelOptions + '</select></div>' +
@@ -2451,6 +2549,53 @@
         renderScheduleFields(currentTaskDraft);
       });
     }
+
+    function renderTaskCockpitAssigneePicker() {
+      var picker = document.getElementById('task-cockpit-assignee-picker');
+      if (!picker) return;
+      if (!employees.length) {
+        picker.innerHTML = '<p class="text-muted" style="margin:0;">Keine Mitarbeiter verfuegbar.</p>';
+        return;
+      }
+      var selectedMap = Object.create(null);
+      selectedAssigneeIds.forEach(function (id) { selectedMap[normalizeComparableId(id)] = true; });
+      picker.innerHTML = employees.map(function (employee) {
+        var employeeId = normalizeComparableId(employee && employee.id);
+        if (!employeeId) return '';
+        var name = String(employee && employee.name || employeeId).trim() || employeeId;
+        var role = employee && employee.role ? ' (' + employee.role + ')' : '';
+        var isSelected = !!selectedMap[employeeId];
+        return '<button type="button" class="qtm-assignee-chip' + (isSelected ? ' is-selected' : '') + '" data-task-assignee-id="' + escapeHtml(employeeId) + '" aria-pressed="' + (isSelected ? 'true' : 'false') + '">' + escapeHtml(name + role) + '</button>';
+      }).join('') + '<button type="button" class="qtm-assignee-clear" data-task-assignee-clear="1">Zuweisung entfernen</button>';
+    }
+
+    function setTaskCockpitAssigneeIds(values) {
+      selectedAssigneeIds = normalizeAssigneeIds(values);
+      renderTaskCockpitAssigneePicker();
+    }
+
+    var taskAssigneePicker = document.getElementById('task-cockpit-assignee-picker');
+    if (taskAssigneePicker) {
+      taskAssigneePicker.addEventListener('click', function (event) {
+        var clearBtn = event.target.closest('[data-task-assignee-clear]');
+        if (clearBtn) {
+          event.preventDefault();
+          setTaskCockpitAssigneeIds([]);
+          return;
+        }
+        var chip = event.target.closest('[data-task-assignee-id]');
+        if (!chip) return;
+        event.preventDefault();
+        var employeeId = normalizeComparableId(chip.getAttribute('data-task-assignee-id'));
+        if (!employeeId) return;
+        var index = selectedAssigneeIds.indexOf(employeeId);
+        if (index === -1) selectedAssigneeIds.push(employeeId);
+        else selectedAssigneeIds.splice(index, 1);
+        renderTaskCockpitAssigneePicker();
+      });
+    }
+
+    setTaskCockpitAssigneeIds(selectedAssigneeIds);
 
     var chainWrap = document.getElementById('task-cockpit-chain-wrap');
     if (chainWrap) {
@@ -2657,7 +2802,8 @@
         currentTaskDraft.priority = document.getElementById('task-cockpit-priority').value;
         currentTaskDraft.urgency = document.getElementById('task-cockpit-urgency').value;
         currentTaskDraft.effortHours = parseFloat(document.getElementById('task-cockpit-effort').value || '0') || 0;
-        currentTaskDraft.assigneeId = document.getElementById('task-cockpit-assignee').value || null;
+        currentTaskDraft.assigneeIds = normalizeAssigneeIds(selectedAssigneeIds);
+        currentTaskDraft.assigneeId = currentTaskDraft.assigneeIds.length ? currentTaskDraft.assigneeIds[0] : null;
         currentTaskDraft.projectId = document.getElementById('task-cockpit-project').value || null;
 
         var labelsSelect = document.getElementById('task-cockpit-labels');

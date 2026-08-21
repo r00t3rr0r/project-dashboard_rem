@@ -8,10 +8,21 @@
   var SESSION_KEY = 'pd_auth_session_v1';
   var SESSION_PERSIST_KEY = 'pd_auth_session_persist_v1';
   var TOOLBAR_ID = 'auth-toolbar-group';
+  var WORKPLACE_TOOLBAR_ID = 'workplace-toolbar-group';
+  var WORKPLACE_OPTIONS = [
+    { value: '', label: 'Arbeitsort waehlen' },
+    { value: 'B\u00fcro', label: 'B\u00fcro' },
+    { value: 'Homeoffice', label: 'Homeoffice' },
+    { value: 'Hybrid', label: 'Hybrid' },
+    { value: 'Au\u00dfendienst', label: 'Au\u00dfendienst' },
+    { value: 'Kundenstandort', label: 'Kundenstandort' },
+    { value: 'Au\u00dfer Landes', label: 'Au\u00dfer Landes' }
+  ];
   var ALL_PAGES = [
     'dashboard',
     'projects',
     'meeting',
+    'tasks',
     'kanban',
     'calendar',
     'analytics',
@@ -33,6 +44,7 @@
     dashboard: 'Dashboard',
     projects: 'Projekte',
     meeting: 'Meeting Protokoll',
+    tasks: 'Aufgaben',
     kanban: 'Kanban Board',
     calendar: 'Team-Kalender',
     analytics: 'Analytics',
@@ -51,7 +63,7 @@
     sprint: 'Sprints'
   };
   var GUEST_PAGES = ['dashboard', 'calendar', 'kanban'];
-  var EMPLOYEE_DEFAULT_PAGES = ['dashboard', 'projects', 'kanban', 'calendar', 'quicktask', 'employees'];
+  var EMPLOYEE_DEFAULT_PAGES = ['dashboard', 'projects', 'tasks', 'kanban', 'calendar', 'quicktask', 'employees'];
   var PASSWORD_SCHEME = 'pbkdf2';
   var PASSWORD_PBKDF2_ITERATIONS = 180000;
   var PASSWORD_PBKDF2_BYTES = 32;
@@ -65,7 +77,11 @@
   var authRefreshTimer = null;
   var initStarted = false;
   var authStateBootstrapped = false;
+  var authDataLoaded = false;
   var authBootstrapPromise = null;
+  var dailyStatusPromptTimer = null;
+  var dailyStatusDialogOpen = false;
+  var dailyStatusConfirmedKey = '';
 
   function stableHashHex(input) {
     var text = String(input || '');
@@ -277,7 +293,10 @@
   }
 
   function isSetupMode() {
-    if (!authStateBootstrapped) return false;
+    if (!authStateBootstrapped || !authDataLoaded) return false;
+    if (window.DataLayer && typeof window.DataLayer.hasData === 'function' && window.DataLayer.hasData()) {
+      return false;
+    }
 
     var employees = getEmployees();
     if (employees.length === 0) return true;
@@ -304,14 +323,12 @@
       });
     }
 
-    authBootstrapPromise = readyPromise.then(function () {
-      return syncAuthStateFromServer().catch(function () {
-        return false;
-      });
-    }).then(function (result) {
+    authBootstrapPromise = readyPromise.then(function (result) {
+      authDataLoaded = result !== false;
       authStateBootstrapped = true;
       return result;
     }).catch(function () {
+      authDataLoaded = false;
       authStateBootstrapped = true;
       return false;
     });
@@ -439,6 +456,33 @@
       }
     }
 
+    if (Object.prototype.hasOwnProperty.call(incoming, 'workplace')) {
+      var workplace = String(incoming.workplace || '').trim();
+      var allowedWorkplaces = WORKPLACE_OPTIONS.map(function (option) { return option.value; });
+      if (allowedWorkplaces.indexOf(workplace) !== -1) {
+        next.workplace = workplace;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(incoming, 'dailyWorkStatus')) {
+      var dailyStatus = incoming.dailyWorkStatus && typeof incoming.dailyWorkStatus === 'object'
+        ? incoming.dailyWorkStatus
+        : {};
+      var dailyWorkplace = String(dailyStatus.workplace || '').trim();
+      var allowedDailyWorkplaces = WORKPLACE_OPTIONS.map(function (option) { return option.value; });
+      var isSick = !!dailyStatus.sick;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(dailyStatus.date || '')) &&
+          (isSick || allowedDailyWorkplaces.indexOf(dailyWorkplace) !== -1)) {
+        next.dailyWorkStatus = {
+          date: String(dailyStatus.date),
+          workplace: isSick ? '' : dailyWorkplace,
+          note: String(dailyStatus.note || '').trim().slice(0, 500),
+          sick: isSick,
+          updatedAt: toIsoStringSafe(dailyStatus.updatedAt) || new Date().toISOString()
+        };
+      }
+    }
+
     if (Object.prototype.hasOwnProperty.call(incoming, 'capacityPoints')) {
       var capacity = Number(incoming.capacityPoints);
       if (isFinite(capacity)) {
@@ -558,6 +602,14 @@
       return canViewProject(getProjectById(task.projectId));
     }
     return String(task.createdByEmployeeId || '') === String(user.id);
+  }
+
+  function canMoveTask(task) {
+    var mode = getMode();
+    if (mode === 'setup' || mode === 'admin') return true;
+    if (mode !== 'employee' || !task) return false;
+    var user = getCurrentUser();
+    return !!(user && String(task.assigneeId || '') === String(user.id || ''));
   }
 
   function prepareTaskPayload(task) {
@@ -968,7 +1020,26 @@
     var overlay = document.getElementById('modal-overlay');
     var content = document.getElementById('modal-content');
     if (overlay) overlay.classList.add('hidden');
-    if (content) content.innerHTML = '';
+    if (content) {
+      if (content.getAttribute('data-modal-owner') === 'daily-status') {
+        dailyStatusDialogOpen = false;
+      }
+      content.innerHTML = '';
+      content.className = 'modal';
+      content.removeAttribute('data-modal-owner');
+      content.removeAttribute('data-prevent-overlay-close');
+      content.removeAttribute('data-prevent-escape-close');
+    }
+  }
+
+  function showDailyStatusAfterLogin(user) {
+    if (dailyStatusPromptTimer) {
+      window.clearTimeout(dailyStatusPromptTimer);
+      dailyStatusPromptTimer = null;
+    }
+    closeModal();
+    dailyStatusDialogOpen = false;
+    openDailyStatusDialog(getCurrentUser() || user);
   }
 
   function openLoginModal(skipSync) {
@@ -1018,11 +1089,145 @@
             window.alert(result.message || 'Login fehlgeschlagen.');
             return;
           }
-          closeModal();
+          showDailyStatusAfterLogin(result.user);
         });
       });
     }
     if (passwordInput && passwordInput.focus) passwordInput.focus();
+  }
+
+  function getLocalDateKey() {
+    var now = new Date();
+    return [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0')
+    ].join('-');
+  }
+
+  function hasDailyWorkStatus(user) {
+    var confirmationKey = user && user.id ? String(user.id) + ':' + getLocalDateKey() : '';
+    if (confirmationKey && dailyStatusConfirmedKey === confirmationKey) return true;
+    var status = user && user.dailyWorkStatus;
+    if (!status || String(status.date || '') !== getLocalDateKey()) return false;
+    return !!status.sick || !!String(status.workplace || '').trim();
+  }
+
+  function closeDailyStatusDialog() {
+    var overlay = document.getElementById('modal-overlay');
+    var content = document.getElementById('modal-content');
+    if (overlay) overlay.classList.add('hidden');
+    if (content) {
+      content.innerHTML = '';
+      content.className = 'modal';
+      content.removeAttribute('data-modal-owner');
+      content.removeAttribute('data-prevent-overlay-close');
+      content.removeAttribute('data-prevent-escape-close');
+    }
+    dailyStatusDialogOpen = false;
+  }
+
+  function openDailyStatusDialog(user) {
+    var overlay = document.getElementById('modal-overlay');
+    var content = document.getElementById('modal-content');
+    if (!overlay || !content || !user || dailyStatusDialogOpen || hasDailyWorkStatus(user)) return;
+
+    dailyStatusDialogOpen = true;
+    content.className = 'modal daily-status-modal';
+    content.setAttribute('data-modal-owner', 'daily-status');
+    content.setAttribute('data-prevent-overlay-close', 'true');
+    content.setAttribute('data-prevent-escape-close', 'true');
+    content.innerHTML = ''
+      + '<div class="daily-status-heading">'
+      + '  <span class="material-symbols-rounded" aria-hidden="true">today</span>'
+      + '  <div><p class="daily-status-eyebrow">Tagesstart</p><h2>Wie arbeitest du heute?</h2></div>'
+      + '</div>'
+      + '<p class="daily-status-intro" id="daily-status-greeting"></p>'
+      + '<form id="daily-status-form" class="daily-status-form" novalidate>'
+      + '  <label class="daily-status-sick-option"><input type="checkbox" id="daily-status-sick"><span class="material-symbols-rounded" aria-hidden="true">medical_services</span><span><strong>Heute krankmelden</strong><small>Der Arbeitsort ist dann nicht erforderlich.</small></span></label>'
+      + '  <div class="form-group" id="daily-status-workplace-group"><label for="daily-status-workplace">Arbeitsort <span aria-hidden="true">*</span></label><select id="daily-status-workplace" required>'
+      + WORKPLACE_OPTIONS.map(function (option) {
+          return '<option value="' + option.value + '">' + option.label + '</option>';
+        }).join('')
+      + '  </select><small class="daily-status-error" id="daily-status-error" role="alert"></small></div>'
+      + '  <div class="form-group"><label for="daily-status-note">Notiz zum Arbeitstag <span class="text-muted">(optional)</span></label><textarea id="daily-status-note" rows="3" maxlength="500" placeholder="z. B. vormittags Kundentermin, ab 14 Uhr erreichbar"></textarea></div>'
+      + '  <div class="daily-status-actions"><span><span class="material-symbols-rounded" aria-hidden="true">lock</span> Einmal täglich erforderlich</span><button type="submit" class="btn btn-primary" id="daily-status-save">Tagesstatus speichern</button></div>'
+      + '</form>';
+
+    var greeting = document.getElementById('daily-status-greeting');
+    var form = document.getElementById('daily-status-form');
+    var sickInput = document.getElementById('daily-status-sick');
+    var workplaceInput = document.getElementById('daily-status-workplace');
+    var workplaceGroup = document.getElementById('daily-status-workplace-group');
+    var noteInput = document.getElementById('daily-status-note');
+    var errorEl = document.getElementById('daily-status-error');
+    if (greeting) greeting.textContent = 'Guten Tag, ' + String(user.name || 'Mitarbeiter') + '. Diese Angabe ist für dein Team sichtbar.';
+    if (workplaceInput) workplaceInput.value = String(user.workplace || '');
+
+    function syncSickState() {
+      var sick = !!(sickInput && sickInput.checked);
+      if (workplaceInput) workplaceInput.disabled = sick;
+      if (workplaceGroup) workplaceGroup.classList.toggle('is-disabled', sick);
+      if (errorEl) errorEl.textContent = '';
+    }
+
+    if (sickInput) sickInput.addEventListener('change', syncSickState);
+    if (form) form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var sick = !!(sickInput && sickInput.checked);
+      var workplace = String(workplaceInput && workplaceInput.value || '').trim();
+      if (!sick && !workplace) {
+        if (errorEl) errorEl.textContent = 'Bitte wähle deinen heutigen Arbeitsort.';
+        if (workplaceInput) workplaceInput.focus();
+        return;
+      }
+
+      var currentUser = getCurrentUser();
+      if (!currentUser) return;
+      var next = clone(currentUser);
+      next.workplace = sick ? String(currentUser.workplace || '') : workplace;
+      next.dailyWorkStatus = {
+        date: getLocalDateKey(),
+        workplace: sick ? '' : workplace,
+        note: String(noteInput && noteInput.value || '').trim(),
+        sick: sick,
+        updatedAt: new Date().toISOString()
+      };
+      next.updatedAt = new Date().toISOString();
+
+      var saveButton = document.getElementById('daily-status-save');
+      if (saveButton) saveButton.disabled = true;
+      var confirmationKey = String(currentUser.id || '') + ':' + getLocalDateKey();
+      dailyStatusConfirmedKey = confirmationKey;
+      if (dailyStatusPromptTimer) {
+        window.clearTimeout(dailyStatusPromptTimer);
+        dailyStatusPromptTimer = null;
+      }
+      var saved = window.DataLayer && typeof window.DataLayer.updateEmployee === 'function'
+        ? window.DataLayer.updateEmployee(next)
+        : false;
+      if (saved === false) {
+        if (dailyStatusConfirmedKey === confirmationKey) dailyStatusConfirmedKey = '';
+        if (saveButton) saveButton.disabled = false;
+        if (errorEl) errorEl.textContent = 'Der Tagesstatus konnte nicht gespeichert werden. Bitte erneut versuchen.';
+        return;
+      }
+      closeDailyStatusDialog();
+    });
+
+    overlay.classList.remove('hidden');
+    syncSickState();
+    if (workplaceInput && workplaceInput.focus) workplaceInput.focus();
+  }
+
+  function scheduleDailyStatusPrompt() {
+    if (dailyStatusPromptTimer || dailyStatusDialogOpen || !authStateBootstrapped) return;
+    var user = getCurrentUser();
+    if (!user || hasDailyWorkStatus(user)) return;
+    dailyStatusPromptTimer = window.setTimeout(function () {
+      dailyStatusPromptTimer = null;
+      openDailyStatusDialog(getCurrentUser());
+    }, 0);
   }
 
   function ensureToolbar() {
@@ -1039,6 +1244,23 @@
         + '<button id="auth-login-btn" class="btn btn-secondary" type="button">Login</button>'
         + '<button id="auth-logout-btn" class="btn btn-secondary" type="button">Logout</button>';
       actions.appendChild(group);
+    }
+
+    var workplaceGroup = document.getElementById(WORKPLACE_TOOLBAR_ID);
+    if (!workplaceGroup) {
+      workplaceGroup = document.createElement('label');
+      workplaceGroup.id = WORKPLACE_TOOLBAR_ID;
+      workplaceGroup.className = 'toolbar-group toolbar-group-workplace';
+      workplaceGroup.hidden = true;
+      workplaceGroup.innerHTML = ''
+        + '<span class="material-symbols-rounded toolbar-workplace-icon" aria-hidden="true">location_on</span>'
+        + '<span class="toolbar-workplace-label">Arbeitsort</span>'
+        + '<select id="workplace-select" class="toolbar-workplace-select" aria-label="Eigenen Arbeitsort festlegen">'
+        + WORKPLACE_OPTIONS.map(function (option) {
+          return '<option value="' + option.value + '">' + option.label + '</option>';
+        }).join('')
+        + '</select>';
+      actions.insertBefore(workplaceGroup, group);
     }
 
     var loginBtn = document.getElementById('auth-login-btn');
@@ -1060,6 +1282,32 @@
       logoutBtn.addEventListener('click', logout);
     }
 
+    var workplaceSelect = document.getElementById('workplace-select');
+    if (workplaceSelect && !workplaceSelect.dataset.bound) {
+      workplaceSelect.dataset.bound = 'true';
+      workplaceSelect.addEventListener('change', function () {
+        var user = getCurrentUser();
+        if (!user || !window.DataLayer || typeof window.DataLayer.updateEmployee !== 'function') return;
+
+        var previousValue = String(user.workplace || '');
+        var next = clone(user);
+        next.workplace = workplaceSelect.value;
+        if (next.dailyWorkStatus && String(next.dailyWorkStatus.date || '') === getLocalDateKey() && !next.dailyWorkStatus.sick) {
+          next.dailyWorkStatus.workplace = workplaceSelect.value;
+          next.dailyWorkStatus.updatedAt = new Date().toISOString();
+        }
+        next.updatedAt = new Date().toISOString();
+        workplaceSelect.disabled = true;
+
+        var saved = window.DataLayer.updateEmployee(next);
+        workplaceSelect.disabled = false;
+        if (saved === false) {
+          workplaceSelect.value = previousValue;
+          window.alert('Arbeitsort konnte nicht gespeichert werden.');
+        }
+      });
+    }
+
     return group;
   }
 
@@ -1067,6 +1315,8 @@
     var statusEl = document.getElementById('auth-status');
     var loginBtn = document.getElementById('auth-login-btn');
     var logoutBtn = document.getElementById('auth-logout-btn');
+    var workplaceGroup = document.getElementById(WORKPLACE_TOOLBAR_ID);
+    var workplaceSelect = document.getElementById('workplace-select');
     if (!statusEl || !loginBtn || !logoutBtn) return;
 
     var mode = getMode();
@@ -1077,6 +1327,7 @@
       loginBtn.textContent = 'Bitte warten';
       loginBtn.hidden = true;
       logoutBtn.hidden = true;
+      if (workplaceGroup) workplaceGroup.hidden = true;
       return;
     }
 
@@ -1085,6 +1336,7 @@
       loginBtn.textContent = 'Mitarbeiterbereich';
       loginBtn.hidden = false;
       logoutBtn.hidden = true;
+      if (workplaceGroup) workplaceGroup.hidden = true;
       return;
     }
 
@@ -1093,12 +1345,15 @@
       loginBtn.textContent = 'Login';
       loginBtn.hidden = false;
       logoutBtn.hidden = true;
+      if (workplaceGroup) workplaceGroup.hidden = true;
       return;
     }
 
     statusEl.textContent = (isAdmin(user) ? 'Admin' : 'Mitarbeiter') + ': ' + (user && user.name ? user.name : 'Angemeldet');
     loginBtn.hidden = true;
     logoutBtn.hidden = false;
+    if (workplaceGroup) workplaceGroup.hidden = false;
+    if (workplaceSelect) workplaceSelect.value = String(user && user.workplace || '');
   }
 
   function updateSidebarVisibility() {
@@ -1199,6 +1454,8 @@
     if (activePage && !canAccessPage(activePage.id) && window.AppShell && typeof window.AppShell.navigateTo === 'function') {
       window.AppShell.navigateTo(getFallbackPage());
     }
+
+    scheduleDailyStatusPrompt();
   }
 
   function getSessionState() {
@@ -1267,6 +1524,7 @@
     getVisibleProjects: getVisibleProjects,
     canCreateTask: canCreateTask,
     canEditTask: canEditTask,
+    canMoveTask: canMoveTask,
     canCreateCalendarEvent: canCreateCalendarEvent,
     canEditCalendarEvent: canEditCalendarEvent,
     getAssignableEmployees: getAssignableEmployees,

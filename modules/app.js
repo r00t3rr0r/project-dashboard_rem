@@ -135,6 +135,8 @@ function navigateTo(page){
   var sidebar=document.querySelector('.sidebar');
   if(sidebar&&window.innerWidth<=1024){
     sidebar.classList.remove('open');
+    var mobileMenuBtn=document.getElementById('mobile-menu-btn');
+    if(mobileMenuBtn)mobileMenuBtn.setAttribute('aria-expanded','false');
   }
 
   if(typeof refreshAllModules==='function'){
@@ -189,9 +191,9 @@ function setupThemeToggle(){
   
   function readTheme(){
     if(window.DataLayer&&window.DataLayer.getStoredValue){
-      return window.DataLayer.getStoredValue('pd_theme', 'dark');
+      return window.DataLayer.getStoredValue('pd_theme', 'light');
     }
-    return window.localStorage ? window.localStorage.getItem('pd_theme') : 'dark';
+    return window.localStorage ? window.localStorage.getItem('pd_theme') : 'light';
   }
 
   function writeTheme(theme){
@@ -205,7 +207,13 @@ function setupThemeToggle(){
   }
   
   var saved=readTheme();
-  if(saved==='light')document.body.classList.add('light-mode');
+  if(saved !== 'light') {
+    writeTheme('light');
+    saved = 'light';
+  }
+  if(saved === 'light') {
+    document.body.classList.add('light-mode');
+  }
   
   btn.addEventListener('click',function(){
     document.body.classList.toggle('light-mode');
@@ -397,6 +405,7 @@ function refreshAllModules(options){
     if(window.DocumentationModule&&window.DocumentationModule.render)window.DocumentationModule.render();
     if(window.SprintModule&&window.SprintModule.render)window.SprintModule.render();
     if(window.QuickTaskModule&&window.QuickTaskModule.renderRecentTasks)window.QuickTaskModule.renderRecentTasks();
+    if(window.TaskHistoryModule&&window.TaskHistoryModule.render)window.TaskHistoryModule.render();
     if(window.TimelineModule&&window.TimelineModule.render)window.TimelineModule.render();
     if(window.MeetingModule&&window.MeetingModule.render)window.MeetingModule.render();
     if(window.AuthManager&&window.AuthManager.refreshUi)window.AuthManager.refreshUi();
@@ -448,6 +457,8 @@ function refreshActivePageModule(options){
       if(window.SprintModule&&window.SprintModule.render)window.SprintModule.render();
     }else if(page==='quicktask'){
       if(window.QuickTaskModule&&window.QuickTaskModule.renderRecentTasks)window.QuickTaskModule.renderRecentTasks();
+    }else if(page==='tasks'){
+      if(window.TaskHistoryModule&&window.TaskHistoryModule.render)window.TaskHistoryModule.render();
     }else if(page==='timeline'){
       if(window.TimelineModule&&window.TimelineModule.render)window.TimelineModule.render();
     }else if(page==='meeting'){
@@ -567,12 +578,6 @@ function init(){
       console.warn('[App Init] DataLayer hydration failed:', err);
       refreshAllModules();
     });
-
-    window.setTimeout(function(){
-      refreshAllModules();
-      updateDatabaseStatusLabel();
-      updateStorageStatusLabel();
-    }, 300);
 
     // QuickTask page init
     var qtSection=document.getElementById('quicktask');

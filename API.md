@@ -169,28 +169,42 @@ window.DataLayer.on('dataChanged', function() {
 
 ---
 
-## Lokale KI API (Storage Server)
+## Storage HTTP API
 
-Diese Endpunkte werden vom Python-Server in `storage_server.py` bereitgestellt.
-Standard-Adresse: `http://127.0.0.1:8766` (konfigurierbar via `PROJECT_DASHBOARD_STORAGE_PORT`).
+Geschuetzte Storage-Endpunkte erwarten den konfigurierten Admin-PIN. Der Browser verwendet den Vollsnapshot beim Start und nach einer Wiederverbindung; laufende SSE-Aenderungen werden gezielt pro Storage-Key geladen.
 
-### `GET /api/ai/health`
+| Endpunkt | Beschreibung |
+|----------|--------------|
+| `GET /api/kv` | Vollstaendiger KV-Snapshot mit ETag-/Gzip-Unterstuetzung |
+| `GET /api/kv?key=pd_tasks` | Einzelwert als `{ key, exists, value, updatedAt }` |
+| `POST /api/kv` | Wert setzen/loeschen oder Storage leeren |
+| `GET /api/kv/stream` | SSE-Ereignisse mit `action`, `key`, `seq` und `updatedAt` |
 
-Prueft die Erreichbarkeit der lokalen Ollama-Instanz und liefert verfügbare Modelle.
+Schnelle Ereignisfolgen werden clientseitig je Key zusammengefuehrt und geordnet abgearbeitet. `clear` und unbekannte Ereignisse fallen auf einen Vollsnapshot zurueck.
 
-### `POST /api/ai/project-knowledge`
+---
 
-Erzeugt aus Projektdaten eine lokale Wissensdatei fuer KI-gestuetzte Folgeaufgaben.
+## Lokale KI API (Besucher-Rechner)
+
+Die frueheren `/api/ai/*`-Endpunkte des Python-Servers sind deaktiviert und antworten mit HTTP 410. KI-Anfragen laufen im Browser direkt an `http://127.0.0.1:11434` beziehungsweise `http://localhost:11434` auf dem Rechner des Besuchers.
+
+### `GET http://127.0.0.1:11434/api/tags`
+
+Prueft aus dem Browser die Erreichbarkeit der lokalen Ollama-Instanz und liefert verfuegbare Modelle.
+
+### `POST http://127.0.0.1:11434/api/generate`
+
+Fuehrt alle KI-Generierungen direkt in der lokalen Ollama-Instanz des Besuchers aus. Der zentrale Storage-Server erhaelt keine KI-Daten.
 
 Request Body (Beispiel):
 
 ```json
 {
-  "projectId": "abc123",
-  "projectTitle": "Kundenportal",
   "model": "llama3.1:8b",
-  "github": { "url": "https://github.com/org/repo", "owner": "org", "repo": "repo" },
-  "snapshot": { "project": {}, "tasks": [], "releases": [], "events": [] }
+  "prompt": "Erstelle einen Projektplan ...",
+  "stream": false,
+  "format": "json",
+  "options": { "temperature": 0.3, "num_predict": 1800 }
 }
 ```
 
@@ -198,12 +212,9 @@ Response (Beispiel):
 
 ```json
 {
-  "ok": true,
-  "projectId": "abc123",
   "model": "llama3.1:8b",
-  "generatedAt": "2026-07-30T12:00:00.000Z",
-  "filePath": "/data/project-knowledge/abc123-kundenportal-ki-wissen.md",
-  "bytes": 18273
+  "response": "...",
+  "done": true
 }
 ```
 
@@ -219,8 +230,7 @@ Response (Beispiel):
   "db": "/abs/path/data/projekt-dashboard.sqlite",
   "knowledgeDir": "/abs/path/data/project-knowledge",
   "bootstrap": {
-    "dbRestore": { "restored": false, "source": "db", "rows": 13 },
-    "ollama": { "status": "ok", "autostart": true, "detail": "already-running" }
+    "dbRestore": { "restored": false, "source": "db", "rows": 13 }
   }
 }
 ```

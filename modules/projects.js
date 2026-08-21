@@ -685,7 +685,20 @@ function applyProjectStart(projectId,milestones){
       sequenceIndex:Number(item.sequenceIndex||0)||0,
       dependsOnPrevious:!!item.dependsOnPrevious,
       dependencyTaskIds:dependencyTaskIds,
-      subtasks:Array.isArray(item.subtasks)?item.subtasks.slice():[],
+      subtasks:(Array.isArray(item.subtasks)?item.subtasks:[]).map(function (subtask) {
+        if (typeof subtask === 'string') {
+          return { id: (window.DataLayer && typeof window.DataLayer.generateId === 'function') ? window.DataLayer.generateId() : ('subtask_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)), title: subtask.trim(), completed: false, createdAt: new Date().toISOString() };
+        }
+        if (subtask && typeof subtask === 'object') {
+          return {
+            id: subtask.id || ((window.DataLayer && typeof window.DataLayer.generateId === 'function') ? window.DataLayer.generateId() : ('subtask_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8))),
+            title: String(subtask.title || subtask.text || '').trim(),
+            completed: !!subtask.completed,
+            createdAt: subtask.createdAt || new Date().toISOString()
+          };
+        }
+        return null;
+      }).filter(function (subtask) { return !!(subtask && subtask.title); }),
       notes:Array.isArray(item.notes)?item.notes.slice():[]
     };
     var created=window.DataLayer.createTask(payload);
@@ -901,6 +914,10 @@ function isFallbackableStatus(status){
 }
 
 function fetchJsonWithFallback(path,options){
+  if(/^\/api\/ai\//.test(path)){
+    if(!window.LocalOllama)return Promise.reject(new Error('Lokaler Ollama-Client wurde nicht geladen.'));
+    return window.LocalOllama.request(path,'GET',{});
+  }
   var bases=getAiBackendCandidates();
   if(bases.length===0)bases.push(AI_BACKEND_URL);
   var requestOptions=options||{};
@@ -933,6 +950,10 @@ function fetchJsonWithFallback(path,options){
 }
 
 function postJsonWithFallback(path,payload){
+  if(/^\/api\/ai\//.test(path)){
+    if(!window.LocalOllama)return Promise.reject(new Error('Lokaler Ollama-Client wurde nicht geladen.'));
+    return window.LocalOllama.generate(path,payload||{});
+  }
   var bases=getAiBackendCandidates();
   if(bases.length===0)bases.push(AI_BACKEND_URL);
 
@@ -1478,9 +1499,11 @@ function getProjectHeadTaskMeta(task, kind){
 }
 
 function renderProjectHeadTaskRow(label, task, kind, emptyText){
-  var title=task&&task.title?task.title:emptyText;
+  var hasTaskTitle=!!(task&&task.title);
+  var title=hasTaskTitle?task.title:emptyText;
   var meta=task?getProjectHeadTaskMeta(task,kind):'';
-  return '<li class="project-head-task-row">'
+  var stateClass=kind==='active'&&hasTaskTitle?' is-active-task':'';
+  return '<li class="project-head-task-row'+stateClass+'">'
     +'<span class="project-head-task-label">'+escapeHtml(label)+'</span>'
     +'<span class="project-head-task-title">'+escapeHtml(title)+'</span>'
     +(meta?'<span class="project-head-task-meta">'+escapeHtml(meta)+'</span>':'')
