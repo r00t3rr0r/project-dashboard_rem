@@ -143,6 +143,18 @@
     }
   }
 
+  function getCurrentLoggedInEmployeeId() {
+    var authManager = getAuthManager();
+    if (!authManager || typeof authManager.getCurrentUser !== 'function') return '';
+    var currentUser = authManager.getCurrentUser();
+    if (!currentUser || !currentUser.id) return '';
+    return normalizeComparableId(currentUser.id);
+  }
+
+  function resolveInitialAssigneeFilter() {
+    return loadPersistedAssigneeFilter() || getCurrentLoggedInEmployeeId();
+  }
+
   function persistAssigneeFilter() {
     try {
       if (!window.localStorage) return;
@@ -1067,6 +1079,44 @@
     });
   }
 
+  function getTaskPriorityRank(priority) {
+    if (priority === 'blocker') return 0;
+    if (priority === 'high') return 1;
+    if (priority === 'medium') return 2;
+    if (priority === 'low') return 3;
+    return 4;
+  }
+
+  function getOverviewTaskPool(limit) {
+    var maxItems = Math.max(1, Number(limit) || 8);
+    var currentUserId = getCurrentLoggedInEmployeeId();
+
+    return getVisibleTasks().filter(function (task) {
+      return task && task.status === 'backlog';
+    }).sort(function (left, right) {
+      function getBucket(task) {
+        var assigneeIds = getTaskAssigneeIds(task);
+        var assignedToCurrent = currentUserId && assigneeIds.indexOf(currentUserId) !== -1;
+        var createdByCurrent = currentUserId && normalizeComparableId(task.createdByEmployeeId) === currentUserId;
+        if (assignedToCurrent) return 0;
+        if (createdByCurrent) return 1;
+        if (!assigneeIds.length) return 2;
+        return 3;
+      }
+
+      var bucketDelta = getBucket(left) - getBucket(right);
+      if (bucketDelta !== 0) return bucketDelta;
+
+      var overdueDelta = (isTaskOverdue(right) ? 1 : 0) - (isTaskOverdue(left) ? 1 : 0);
+      if (overdueDelta !== 0) return overdueDelta;
+
+      var prioDelta = getTaskPriorityRank(left.priority) - getTaskPriorityRank(right.priority);
+      if (prioDelta !== 0) return prioDelta;
+
+      return String(right.createdAt || '').localeCompare(String(left.createdAt || ''));
+    }).slice(0, maxItems);
+  }
+
   function getProjectSequenceOrder(tasks) {
     var grouped = Object.create(null);
     (tasks || []).forEach(function (task) {
@@ -1547,6 +1597,9 @@
     if (!container) return;
 
     var visibleTasks = getVisibleTasks();
+    var intakeTasks = getOverviewTaskPool(8);
+    var auth = getAuthManager();
+    var currentUserId = getCurrentLoggedInEmployeeId();
     var todayGroups = getTodayTaskGroups();
     var todayTaskCount = visibleTasks.filter(isTaskRelevantToday).length;
     var todayHours = todayGroups.reduce(function (sum, group) { return sum + group.totalHours; }, 0);
@@ -1592,6 +1645,53 @@
       });
       html += '</div>';
     }
+
+    html += '<section class="kanban-intake-panel">';
+    html += '<div class="kanban-intake-head">';
+    html += '<div><h3>Aufgaben aufnehmen</h3><p>Backlog-Aufgaben fuer dich oder aus dem Team direkt in To Do uebernehmen.</p></div>';
+    html += '<span class="kanban-intake-count">' + intakeTasks.length + ' im Pool</span>';
+    html += '</div>';
+
+    if (!intakeTasks.length) {
+      html += '<div class="kanban-day-empty">Keine passenden Backlog-Aufgaben in der aktuellen Filterung.</div>';
+    } else {
+      html += '<div class="kanban-intake-grid">';
+      intakeTasks.forEach(function (task) {
+        var assigneeIds = getTaskAssigneeIds(task);
+        var isAssignedToCurrent = !!currentUserId && assigneeIds.indexOf(currentUserId) !== -1;
+        var createdByCurrent = !!currentUserId && normalizeComparableId(task.createdByEmployeeId) === currentUserId;
+        var canEditTask = !auth || typeof auth.canEditTask !== 'function' || auth.canEditTask(task);
+        var canMoveTask = !auth || typeof auth.canMoveTask !== 'function' || auth.canMoveTask(task);
+        var canAssignToSelf = !!currentUserId && canEditTask && !isAssignedToCurrent;
+        var canIntake = canMoveTask || canAssignToSelf;
+        var ownershipLabel = isAssignedToCurrent
+          ? 'Dir zugewiesen'
+          : (createdByCurrent ? 'Von dir erstellt' : (assigneeIds.length ? 'Team-Aufgabe' : 'Frei verfuegbar'));
+        var dueLabel = task.dueDate ? ('Faellig ' + formatDateShort(task.dueDate)) : getScheduleLabel(task);
+        var overdueClass = isTaskOverdue(task) ? ' is-overdue' : '';
+
+        html += '<article class="kanban-intake-card">';
+        html += '<div class="kanban-intake-meta">';
+        html += '<span class="kanban-intake-project">' + escapeHtml(getProjectTitle(task.projectId)) + '</span>';
+        html += '<span class="kanban-intake-owner">' + escapeHtml(ownershipLabel) + '</span>';
+        html += '</div>';
+        html += '<h4>' + escapeHtml(task.title || 'Ohne Titel') + '</h4>';
+        html += '<p>' + escapeHtml(getAssigneeName(task)) + ' · ' + escapeHtml(dueLabel) + '</p>';
+        html += '<div class="kanban-intake-signals">';
+        html += '<span class="kanban-pill">' + escapeHtml(getPriorityLabel(task.priority)) + '</span>';
+        html += '<span class="kanban-pill' + overdueClass + '">' + escapeHtml(getStatusLabel(task.status)) + '</span>';
+        html += '</div>';
+        html += '<div class="kanban-intake-actions">';
+        html += '<button type="button" class="btn btn-primary" data-overview-task-intake="' + escapeHtml(task.id) + '" ' + (canIntake ? '' : 'disabled') + '>In To Do</button>';
+        html += '<button type="button" class="btn btn-secondary" data-overview-task-assign="' + escapeHtml(task.id) + '" ' + (canAssignToSelf ? '' : 'disabled') + '>Mir zuweisen</button>';
+        html += '<button type="button" class="btn btn-secondary" data-task-open="' + escapeHtml(task.id) + '" ' + (canEditTask ? '' : 'disabled') + '>Bearbeiten</button>';
+        html += '</div>';
+        html += '</article>';
+      });
+      html += '</div>';
+    }
+
+    html += '</section>';
 
     container.innerHTML = html;
   }
@@ -1795,6 +1895,44 @@
       applyTaskStatusTransition(task, nextStatus, { at: getNowIsoString() });
       window.DataLayer.updateTask(task);
     });
+  }
+
+  function assignTaskToCurrentUser(taskId) {
+    var currentUserId = getCurrentLoggedInEmployeeId();
+    if (!currentUserId) {
+      alert('Bitte zuerst als Mitarbeiter anmelden, um Aufgaben zu uebernehmen.');
+      return false;
+    }
+
+    var task = window.DataLayer.getTaskById(taskId);
+    if (!task) return false;
+
+    var auth = getAuthManager();
+    if (auth && typeof auth.canEditTask === 'function' && !auth.canEditTask(task)) {
+      alert('Diese Aufgabe kann nicht uebernommen werden.');
+      return false;
+    }
+
+    var assigneeIds = getTaskAssigneeIds(task);
+    if (assigneeIds.length === 1 && assigneeIds[0] === currentUserId && normalizeComparableId(task.assigneeId) === currentUserId) {
+      return true;
+    }
+
+    task.assigneeId = currentUserId;
+    task.assigneeIds = [currentUserId];
+    window.DataLayer.updateTask(task);
+    return true;
+  }
+
+  function intakeTaskFromOverview(taskId) {
+    var task = window.DataLayer.getTaskById(taskId);
+    if (!task || task.status !== 'backlog') return;
+
+    var auth = getAuthManager();
+    var canMove = !auth || typeof auth.canMoveTask !== 'function' || auth.canMoveTask(task);
+    if (!canMove && !assignTaskToCurrentUser(taskId)) return;
+
+    setTaskStatus(taskId, 'todo');
   }
 
   // --- Drag & Drop Setup ---
@@ -2256,12 +2394,12 @@
 
     var rows = ids.map(function (id) {
       var source = id === taskId ? taskDraft : graph.byId[id];
-      if (!source) source = { id: id, title: '', effortHours: 0, status: 'todo' };
+      if (!source) source = { id: id, title: '', effortHours: 0, status: 'backlog' };
       return {
         taskId: id,
         title: source.title || '',
         effortHours: Number(source.effortHours || 0) || 0,
-        status: source.status || 'todo',
+        status: source.status || 'backlog',
         isCurrent: id === taskId,
         isNew: false
       };
@@ -2314,7 +2452,7 @@
     } else {
       html += '<div class="task-cockpit-chain-rows">';
       rows.forEach(function (row, index) {
-        var statusLabel = getStatusLabel(row.status || 'todo');
+        var statusLabel = getStatusLabel(row.status || 'backlog');
         var currentMarker = row.isCurrent ? ' <span class="task-cockpit-chain-current">(aktuelle Aufgabe)</span>' : '';
         html += '<div class="task-cockpit-chain-row" data-chain-row="' + index + '">';
         html += '<div class="task-cockpit-chain-row-head">';
@@ -2351,7 +2489,7 @@
         taskId: row.taskId || '',
         title: String(row.title || '').trim(),
         effortHours: Number(row.effortHours || 0) || 0,
-        status: row.status || 'todo',
+        status: row.status || 'backlog',
         isCurrent: !!row.isCurrent,
         isNew: !!row.isNew
       };
@@ -2363,7 +2501,7 @@
         taskId: currentTask.id,
         title: currentTask.title || 'Ohne Titel',
         effortHours: Number(currentTask.effortHours || 0) || 0,
-        status: currentTask.status || 'todo',
+        status: currentTask.status || 'backlog',
         isCurrent: true,
         isNew: false
       });
@@ -2419,7 +2557,7 @@
         assigneeId: currentTask.assigneeId || null,
         assigneeIds: Array.isArray(currentTask.assigneeIds) ? currentTask.assigneeIds.slice() : (currentTask.assigneeId ? [currentTask.assigneeId] : []),
         labels: Array.isArray(currentTask.labels) ? currentTask.labels.slice() : [],
-        status: 'todo',
+        status: 'backlog',
         effortHours: row.effortHours,
         schedule: { mode: 'none', deadline: '', fixedAt: '', rangeStart: '', rangeEnd: '' },
         subtasks: [],
@@ -2537,7 +2675,7 @@
     var urgencyInput = document.getElementById('task-cockpit-urgency');
     var scheduleMode = document.getElementById('task-cockpit-schedule-mode');
 
-    if (statusInput) statusInput.value = currentTaskDraft.status || 'todo';
+    if (statusInput) statusInput.value = currentTaskDraft.status || 'backlog';
     if (priorityInput) priorityInput.value = currentTaskDraft.priority || 'medium';
     if (urgencyInput) urgencyInput.value = currentTaskDraft.urgency || 'normal';
     if (scheduleMode) scheduleMode.value = (currentTaskDraft.schedule && currentTaskDraft.schedule.mode) || 'none';
@@ -2619,7 +2757,7 @@
             taskId: '',
             title: '',
             effortHours: 0,
-            status: 'todo',
+            status: 'backlog',
             isCurrent: false,
             isNew: true
           });
@@ -2864,6 +3002,18 @@
     });
 
     document.addEventListener('click', function (e) {
+      var overviewIntakeBtn = e.target.closest('[data-overview-task-intake]');
+      if (overviewIntakeBtn) {
+        intakeTaskFromOverview(overviewIntakeBtn.getAttribute('data-overview-task-intake'));
+        return;
+      }
+
+      var overviewAssignBtn = e.target.closest('[data-overview-task-assign]');
+      if (overviewAssignBtn) {
+        assignTaskToCurrentUser(overviewAssignBtn.getAttribute('data-overview-task-assign'));
+        return;
+      }
+
       var confirmWorkBtn = e.target.closest('[data-task-confirm-work]');
       if (confirmWorkBtn) {
         confirmTaskInProgress(confirmWorkBtn.getAttribute('data-task-confirm-work'));
@@ -3054,7 +3204,7 @@
   // --- Main Render Function ---
   function initKanban() {
     try {
-      setAssigneeFilter(loadPersistedAssigneeFilter(), false);
+      setAssigneeFilter(resolveInitialAssigneeFilter(), false);
       setupFilters();
       enforceInProgressConfirmationDeadlines();
       renderAllColumns();
@@ -3062,6 +3212,17 @@
       setupSubtaskCheckboxes();
       setupTaskCardInteractions();
       startLiveTaskRefresh();
+
+      if (window.addEventListener) {
+        window.addEventListener('authChanged', function () {
+          if (!filterAssigneeId) {
+            var currentEmployeeId = getCurrentLoggedInEmployeeId();
+            if (currentEmployeeId) {
+              setAssigneeFilter(currentEmployeeId, true);
+            }
+          }
+        });
+      }
     } catch(e) { console.error('[' + NAMESPACE + '] Error:', e); }
   }
 

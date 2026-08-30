@@ -219,7 +219,7 @@ function importTasks(project,taskItems){
     var title=String(item.title||'').trim();
     if(!title)return;
 
-    var rawStatus=String(item.status||'todo').toLowerCase();
+    var rawStatus=String(item.status||'backlog').toLowerCase();
     var rawPriority=String(item.priority||'medium').toLowerCase();
     var statusMap={
       backlog:'backlog',
@@ -241,7 +241,7 @@ function importTasks(project,taskItems){
       title:title,
       description:String(item.description||''),
       projectId:project.id,
-      status:statusMap[rawStatus]||'todo',
+      status:statusMap[rawStatus]||'backlog',
       priority:priorityMap[rawPriority]||'medium',
       effortHours:Number(item.effortHours||0)||0,
       labels:resolveLabelIdsByNames(item.labels),

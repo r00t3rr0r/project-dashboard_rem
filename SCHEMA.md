@@ -342,7 +342,7 @@ Der DataLayer führt folgende Validierungen durch:
 
 - **`read(key, defaultVal)`**: Fängt JSON.parse-Fehler ab und gibt fallback zurück
 - **`createXxx()`**: Setzt automatisch `id` (falls leer) und `createdAt` (ISO-8601)
-- **`createTask()`**: Setzt Default `status: 'todo'`
+- **`createTask()`**: Setzt Default `status: 'backlog'`
 - **`createLabel()`**: Setzt Default `color: '#4a9eff'`
 - **`createRelease()`**: Setzt Default `status: 'draft'`
 - **`createNotification()`**: Setzt automatisch `read: false` und fügt vorne ein (`unshift`)

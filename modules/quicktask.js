@@ -237,7 +237,7 @@ function buildTaskPayloadFromFields(fields){
     assigneeId:normalizedAssigneeIds.length?normalizedAssigneeIds[0]:null,
     assigneeIds:normalizedAssigneeIds,
     labels:Array.isArray(fields.labels)?fields.labels:[],
-    status:fields.status||'todo',
+    status:fields.status||'backlog',
     effortHours:parseFloat(fields.effortHours||'0')||0,
     createdAt:new Date().toISOString(),
     schedule:buildSchedule(fields.scheduleMode,fields.deadline,fields.fixedAt,fields.rangeStart,fields.rangeEnd),
@@ -741,7 +741,7 @@ function openQuickTaskModal(){
         subtasksText:document.getElementById('qtm-subtasks').value,
         noteText:document.getElementById('qtm-note').value,
         attachmentsText:document.getElementById('qtm-attachments').value,
-        status:'todo'
+        status:'backlog'
       });
       
       window.DataLayer.createTask(payload);
@@ -898,7 +898,7 @@ function openBlockerModal(){
           subtasksText:'',
           noteText:reason,
           attachmentsText:'',
-          status:'todo'
+          status:'backlog'
         });
 
         payload.isBlocker=true;
@@ -1203,7 +1203,7 @@ function openTaskChainModal(prefill){
             subtasksText:'',
             noteText:noteText,
             attachmentsText:'',
-            status:'todo'
+            status:'backlog'
           });
 
           payload.sequenceIndex=nextSequence+rowIndex;
@@ -1475,7 +1475,7 @@ document.addEventListener('DOMContentLoaded',function(){
         subtasksText:(document.getElementById('qt-subtasks')||{}).value||'',
         noteText:(document.getElementById('qt-note')||{}).value||'',
         attachmentsText:(document.getElementById('qt-attachments')||{}).value||'',
-        status:'todo'
+        status:'backlog'
       });
 
       window.DataLayer.createTask(payload);

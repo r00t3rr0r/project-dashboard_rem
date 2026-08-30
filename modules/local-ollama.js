@@ -7,6 +7,19 @@
 var OLLAMA_BASES=['http://127.0.0.1:11434','http://localhost:11434'];
 var DEFAULT_MODEL='hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M';
 
+function isLocalBrowserHost(){
+  try{
+    var hostname=(window.location&&window.location.hostname)?String(window.location.hostname).toLowerCase():'';
+    return hostname==='localhost'||hostname==='127.0.0.1'||hostname==='::1'||hostname==='[::1]';
+  }catch(_err){
+    return false;
+  }
+}
+
+function isRemoteProxyMode(){
+  return !!(window.location&&window.location.origin)&&!isLocalBrowserHost();
+}
+
 function modelFrom(payload){
   var config=payload&&payload.promptConfig&&typeof payload.promptConfig==='object'?payload.promptConfig:{};
   return String(config.model||payload&&payload.model||DEFAULT_MODEL).trim()||DEFAULT_MODEL;
@@ -70,7 +83,8 @@ function localFetch(path,options){
   function tryBase(index,lastError){
     if(index>=OLLAMA_BASES.length){
       var detail=lastError&&lastError.message?lastError.message:String(lastError||'unbekannter Fehler');
-      return Promise.reject(new Error('Lokales Ollama ist nicht erreichbar. Ollama auf diesem Rechner starten und OLLAMA_ORIGINS fuer '+window.location.origin+' erlauben. Details: '+detail));
+      var originHint=(window.location&&window.location.origin)?window.location.origin:'dieser Browser';
+      return Promise.reject(new Error('Lokales Ollama ist nicht erreichbar. Das KI-Feature nutzt nur die Ollama-Instanz auf dem gleichen Rechner, auf dem der Browser laeuft. Ollama auf diesem Rechner starten und OLLAMA_ORIGINS fuer '+originHint+' erlauben. Wenn die App via http://178.105.213.50 geoeffnet wird, kann der Browser nicht auf die lokale localhost-Instanz eines anderen Rechners zugreifen. Dann muss die App lokal auf dem Mitarbeiter-Rechner gestartet werden. Details: '+detail));
     }
     return fetch(OLLAMA_BASES[index]+path,options).then(function(response){
       return response.json().catch(function(){return {};}).then(function(body){
@@ -83,6 +97,14 @@ function localFetch(path,options){
 }
 
 function health(){
+  if(isRemoteProxyMode()){
+    return remoteFetch('/api/ai/health','GET').then(function(result){
+      return {
+        endpoint:result.endpoint,
+        body:result.body||{status:'error'}
+      };
+    });
+  }
   return localFetch('/api/tags',{method:'GET'}).then(function(result){
     return {
       endpoint:result.endpoint,
@@ -105,6 +127,23 @@ function wrapResult(path,payload,text){
   return parsed;
 }
 
+function remoteFetch(path,method,payload){
+  var url=(window.location&&window.location.origin?window.location.origin:'')+String(path||'');
+  var init={
+    method:String(method||'GET'),
+    headers:{'Content-Type':'application/json'}
+  };
+  if(method&&String(method).toUpperCase()!=='GET'&&typeof payload!=='undefined'){
+    init.body=JSON.stringify(payload||{});
+  }
+  return fetch(url,init).then(function(response){
+    return response.json().catch(function(){return {};}).then(function(body){
+      if(!response.ok)throw new Error(body&&body.error?body.error:'HTTP '+response.status+' an '+url);
+      return {body:body,endpoint:url};
+    });
+  });
+}
+
 function requestGeneration(requestBody){
   return localFetch('/api/generate',{
     method:'POST',
@@ -114,6 +153,12 @@ function requestGeneration(requestBody){
 }
 
 function generate(path,payload){
+  if(isRemoteProxyMode()){
+    return remoteFetch(path,'POST',payload||{}).then(function(result){
+      return result.body||{};
+    });
+  }
+
   var config=configFrom(payload||{});
   var requestBody={
     model:modelFrom(payload||{}),
@@ -145,6 +190,12 @@ function generate(path,payload){
 
 function request(path,method,payload){
   if(path==='/api/ai/health'&&method==='GET')return health();
+  if(isRemoteProxyMode()){
+    if(method!=='POST')return Promise.reject(new Error('Nicht unterstuetzte remote Ollama-Methode: '+method));
+    return remoteFetch(path,method,payload||{}).then(function(result){
+      return {endpoint:result.endpoint,body:result.body||{}};
+    });
+  }
   if(method!=='POST')return Promise.reject(new Error('Nicht unterstuetzte lokale Ollama-Methode: '+method));
   return generate(path,payload||{}).then(function(body){return {endpoint:OLLAMA_BASES[0]+'/api/generate',body:body};});
 }

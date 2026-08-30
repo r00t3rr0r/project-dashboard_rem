@@ -1455,22 +1455,104 @@
 
     var normalized = [];
     var seen = {};
+    var roleBuckets = {};
+
+    function pushOrMerge(employeeId, role, assignedAt, memberId) {
+      var id = String(employeeId || '').trim();
+      if (!id) return;
+      var roleText = typeof role === 'string' ? role.trim() : '';
+
+      if (seen[id]) {
+        if (roleText) {
+          roleBuckets[id] = roleBuckets[id] || [];
+          if (roleBuckets[id].indexOf(roleText) === -1) roleBuckets[id].push(roleText);
+          for (var i = 0; i < normalized.length; i++) {
+            if (normalized[i].employeeId === id) {
+              normalized[i].role = roleBuckets[id].join(' · ');
+              break;
+            }
+          }
+        }
+        return;
+      }
+
+      seen[id] = true;
+      roleBuckets[id] = roleText ? [roleText] : [];
+      normalized.push({
+        id: memberId || generateId(),
+        employeeId: id,
+        role: roleBuckets[id].join(' · '),
+        assignedAt: assignedAt || new Date().toISOString()
+      });
+    }
+
     source.forEach(function (member) {
       if (!member || typeof member !== 'object') return;
 
       var employeeId = String(member.employeeId || member.id || '').trim();
-      if (!employeeId || seen[employeeId]) return;
-      seen[employeeId] = true;
+      if (!employeeId) return;
+      pushOrMerge(employeeId, member.role, member.assignedAt, member.id);
+    });
 
-      normalized.push({
-        id: member.id || generateId(),
-        employeeId: employeeId,
-        role: typeof member.role === 'string' ? member.role.trim() : '',
-        assignedAt: member.assignedAt || new Date().toISOString()
-      });
+    pushOrMerge(project.projectLeadEmployeeId || project.leadEmployeeId, 'Projektleiter');
+    pushOrMerge(project.contactEmployeeId || project.contactId, 'Ansprechpartner');
+
+    var participants = Array.isArray(project.participantEmployeeIds) ? project.participantEmployeeIds : [];
+    participants.forEach(function (employeeId) {
+      pushOrMerge(employeeId, 'Projektbeteiligte');
     });
 
     project.teamMembers = normalized;
+  }
+
+  function normalizeProjectRoleAssignments(project) {
+    var team = Array.isArray(project.teamMembers) ? project.teamMembers : [];
+
+    function findRoleByPattern(pattern) {
+      for (var i = 0; i < team.length; i++) {
+        var member = team[i] || {};
+        var employeeId = String(member.employeeId || member.id || '').trim();
+        var role = String(member.role || '').toLowerCase();
+        if (employeeId && pattern.test(role)) return employeeId;
+      }
+      return '';
+    }
+
+    var fallbackIds = team.map(function (member) {
+      return String(member && (member.employeeId || member.id) || '').trim();
+    }).filter(Boolean);
+
+    var leadId = String(project.projectLeadEmployeeId || project.leadEmployeeId || '').trim();
+    var contactId = String(project.contactEmployeeId || project.contactId || '').trim();
+
+    if (!leadId) leadId = findRoleByPattern(/projektleiter|project lead|lead|owner|projektverantwort/);
+    if (!contactId) contactId = findRoleByPattern(/ansprech|kontakt|contact/);
+    if (!leadId && fallbackIds.length) leadId = fallbackIds[0];
+    if (!contactId && fallbackIds.length) contactId = fallbackIds[0];
+
+    var participantSource = Array.isArray(project.participantEmployeeIds) ? project.participantEmployeeIds : fallbackIds;
+    var participantIds = [];
+    var seen = {};
+
+    participantSource.forEach(function (entry) {
+      var employeeId = String(entry || '').trim();
+      if (!employeeId || seen[employeeId]) return;
+      seen[employeeId] = true;
+      participantIds.push(employeeId);
+    });
+
+    if (leadId && !seen[leadId]) {
+      seen[leadId] = true;
+      participantIds.unshift(leadId);
+    }
+    if (contactId && !seen[contactId]) {
+      seen[contactId] = true;
+      participantIds.unshift(contactId);
+    }
+
+    project.projectLeadEmployeeId = leadId;
+    project.contactEmployeeId = contactId;
+    project.participantEmployeeIds = participantIds;
   }
 
   function normalizeExecutionPlanEvent(entry) {
@@ -1571,6 +1653,7 @@
     if (!Array.isArray(project.githubCommits)) project.githubCommits = [];
     compactProjectGithubCommits(project);
     normalizeProjectTeamMembers(project);
+    normalizeProjectRoleAssignments(project);
     normalizeProjectInfoHub(project);
     normalizeProjectAiKnowledge(project);
     normalizeProjectExecutionPlan(project);
@@ -1840,7 +1923,7 @@
       id: entry.id || generateId(),
       type: typeof entry.type === 'string' && entry.type ? entry.type : 'updated',
       at: typeof entry.at === 'string' && entry.at ? entry.at : new Date().toISOString(),
-      status: typeof entry.status === 'string' && entry.status ? entry.status : 'todo',
+      status: typeof entry.status === 'string' && entry.status ? entry.status : 'backlog',
       progress: clampTaskProgressValue(entry.progress),
       assigneeId: typeof entry.assigneeId === 'string' ? entry.assigneeId : '',
       actorId: typeof entry.actorId === 'string' ? entry.actorId : ''
@@ -1859,7 +1942,7 @@
     var history = [normalizeTaskHistoryEntry({
       type: 'created',
       at: createdAt,
-      status: task.status || 'todo',
+      status: task.status || 'backlog',
       progress: task.progress,
       assigneeId: task.assigneeId || ''
     })];
@@ -1868,7 +1951,7 @@
       history.push(normalizeTaskHistoryEntry({
         type: task.status === 'done' ? 'completed' : 'updated',
         at: updatedAt,
-        status: task.status || 'todo',
+        status: task.status || 'backlog',
         progress: task.progress,
         assigneeId: task.assigneeId || ''
       }));
@@ -1896,7 +1979,7 @@
     if (!history.length) return null;
     var latest = history[history.length - 1];
     return {
-      status: latest.status || 'todo',
+      status: latest.status || 'backlog',
       progress: clampTaskProgressValue(latest.progress),
       assigneeId: latest.assigneeId || ''
     };
@@ -1916,7 +1999,7 @@
     if (!task) return;
 
     var previous = getLatestTaskHistorySnapshot(task);
-    var nextStatus = task.status || 'todo';
+    var nextStatus = task.status || 'backlog';
     var nextProgress = clampTaskProgressValue(task.progress);
     var nextAssigneeId = task.assigneeId || '';
     var type = 'updated';
@@ -1952,7 +2035,7 @@
     if (typeof task.updatedAt !== 'string' || !task.updatedAt.trim()) task.updatedAt = task.createdAt;
     if (typeof task.title !== 'string') task.title = '';
     if (typeof task.description !== 'string') task.description = '';
-    if (!task.status) task.status = 'todo';
+    if (!task.status) task.status = 'backlog';
     if (!task.priority) task.priority = 'medium';
     if (!task.urgency) task.urgency = 'normal';
     if (typeof task.projectId !== 'string' || !task.projectId.trim()) task.projectId = null;
@@ -1984,7 +2067,7 @@
 
     task.isBlocker = !!task.isBlocker;
     task.blocked = !!task.blocked;
-    if (!task.blocked && task.status === 'blocked') task.status = 'todo';
+    if (!task.blocked && task.status === 'blocked') task.status = 'backlog';
     if (typeof task.blockedReason !== 'string') task.blockedReason = '';
     if (typeof task.blockerReason !== 'string') task.blockerReason = '';
     if (!task.blockedReason && task.blockerReason) task.blockedReason = task.blockerReason;

@@ -1972,6 +1972,10 @@ body.projects-modal-open {
   gap: 0.75rem;
 }
 
+.project-role-grid {
+  align-items: start;
+}
+
 .project-field-hint {
   margin-top: 0.35rem;
   font-size: 0.75rem;
@@ -1984,21 +1988,35 @@ body.projects-modal-open {
   margin-top: 0.25rem;
 }
 
-.project-team-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-
-.project-team-row {
+.project-participant-options {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0.55rem;
-  align-items: center;
 }
 
-.project-team-row .btn {
-  white-space: nowrap;
+.project-participant-option {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.52rem 0.65rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.72rem;
+  background: color-mix(in srgb, var(--bg-card) 90%, var(--accent-color) 10%);
+}
+
+.project-participant-option input[type="checkbox"] {
+  margin: 0;
+}
+
+.project-participant-option-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.project-participant-option-role {
+  margin-left: auto;
+  font-size: 0.74rem;
+  color: var(--text-muted);
 }
 
 .projects-separator {
@@ -2903,8 +2921,8 @@ body.projects-modal-open {
     width: min(13rem, 72vw);
   }
 
-  .project-head-timeline-week-day-popover-item {
-    grid-template-columns: 2.6rem minmax(0, 1fr);
+  .project-participant-options {
+    grid-template-columns: 1fr;
   }
 }
 

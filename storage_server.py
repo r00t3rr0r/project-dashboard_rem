@@ -2047,6 +2047,10 @@ class StorageHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', self._mime_type(full_path))
         self.send_header('Content-Length', str(len(content)))
+        if full_path.endswith(('.html', '.js', '.css')):
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
         self._apply_security_headers()
         self.end_headers()
         self.wfile.write(content)

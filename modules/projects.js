@@ -62,6 +62,7 @@ function canAdjustProjectProgress(project){
 
   var contactIds=[];
   if(project&&project.contactEmployeeId)contactIds.push(String(project.contactEmployeeId));
+  if(project&&project.projectLeadEmployeeId)contactIds.push(String(project.projectLeadEmployeeId));
 
   var team=Array.isArray(project&&project.teamMembers)?project.teamMembers:[];
   team.forEach(function(member){
@@ -676,7 +677,7 @@ function applyProjectStart(projectId,milestones){
       description:item.description||'',
       projectId:projectId,
       assigneeId:item.assigneeId||null,
-      status:'todo',
+      status:'backlog',
       priority:item.priority||'medium',
       urgency:item.urgency||'normal',
       effortHours:Number(item.effortHours||0)||0,
@@ -1464,8 +1465,20 @@ function buildProjectHeadTaskSummary(project){
   }
 
   var contactEmployee=null;
+  var directContactId=String(project&&project.contactEmployeeId||project&&project.contactId||'').trim();
+  if(directContactId&&employeeById[directContactId]){
+    contactEmployee=employeeById[directContactId];
+  }
+
+  if(!contactEmployee){
+    var leadId=String(project&&project.projectLeadEmployeeId||'').trim();
+    if(leadId&&employeeById[leadId]){
+      contactEmployee=employeeById[leadId];
+    }
+  }
+
   var contactTask=activeTask||nextTask||lastDoneTask;
-  if(contactTask&&contactTask.assigneeId&&employeeById[String(contactTask.assigneeId)]){
+  if(!contactEmployee&&contactTask&&contactTask.assigneeId&&employeeById[String(contactTask.assigneeId)]){
     contactEmployee=employeeById[String(contactTask.assigneeId)];
   }
 
@@ -1620,88 +1633,200 @@ function normalizeProjectTeamMembers(project){
 }
 
 function buildProjectTeamEmployeeOptions(selectedEmployeeId){
-  var options='<option value="">Mitarbeiter waehlen</option>';
+  return buildProjectResponsibleEmployeeOptions(selectedEmployeeId,'Mitarbeiter waehlen');
+}
+
+function normalizeEmployeeIdList(list){
+  var source=Array.isArray(list)?list:[];
+  var seen={};
+  var normalized=[];
+  source.forEach(function(item){
+    var employeeId=String(item||'').trim();
+    if(!employeeId||seen[employeeId])return;
+    seen[employeeId]=true;
+    normalized.push(employeeId);
+  });
+  return normalized;
+}
+
+function buildProjectResponsibleEmployeeOptions(selectedEmployeeId,placeholderLabel){
+  var placeholder=String(placeholderLabel||'Mitarbeiter waehlen').trim()||'Mitarbeiter waehlen';
+  var selectedId=String(selectedEmployeeId||'').trim();
+  var options='<option value="">'+escapeHtml(placeholder)+'</option>';
   getSortedEmployeesForProjectTeam().forEach(function(emp){
-    var id=String(emp.id||'');
-    var selected=id===String(selectedEmployeeId||'')?' selected':'';
+    var id=String(emp.id||'').trim();
+    if(!id)return;
+    var selected=id===selectedId?' selected':'';
     var roleSuffix=emp.role?' ('+escapeHtml(emp.role)+')':'';
     options+='<option value="'+escapeHtml(id)+'"'+selected+'>'+escapeHtml(emp.name||'Unbenannt')+roleSuffix+'</option>';
   });
   return options;
 }
 
-function readProjectTeamRowsFromForm(){
-  var container=byId('project-team-rows');
-  if(!container)return [];
-
-  var rows=container.querySelectorAll('.project-team-row');
-  var data=[];
-  rows.forEach(function(row){
-    var employeeSelect=row.querySelector('.project-team-employee');
-    var roleInput=row.querySelector('.project-team-role');
-    data.push({
-      employeeId:employeeSelect&&employeeSelect.value?String(employeeSelect.value).trim():'',
-      role:roleInput&&roleInput.value?String(roleInput.value).trim():''
-    });
-  });
-  return data;
-}
-
-function renderProjectTeamRows(rows){
-  var container=byId('project-team-rows');
-  if(!container)return;
-
+function deriveRoleAssignmentsFromLegacyRows(rows){
   var source=Array.isArray(rows)?rows:[];
-  if(source.length===0)source=[{employeeId:'',role:''}];
+  var list=[];
+  source.forEach(function(row){
+    var employeeId=String(row&&row.employeeId||'').trim();
+    if(employeeId)list.push(employeeId);
+  });
+  list=normalizeEmployeeIdList(list);
 
-  container.innerHTML=source.map(function(member,index){
-    var employeeId=String(member&&member.employeeId||'').trim();
-    var role=String(member&&member.role||'').trim();
-    return ''
-      +'<div class="project-team-row" data-index="'+index+'">'
-      +'<select class="project-team-employee">'+buildProjectTeamEmployeeOptions(employeeId)+'</select>'
-      +'<input type="text" class="project-team-role" placeholder="Projektrolle (z. B. Product Owner)" value="'+escapeHtml(role)+'">'
-      +'<button type="button" class="btn btn-secondary" data-action="remove-team-row" data-index="'+index+'" '+(source.length===1?'disabled':'')+'>Entfernen</button>'
-      +'</div>';
-  }).join('');
+  return {
+    projectLeadEmployeeId:list[0]||'',
+    contactEmployeeId:list[0]||'',
+    participantEmployeeIds:list
+  };
 }
 
-function readProjectTeamAssignmentsFromForm(){
-  var rows=readProjectTeamRowsFromForm();
-  var seen={};
-  var team=[];
+function inferProjectRoleAssignments(project){
+  var normalizedProject=project&&typeof project==='object'?project:{};
+  var teamMembers=normalizeProjectTeamMembers(normalizedProject);
+  var fallbackIds=teamMembers.map(function(member){
+    return String(member&&member.employeeId||'').trim();
+  }).filter(function(employeeId){return !!employeeId;});
 
-  rows.forEach(function(member){
-    var employeeId=String(member.employeeId||'').trim();
-    if(!employeeId)return;
-    if(seen[employeeId]){
-      throw new Error('Mitarbeiter darf pro Projekt nur einmal zugewiesen werden.');
+  function findByRolePattern(pattern){
+    for(var i=0;i<teamMembers.length;i++){
+      var role=String(teamMembers[i]&&teamMembers[i].role||'').toLowerCase();
+      var employeeId=String(teamMembers[i]&&teamMembers[i].employeeId||'').trim();
+      if(employeeId&&pattern.test(role))return employeeId;
     }
-    seen[employeeId]=true;
-    team.push({
-      employeeId:employeeId,
-      role:String(member.role||'').trim()
+    return '';
+  }
+
+  var leadId=String(normalizedProject.projectLeadEmployeeId||normalizedProject.leadEmployeeId||'').trim();
+  var contactId=String(normalizedProject.contactEmployeeId||normalizedProject.contactId||'').trim();
+  if(!leadId)leadId=findByRolePattern(/projektleiter|project lead|lead|owner|projektverantwort/);
+  if(!contactId)contactId=findByRolePattern(/ansprech|kontakt|contact/);
+  if(!leadId&&fallbackIds.length)leadId=fallbackIds[0];
+  if(!contactId&&fallbackIds.length)contactId=fallbackIds[0];
+
+  var participantIds=normalizeEmployeeIdList(normalizedProject.participantEmployeeIds);
+  if(!participantIds.length)participantIds=fallbackIds.slice();
+  if(leadId&&participantIds.indexOf(leadId)===-1)participantIds.unshift(leadId);
+  if(contactId&&participantIds.indexOf(contactId)===-1)participantIds.unshift(contactId);
+
+  return {
+    projectLeadEmployeeId:leadId,
+    contactEmployeeId:contactId,
+    participantEmployeeIds:normalizeEmployeeIdList(participantIds)
+  };
+}
+
+function renderProjectRoleAssignmentFields(assignments){
+  var leadSelect=byId('project-lead-employee');
+  var contactSelect=byId('project-contact-employee');
+  var participantsContainer=byId('project-participant-options');
+  if(!leadSelect||!contactSelect||!participantsContainer)return;
+
+  var state=assignments&&typeof assignments==='object'?assignments:{projectLeadEmployeeId:'',contactEmployeeId:'',participantEmployeeIds:[]};
+  var participantIds=normalizeEmployeeIdList(state.participantEmployeeIds);
+  var leadId=String(state.projectLeadEmployeeId||'').trim();
+  var contactId=String(state.contactEmployeeId||'').trim();
+
+  leadSelect.innerHTML=buildProjectResponsibleEmployeeOptions(leadId,'Projektleiter waehlen');
+  contactSelect.innerHTML=buildProjectResponsibleEmployeeOptions(contactId,'Ansprechpartner waehlen');
+
+  participantsContainer.innerHTML=getSortedEmployeesForProjectTeam().map(function(emp){
+    var employeeId=String(emp&&emp.id||'').trim();
+    if(!employeeId)return '';
+    var employeeName=String(emp&&emp.name||'Unbekannt').trim()||'Unbekannt';
+    var checked=participantIds.indexOf(employeeId)!==-1;
+    var roleLabel=String(emp&&emp.role||'').trim();
+    return ''
+      +'<label class="project-participant-option">'
+      +'<input type="checkbox" class="project-participant-checkbox" value="'+escapeHtml(employeeId)+'" '+(checked?'checked':'')+'>'
+      +'<span class="project-participant-option-name">'+escapeHtml(employeeName)+'</span>'
+      +(roleLabel?'<span class="project-participant-option-role">'+escapeHtml(roleLabel)+'</span>':'')
+      +'</label>';
+  }).join('');
+
+  syncProjectRoleSelectionState();
+}
+
+function syncProjectRoleSelectionState(){
+  var participantsContainer=byId('project-participant-options');
+  var hint=byId('project-role-summary-hint');
+  if(!participantsContainer)return;
+
+  var leadId=String((byId('project-lead-employee')&&byId('project-lead-employee').value)||'').trim();
+  var contactId=String((byId('project-contact-employee')&&byId('project-contact-employee').value)||'').trim();
+
+  [leadId,contactId].forEach(function(employeeId){
+    if(!employeeId)return;
+    var checkbox=participantsContainer.querySelector('input.project-participant-checkbox[value="'+employeeId.replace(/"/g,'\\"')+'"]');
+    if(checkbox)checkbox.checked=true;
+  });
+
+  var selectedCount=participantsContainer.querySelectorAll('input.project-participant-checkbox:checked').length;
+  if(hint){
+    if(selectedCount===0){
+      hint.textContent='Waehlen Sie alle Personen aus, die aktiv am Projekt mitarbeiten.';
+    }else if(selectedCount===1){
+      hint.textContent='1 Person ist als Projektbeteiligte markiert.';
+    }else{
+      hint.textContent=selectedCount+' Personen sind als Projektbeteiligte markiert.';
+    }
+  }
+}
+
+function readProjectRoleAssignmentsFromForm(){
+  var leadId=String((byId('project-lead-employee')&&byId('project-lead-employee').value)||'').trim();
+  var contactId=String((byId('project-contact-employee')&&byId('project-contact-employee').value)||'').trim();
+  var participantsContainer=byId('project-participant-options');
+  var participantIds=[];
+
+  if(participantsContainer){
+    var checked=participantsContainer.querySelectorAll('input.project-participant-checkbox:checked');
+    checked.forEach(function(checkbox){
+      var employeeId=String(checkbox&&checkbox.value||'').trim();
+      if(employeeId)participantIds.push(employeeId);
     });
-  });
+  }
 
-  return team;
+  participantIds=normalizeEmployeeIdList(participantIds);
+  if(leadId&&participantIds.indexOf(leadId)===-1)participantIds.unshift(leadId);
+  if(contactId&&participantIds.indexOf(contactId)===-1)participantIds.unshift(contactId);
+
+  if(!leadId)throw new Error('Bitte einen Projektleiter festlegen.');
+  if(!contactId)throw new Error('Bitte einen Ansprechpartner festlegen.');
+  if(!participantIds.length)throw new Error('Bitte mindestens eine projektbeteiligte Person auswaehlen.');
+
+  return {
+    projectLeadEmployeeId:leadId,
+    contactEmployeeId:contactId,
+    participantEmployeeIds:participantIds
+  };
 }
 
-function addProjectTeamRow(){
-  var rows=readProjectTeamRowsFromForm();
-  rows.push({employeeId:'',role:''});
-  renderProjectTeamRows(rows);
-}
+function buildProjectTeamMembersFromAssignments(assignments){
+  var map={};
 
-function removeProjectTeamRow(index){
-  var rows=readProjectTeamRowsFromForm();
-  var targetIndex=Number(index);
-  if(isNaN(targetIndex))return;
+  function pushRole(employeeId,role){
+    var id=String(employeeId||'').trim();
+    var cleanRole=String(role||'').trim();
+    if(!id||!cleanRole)return;
+    if(!map[id])map[id]=[];
+    if(map[id].indexOf(cleanRole)===-1)map[id].push(cleanRole);
+  }
 
-  var next=rows.filter(function(_row,rowIndex){
-    return rowIndex!==targetIndex;
+  var leadId=String(assignments&&assignments.projectLeadEmployeeId||'').trim();
+  var contactId=String(assignments&&assignments.contactEmployeeId||'').trim();
+  var participantIds=normalizeEmployeeIdList(assignments&&assignments.participantEmployeeIds);
+
+  pushRole(leadId,'Projektleiter');
+  pushRole(contactId,'Ansprechpartner');
+  participantIds.forEach(function(employeeId){
+    pushRole(employeeId,'Projektbeteiligte');
   });
-  renderProjectTeamRows(next);
+
+  return Object.keys(map).map(function(employeeId){
+    return {
+      employeeId:employeeId,
+      role:map[employeeId].join(' · ')
+    };
+  });
 }
 
 function buildGitHubHeaders(token,includeApiVersion){
@@ -2882,7 +3007,18 @@ function saveProjectPageDraftState(){
       endDate:(byId('project-end').value||'').trim(),
       status:(byId('project-status').value||'planning').trim(),
       githubUrl:(byId('project-github-url').value||'').trim(),
-      teamRows: readProjectTeamRowsFromForm()
+      projectLeadEmployeeId:(byId('project-lead-employee')&&byId('project-lead-employee').value||'').trim(),
+      contactEmployeeId:(byId('project-contact-employee')&&byId('project-contact-employee').value||'').trim(),
+      participantEmployeeIds:(function(){
+        var container=byId('project-participant-options');
+        if(!container)return [];
+        var ids=[];
+        container.querySelectorAll('input.project-participant-checkbox:checked').forEach(function(box){
+          var employeeId=String(box&&box.value||'').trim();
+          if(employeeId)ids.push(employeeId);
+        });
+        return normalizeEmployeeIdList(ids);
+      })()
     },
     import: {
       githubUrl:(byId('github-bootstrap-url').value||'').trim()
@@ -2921,7 +3057,18 @@ function saveProjectPageState(){
       endDate:(byId('project-end').value||'').trim(),
       status:(byId('project-status').value||'planning').trim(),
       githubUrl:(byId('project-github-url').value||'').trim(),
-      teamRows: readProjectTeamRowsFromForm(),
+      projectLeadEmployeeId:(byId('project-lead-employee')&&byId('project-lead-employee').value||'').trim(),
+      contactEmployeeId:(byId('project-contact-employee')&&byId('project-contact-employee').value||'').trim(),
+      participantEmployeeIds:(function(){
+        var container=byId('project-participant-options');
+        if(!container)return [];
+        var ids=[];
+        container.querySelectorAll('input.project-participant-checkbox:checked').forEach(function(box){
+          var employeeId=String(box&&box.value||'').trim();
+          if(employeeId)ids.push(employeeId);
+        });
+        return normalizeEmployeeIdList(ids);
+      })(),
       githubBootstrapUrl:(byId('github-bootstrap-url').value||'').trim()
     } : null,
     modals:{
@@ -2949,8 +3096,17 @@ function restoreProjectPageState(){
     if(byId('project-github-url'))byId('project-github-url').value=String(snapshot.form.githubUrl||'');
     if(byId('github-bootstrap-url'))byId('github-bootstrap-url').value=String(snapshot.form.githubBootstrapUrl||'');
 
-    var teamRows=Array.isArray(snapshot.form.teamRows)?snapshot.form.teamRows:[];
-    renderProjectTeamRows(teamRows.length?teamRows:[{employeeId:'',role:''}]);
+    var stateAssignments;
+    if(Array.isArray(snapshot.form.participantEmployeeIds)||snapshot.form.projectLeadEmployeeId||snapshot.form.contactEmployeeId){
+      stateAssignments={
+        projectLeadEmployeeId:String(snapshot.form.projectLeadEmployeeId||'').trim(),
+        contactEmployeeId:String(snapshot.form.contactEmployeeId||'').trim(),
+        participantEmployeeIds:normalizeEmployeeIdList(snapshot.form.participantEmployeeIds)
+      };
+    }else{
+      stateAssignments=deriveRoleAssignmentsFromLegacyRows(snapshot.form.teamRows);
+    }
+    renderProjectRoleAssignmentFields(stateAssignments);
     updateProjectDateFieldState();
   }
 
@@ -2997,8 +3153,17 @@ function restoreProjectPageDraftState(){
   if(byId('project-github-url'))byId('project-github-url').value=String(projectDraft.githubUrl||'');
   if(byId('github-bootstrap-url'))byId('github-bootstrap-url').value=String(importDraft.githubUrl||'');
 
-  var teamRows=Array.isArray(projectDraft.teamRows)?projectDraft.teamRows:[];
-  renderProjectTeamRows(teamRows.length?teamRows:[{employeeId:'',role:''}]);
+  var draftAssignments;
+  if(Array.isArray(projectDraft.participantEmployeeIds)||projectDraft.projectLeadEmployeeId||projectDraft.contactEmployeeId){
+    draftAssignments={
+      projectLeadEmployeeId:String(projectDraft.projectLeadEmployeeId||'').trim(),
+      contactEmployeeId:String(projectDraft.contactEmployeeId||'').trim(),
+      participantEmployeeIds:normalizeEmployeeIdList(projectDraft.participantEmployeeIds)
+    };
+  }else{
+    draftAssignments=deriveRoleAssignmentsFromLegacyRows(projectDraft.teamRows);
+  }
+  renderProjectRoleAssignmentFields(draftAssignments);
 
   updateProjectDateFieldState();
 
@@ -3015,7 +3180,11 @@ function resetForm(){
   form.reset();
   byId('project-id').value='';
   byId('project-status').value='planning';
-  renderProjectTeamRows([]);
+  renderProjectRoleAssignmentFields({
+    projectLeadEmployeeId:'',
+    contactEmployeeId:'',
+    participantEmployeeIds:[]
+  });
   updateProjectDateFieldState();
   saveProjectPageDraftState();
 }
@@ -3053,6 +3222,7 @@ function updateProjectDateFieldState(){
 function readProjectForm(){
   var title=(byId('project-title').value||'').trim();
   if(!title)throw new Error('Projektname ist erforderlich.');
+  var roleAssignments=readProjectRoleAssignmentsFromForm();
 
   return {
     id:(byId('project-id').value||'').trim(),
@@ -3062,7 +3232,10 @@ function readProjectForm(){
     endDate:(byId('project-end').value||'').trim()||null,
     status:(byId('project-status').value||'planning').trim(),
     githubUrl:(byId('project-github-url').value||'').trim(),
-    teamMembers:readProjectTeamAssignmentsFromForm()
+    projectLeadEmployeeId:roleAssignments.projectLeadEmployeeId,
+    contactEmployeeId:roleAssignments.contactEmployeeId,
+    participantEmployeeIds:roleAssignments.participantEmployeeIds,
+    teamMembers:buildProjectTeamMembersFromAssignments(roleAssignments)
   };
 }
 
@@ -3074,9 +3247,7 @@ function applyProjectToForm(project){
   byId('project-end').value=project.endDate?String(project.endDate).slice(0,10):'';
   byId('project-status').value=project.status||'planning';
   byId('project-github-url').value=(project.github&&project.github.url)||'';
-  renderProjectTeamRows(normalizeProjectTeamMembers(project).map(function(member){
-    return {employeeId:member.employeeId,role:member.role||''};
-  }));
+  renderProjectRoleAssignmentFields(inferProjectRoleAssignments(project));
   updateProjectDateFieldState();
 }
 
@@ -3100,6 +3271,9 @@ function upsertProjectFromForm(){
       project.startDate=payload.startDate;
       project.endDate=payload.endDate;
       project.status=payload.status;
+      project.projectLeadEmployeeId=payload.projectLeadEmployeeId;
+      project.contactEmployeeId=payload.contactEmployeeId;
+      project.participantEmployeeIds=payload.participantEmployeeIds.slice();
       if(typeof project.progress!=='number')project.progress=getProjectProgressValue(project);
       project.teamMembers=payload.teamMembers.map(function(member){
         return {
@@ -3137,6 +3311,9 @@ function upsertProjectFromForm(){
           startDate:githubStartDate||payload.startDate,
           endDate:null,
           status:payload.status,
+          projectLeadEmployeeId:payload.projectLeadEmployeeId,
+          contactEmployeeId:payload.contactEmployeeId,
+          participantEmployeeIds:payload.participantEmployeeIds.slice(),
           progress:progressFromStatus(payload.status),
           teamMembers:payload.teamMembers.map(function(member){
             return {
@@ -3206,6 +3383,9 @@ function upsertProjectFromForm(){
       startDate:payload.startDate,
       endDate:payload.endDate,
       status:payload.status,
+      projectLeadEmployeeId:payload.projectLeadEmployeeId,
+      contactEmployeeId:payload.contactEmployeeId,
+      participantEmployeeIds:payload.participantEmployeeIds.slice(),
       progress:progressFromStatus(payload.status),
       teamMembers:payload.teamMembers.map(function(member){
         return {
@@ -4215,31 +4395,37 @@ function bindForm(){
     githubBootstrapUrlInput.addEventListener('change',saveProjectPageDraftState);
   }
 
-  var teamAddBtn=byId('project-team-add-btn');
-  if(teamAddBtn){
-    teamAddBtn.addEventListener('click',function(){
-      addProjectTeamRow();
+  var leadSelect=byId('project-lead-employee');
+  if(leadSelect){
+    leadSelect.addEventListener('change',function(){
+      syncProjectRoleSelectionState();
       saveProjectPageDraftState();
     });
   }
 
-  var teamRows=byId('project-team-rows');
-  if(teamRows){
-    teamRows.addEventListener('click',function(evt){
-      var target=evt.target;
-      if(!target||!target.dataset)return;
-      if(target.dataset.action==='remove-team-row'){
-        removeProjectTeamRow(target.dataset.index);
-        saveProjectPageDraftState();
-      }
+  var contactSelect=byId('project-contact-employee');
+  if(contactSelect){
+    contactSelect.addEventListener('change',function(){
+      syncProjectRoleSelectionState();
+      saveProjectPageDraftState();
     });
-    teamRows.addEventListener('input',saveProjectPageDraftState);
-    teamRows.addEventListener('change',saveProjectPageDraftState);
+  }
+
+  var participantsContainer=byId('project-participant-options');
+  if(participantsContainer){
+    participantsContainer.addEventListener('change',function(){
+      syncProjectRoleSelectionState();
+      saveProjectPageDraftState();
+    });
   }
 
   setGitHubApiToken(getGitHubApiToken());
 
-  renderProjectTeamRows([]);
+  renderProjectRoleAssignmentFields({
+    projectLeadEmployeeId:'',
+    contactEmployeeId:'',
+    participantEmployeeIds:[]
+  });
   updateProjectDateFieldState();
   restoreProjectPageDraftState();
 

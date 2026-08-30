@@ -2215,6 +2215,110 @@ body.light-mode .nav-menu li a:hover {
   margin-bottom: 1rem;
 }
 
+.kanban-intake-panel {
+  border: 1px solid var(--border-color);
+  border-radius: 1rem;
+  padding: 0.9rem;
+  background: rgba(255,255,255,0.02);
+  display: grid;
+  gap: 0.85rem;
+}
+
+.kanban-intake-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.8rem;
+}
+
+.kanban-intake-head h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+}
+
+.kanban-intake-head p {
+  margin: 0.22rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.kanban-intake-count {
+  border: 1px solid rgba(99, 226, 255, 0.22);
+  border-radius: 999px;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  white-space: nowrap;
+}
+
+.kanban-intake-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+}
+
+.kanban-intake-card {
+  border: 1px solid var(--border-color);
+  border-radius: 0.9rem;
+  padding: 0.75rem;
+  background: linear-gradient(170deg, rgba(99, 226, 255, 0.08), rgba(94, 162, 255, 0.03));
+  display: grid;
+  gap: 0.5rem;
+}
+
+.kanban-intake-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.kanban-intake-project {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.kanban-intake-owner {
+  border-radius: 999px;
+  padding: 0.16rem 0.45rem;
+  background: rgba(255,255,255,0.07);
+}
+
+.kanban-intake-card h4 {
+  margin: 0;
+  font-size: 0.94rem;
+  line-height: 1.3;
+  font-family: var(--font-display);
+}
+
+.kanban-intake-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.kanban-intake-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.kanban-intake-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.kanban-intake-actions .btn {
+  flex: 1 1 auto;
+  min-width: 6.5rem;
+}
+
 .kanban-team-load-card {
   display: flex;
   align-items: center;
@@ -2900,6 +3004,11 @@ body.light-mode .kanban-column {
   background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(247,250,255,0.88));
 }
 
+body.light-mode .kanban-intake-panel,
+body.light-mode .kanban-intake-card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(244,249,255,0.9));
+}
+
 body.light-mode .kanban-effort-block,
 body.light-mode .kanban-day-load {
   background: rgba(94, 162, 255, 0.08);
@@ -3268,6 +3377,15 @@ body.light-mode .kanban-day-load {
 @media (max-width: 760px) {
   .kanban-overview-grid,
   .kanban-day-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kanban-intake-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .kanban-intake-grid {
     grid-template-columns: 1fr;
   }
 

@@ -284,7 +284,23 @@ ollama pull hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M
 OLLAMA_ORIGINS="http://178.105.213.50,http://178.105.213.50:8766" ollama serve
 ```
 
-`OLLAMA_ORIGINS` muss die Origin enthalten, unter der das Dashboard geoeffnet wird. Bei mehreren Origins werden die Werte kommasepariert angegeben. Das Frontend spricht ausschliesslich `http://127.0.0.1:11434` beziehungsweise `http://localhost:11434` auf dem Rechner des Besuchers an.
+`OLLAMA_ORIGINS` muss die Origin enthalten, unter der das Dashboard geoeffnet wird. Bei mehreren Origins werden die Werte kommasepariert angegeben. Das Frontend spricht ausschliesslich `http://127.0.0.1:11434` beziehungsweise `http://localhost:11434` auf dem Rechner des Besuchers an, sofern die App lokal geoeffnet wird.
+
+Wichtig: Das ist ein Browser-zu-Localhost-Pattern. Der Browser kann nur auf die Ollama-Instanz des eigenen Rechners zugreifen. Wenn die App z.B. via `http://178.105.213.50` geoeffnet wird, kann sie nicht auf das lokale Ollama eines anderen Mitarbeiters auf dessen Rechner zugreifen. Für dieses Szenario muss der Live-Server den AI-Request an die Ollama-Instanz des Mitarbeiters weiterleiten. Dazu setzt der Server `OLLAMA_BASE_URL` auf die interne URL des Mitarbeiters, z.B. `http://192.168.1.42:11434`, und der Browser ruft die KI-Endpunkte auf derselben Origin des Live-Servers auf. Der Server leitet dann weiter an den Mitarbeiter-Rechner.
+
+Beispiel: 
+
+```bash
+export OLLAMA_BASE_URL="http://192.168.1.42:11434"
+export PROJECT_DASHBOARD_STORAGE_PORT="8766"
+python3 storage_server.py
+```
+
+Auf dem Mitarbeiter-Rechner muss Ollama ebenfalls so gestartet werden, dass die Live-Server-Origin erlaubt ist:
+
+```bash
+OLLAMA_ORIGINS="http://178.105.213.50,http://178.105.213.50:8766" ollama serve
+```
 
 Bei Verwendung der Ollama-App unter macOS muss die Variable vor dem vollstaendigen Neustart der App gesetzt werden:
 

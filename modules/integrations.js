@@ -56,7 +56,7 @@ window.importGitHubData=function(file){
               title:issue.title||'Imported Issue',
               description:(issue.body||'').substring(0,500),
               priority:(issue.labels&&issue.labels.some(function(l){return l.name==='high';}))?'high':'medium',
-              status:'todo',
+              status:'backlog',
               createdAt:new Date(issue.created_at||new Date()).toISOString(),
               externalId:issue.id,externalSource:'github'
             });
