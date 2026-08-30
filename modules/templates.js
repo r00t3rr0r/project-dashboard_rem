@@ -4,8 +4,22 @@
 
     var NAMESPACE = 'TemplateManager';
 
+    function getDataLayer() {
+        return window.DataLayer || null;
+    }
+
     // --- Daten-Layer ---
     function loadData(key, fallback) {
+        var dataLayer = getDataLayer();
+        try {
+            if (dataLayer) {
+                if (key === 'templates' && typeof dataLayer.getTemplates === 'function') return dataLayer.getTemplates() || (fallback || []);
+                if (key === 'projects' && typeof dataLayer.getProjects === 'function') return dataLayer.getProjects() || (fallback || []);
+                if (key === 'tasks' && typeof dataLayer.getTasks === 'function') return dataLayer.getTasks() || (fallback || []);
+            }
+        } catch (e) {
+            console.warn('[' + NAMESPACE + '] DataLayer load error for ' + key, e);
+        }
         try {
             var raw = localStorage.getItem(NAMESPACE + '_' + key);
             return raw ? JSON.parse(raw) : (fallback || []);
@@ -16,6 +30,41 @@
     }
 
     function saveData(key, data) {
+        var dataLayer = getDataLayer();
+        try {
+            if (dataLayer) {
+                if (key === 'templates') {
+                    var existingTemplates = typeof dataLayer.getTemplates === 'function' ? dataLayer.getTemplates().slice() : [];
+                    var nextTemplates = Array.isArray(data) ? data : [];
+                    var existingById = {};
+                    existingTemplates.forEach(function(item) {
+                        if (item && item.id) existingById[item.id] = item;
+                    });
+
+                    existingTemplates.forEach(function(item) {
+                        if (!item || !item.id) return;
+                        var stillExists = nextTemplates.some(function(nextItem) {
+                            return nextItem && nextItem.id === item.id;
+                        });
+                        if (!stillExists && typeof dataLayer.deleteTemplate === 'function') {
+                            dataLayer.deleteTemplate(item.id);
+                        }
+                    });
+
+                    nextTemplates.forEach(function(item) {
+                        if (!item) return;
+                        if (item.id && existingById[item.id] && typeof dataLayer.updateTemplate === 'function') {
+                            dataLayer.updateTemplate(item);
+                            return;
+                        }
+                        if (typeof dataLayer.createTemplate === 'function') dataLayer.createTemplate(item);
+                    });
+                    return;
+                }
+            }
+        } catch (e) {
+            console.warn('[' + NAMESPACE + '] DataLayer save error for ' + key, e);
+        }
         try {
             localStorage.setItem(NAMESPACE + '_' + key, JSON.stringify(data));
         } catch (e) {
@@ -162,41 +211,55 @@
             var tpl = templates.find(function(t) { return t.id === templateId; });
             if (!tpl) return alert('Vorlage nicht gefunden.');
 
-            // Erstelle ein neues Projekt basierend auf dem Template
-            var projects = loadData('projects', []);
+            var dataLayer = getDataLayer();
+            var nowIso = new Date().toISOString();
 
             var newProject = {
                 id: generateId('proj'),
                 name: tpl.name + ' (Kopie)',
                 description: tpl.description || '',
-                status: 'In Arbeit',
-                priority: 'Normal',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
+                status: 'planning',
+                priority: 'medium',
+                createdAt: nowIso,
+                updatedAt: nowIso
             };
 
-            // Falls Template Felder hat, füge sie als Tasks hinzu
-            if (tpl.fields && tpl.fields.length > 0) {
-                newProject.tasks = [];
-                tpl.fields.forEach(function(f) {
-                    newProject.tasks.push({
-                        id: generateId('task'),
-                        title: f.label || f.name || 'Aufgabe',
-                        status: 'Offen',
-                        priority: 'Normal',
-                        createdAt: new Date().toISOString(),
-                        assignee: ''
-                    });
-                });
-            }
-
-            // Falls Template Inhalt hat, füge Dokumentation hinzu
             if (tpl.content && Object.keys(tpl.content).length > 0) {
                 newProject.documentation = tpl.content;
             }
 
-            projects.push(newProject);
-            saveData('projects', projects);
+            if (dataLayer && typeof dataLayer.createProject === 'function') {
+                newProject = dataLayer.createProject(newProject);
+            } else {
+                var projects = loadData('projects', []);
+                projects.push(newProject);
+                saveData('projects', projects);
+            }
+
+            // Falls Template Felder hat, lege sie als echte Tasks im DataLayer an.
+            if (tpl.fields && tpl.fields.length > 0) {
+                tpl.fields.forEach(function(f) {
+                    var taskPayload = {
+                        id: generateId('task'),
+                        title: f.label || f.name || 'Aufgabe',
+                        description: f.description || '',
+                        projectId: newProject.id,
+                        status: 'backlog',
+                        priority: 'medium',
+                        createdAt: nowIso,
+                        updatedAt: nowIso,
+                        assigneeId: ''
+                    };
+
+                    if (dataLayer && typeof dataLayer.createTask === 'function') {
+                        dataLayer.createTask(taskPayload);
+                    } else {
+                        var tasks = loadData('tasks', []);
+                        tasks.push(taskPayload);
+                        saveData('tasks', tasks);
+                    }
+                });
+            }
 
             alert('Projekt aus Vorlage "' + escapeHtml(tpl.name) + '" erstellt!');
         } catch (e) {

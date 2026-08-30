@@ -6,6 +6,7 @@
 
 var NAMESPACE='KIWorkflow';
 var AI_BACKEND_URL=(window.location&&/^https?:/i.test(window.location.origin||''))?window.location.origin.replace(/\/$/,''):'';
+var activeRequestController=null;
 
 function isLocalDevelopmentHost(){
   try{
@@ -30,9 +31,32 @@ function isFallbackableStatus(status){
   return status===404||status===405||status===501;
 }
 
-function requestJson(path,method,payload,extraHeaders){
+function beginRequest(){
+  if(typeof AbortController!=='undefined'){
+    activeRequestController=new AbortController();
+    return activeRequestController;
+  }
+  activeRequestController=null;
+  return null;
+}
+
+function cancelActiveRequest(){
+  if(activeRequestController&&typeof activeRequestController.abort==='function'){
+    activeRequestController.abort();
+  }
+}
+
+function clearActiveRequest(){
+  activeRequestController=null;
+}
+
+function isAbortError(err){
+  return !!err&&(err.name==='AbortError'||err.code===20||/aborted|abort/i.test(String(err.message||'')));
+}
+
+function requestJson(path,method,payload,options){
   if(!window.LocalOllama)return Promise.reject(new Error('Lokaler Ollama-Client wurde nicht geladen.'));
-  return window.LocalOllama.request(path,method,payload||{});
+  return window.LocalOllama.request(path,method,payload||{},options||{});
 }
 
 function getProjectSnapshot(project){
@@ -117,8 +141,10 @@ function listAvailableModels(){
 }
 
 function processStage(path,payload){
-  return requestJson(path,'POST',payload).then(function(result){
+  return requestJson(path,'POST',payload,{signal:activeRequestController?activeRequestController.signal:null}).then(function(result){
     return result.body||{};
+  }).finally(function(){
+    clearActiveRequest();
   });
 }
 
@@ -221,6 +247,7 @@ function importTasks(project,taskItems){
 
     var rawStatus=String(item.status||'backlog').toLowerCase();
     var rawPriority=String(item.priority||'medium').toLowerCase();
+    var rawUrgency=String(item.urgency||'normal').toLowerCase();
     var statusMap={
       backlog:'backlog',
       todo:'todo',
@@ -231,10 +258,15 @@ function importTasks(project,taskItems){
       done:'done'
     };
     var priorityMap={low:'low',medium:'medium',high:'high',blocker:'blocker'};
+    var urgencyMap={low:'low',normal:'normal',high:'high',critical:'critical'};
     var schedule=item.schedule&&typeof item.schedule==='object'?item.schedule:{};
     var dependencyTaskIds=[];
+    var explicitDependencyId=String(item.dependencyTaskId||item.externalDependencyTaskId||'').trim();
     if((item.dependsOnPrevious || (item.sequenceIndex && Number(item.sequenceIndex)>1)) && created.length){
       dependencyTaskIds.push(created[created.length-1].id);
+    }
+    if(explicitDependencyId && dependencyTaskIds.indexOf(explicitDependencyId)===-1){
+      dependencyTaskIds.push(explicitDependencyId);
     }
 
     var task={
@@ -243,6 +275,7 @@ function importTasks(project,taskItems){
       projectId:project.id,
       status:statusMap[rawStatus]||'backlog',
       priority:priorityMap[rawPriority]||'medium',
+      urgency:urgencyMap[rawUrgency]||'normal',
       effortHours:Number(item.effortHours||0)||0,
       labels:resolveLabelIdsByNames(item.labels),
       notes:[],
@@ -322,6 +355,10 @@ function runTaskDraft(project,meetingEntries,draftInput,options,promptConfig){
 }
 
 window[NAMESPACE]={
+  beginRequest:beginRequest,
+  cancelActiveRequest:cancelActiveRequest,
+  clearActiveRequest:clearActiveRequest,
+  isAbortError:isAbortError,
   listAvailableModels:listAvailableModels,
   runConcept:runConcept,
   runPlan:runPlan,

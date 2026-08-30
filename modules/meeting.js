@@ -27,6 +27,10 @@ var state={
   draftAssigneeSubtasks:'',
   busy:false,
   activeStage:'',
+  aiProgress:0,
+  aiCancelRequested:false,
+  aiProgressTimer:null,
+  aiResetTimer:null,
   saveStatus:'Bereit'
 };
 
@@ -790,6 +794,127 @@ function downloadFile(fileName,content,mimeType){
   URL.revokeObjectURL(url);
 }
 
+function clearAiProgressTimers(){
+  if(state.aiProgressTimer){
+    clearInterval(state.aiProgressTimer);
+    state.aiProgressTimer=null;
+  }
+  if(state.aiResetTimer){
+    clearTimeout(state.aiResetTimer);
+    state.aiResetTimer=null;
+  }
+}
+
+function getAiProgressMessage(stage,progress){
+  var label=stage||'KI';
+  if(state.aiCancelRequested){
+    return label+' · Abbruch wird verarbeitet';
+  }
+  if(progress<18){
+    return label+' · Prompt wird vorbereitet';
+  }
+  if(progress<40){
+    return label+' · Kontext wird an die KI uebergeben';
+  }
+  if(progress<70){
+    return label+' · Antwort wird generiert';
+  }
+  if(progress<95){
+    return label+' · Ergebnis wird verarbeitet';
+  }
+  return label+' · Fertig';
+}
+
+function syncAiProgressUI(){
+  var progress=Math.max(0,Math.min(100,Number(state.aiProgress||0)));
+  var statusEl=byId('meeting-loading');
+  if(statusEl){
+    statusEl.textContent=state.busy
+      ?('KI arbeitet: '+(state.activeStage||'...')+' · '+Math.round(progress)+'%')
+      :state.saveStatus;
+  }
+
+  var progressBar=byId('meeting-ai-progress');
+  if(progressBar){
+    progressBar.setAttribute('aria-valuenow',String(Math.round(progress)));
+    progressBar.classList.toggle('is-busy',state.busy);
+  }
+
+  var fill=byId('meeting-ai-progress-fill');
+  if(fill){
+    fill.style.width=progress+'%';
+  }
+
+  var meta=byId('meeting-ai-progress-meta');
+  if(meta){
+    meta.textContent=state.busy?getAiProgressMessage(state.activeStage,progress):state.saveStatus;
+  }
+
+  var cancelBtn=byId('meeting-cancel-ai');
+  if(cancelBtn){
+    cancelBtn.hidden=!state.busy;
+    cancelBtn.disabled=!state.busy;
+  }
+}
+
+function beginAiAction(stage){
+  clearAiProgressTimers();
+  state.aiCancelRequested=false;
+  state.aiProgress=8;
+  if(window.KIWorkflow&&typeof window.KIWorkflow.beginRequest==='function'){
+    window.KIWorkflow.beginRequest();
+  }
+  setBusy(stage,true);
+  state.aiProgressTimer=setInterval(function(){
+    if(!state.busy){
+      clearAiProgressTimers();
+      return;
+    }
+    var progress=Number(state.aiProgress||0);
+    var next=progress;
+    if(state.aiCancelRequested){
+      next=Math.min(progress,96);
+    }else if(progress<18){
+      next=18;
+    }else if(progress<40){
+      next=Math.min(40,progress+1.8);
+    }else if(progress<70){
+      next=Math.min(70,progress+1.3);
+    }else if(progress<92){
+      next=Math.min(92,progress+0.7);
+    }else{
+      next=92;
+    }
+    state.aiProgress=next;
+    syncAiProgressUI();
+  },260);
+  syncAiProgressUI();
+}
+
+function finishAiAction(aborted){
+  clearAiProgressTimers();
+  state.aiCancelRequested=false;
+  state.aiProgress=aborted?0:100;
+  setBusy('',false);
+  syncAiProgressUI();
+  if(!aborted){
+    state.aiResetTimer=setTimeout(function(){
+      if(!state.busy){
+        state.aiProgress=0;
+        syncAiProgressUI();
+      }
+    },700);
+  }
+}
+
+function cancelAiAction(){
+  state.aiCancelRequested=true;
+  if(window.KIWorkflow&&typeof window.KIWorkflow.cancelActiveRequest==='function'){
+    window.KIWorkflow.cancelActiveRequest();
+  }
+  syncAiProgressUI();
+}
+
 function setBusy(stage,isBusy){
   state.busy=!!isBusy;
   state.activeStage=isBusy?stage:'';
@@ -797,10 +922,7 @@ function setBusy(stage,isBusy){
   if(root){
     root.classList.toggle('is-busy',state.busy);
   }
-  var spinner=byId('meeting-loading');
-  if(spinner){
-    spinner.textContent=isBusy?('KI arbeitet: '+stage+' ...'):state.saveStatus;
-  }
+  syncAiProgressUI();
   ['meeting-add-entry','meeting-analyze-note','meeting-run-concept','meeting-run-concept-inline','meeting-run-plan','meeting-run-tasks','meeting-save','meeting-run-task-draft','meeting-apply-task-draft','meeting-apply-bulk-task-draft','meeting-apply-suggested-tasks','meeting-apply-event-draft'].forEach(function(id){
     var btn=byId(id);
     if(btn)btn.disabled=!!isBusy;
@@ -809,10 +931,7 @@ function setBusy(stage,isBusy){
 
 function setSaveStatus(message){
   state.saveStatus=message||'Bereit';
-  if(!state.busy){
-    var spinner=byId('meeting-loading');
-    if(spinner)spinner.textContent=state.saveStatus;
-  }
+  if(!state.busy)syncAiProgressUI();
 }
 
 function currentProject(){
@@ -1585,16 +1704,20 @@ function runTaskDraft(){
   };
 
   state.draftProjectId=project.id;
-  setBusy('Aufgabe+Termin Entwurf',true);
+  beginAiAction('Aufgabe+Termin Entwurf');
   window.KIWorkflow.runTaskDraft(project,state.entries,draftInput,options,{}).then(function(result){
     state.taskDraft=normalizeTaskDraft(result&&result.draft?result.draft:{summaryMarkdown:(window.KIWorkflow.readResponseMarkdown?window.KIWorkflow.readResponseMarkdown(result):'')},options);
     state.taskDraft=fallbackPopulateDraftFromInput(state.taskDraft,draftInput,options);
     renderTaskDraftPreview();
     touchMeetingProtocol(state.projectId);
   }).catch(function(err){
+    if(window.KIWorkflow&&typeof window.KIWorkflow.isAbortError==='function'&&window.KIWorkflow.isAbortError(err)){
+      notify('KI-Entwurf wurde abgebrochen.',false);
+      return;
+    }
     notify('KI-Entwurf konnte nicht erstellt werden: '+(err.message||String(err)),true);
   }).finally(function(){
-    setBusy('',false);
+    finishAiAction(state.aiCancelRequested);
   });
 }
 
@@ -1942,6 +2065,8 @@ function normalizeTaskItems(items){
       if(typeof subtask==='string')return subtask.trim();
       return String((subtask&&subtask.title)||'').trim();
     }).filter(function(subtask){return !!subtask;}):[];
+    var scheduleRaw=item&&item.schedule&&typeof item.schedule==='object'?item.schedule:{};
+    var dependencyFromSource=String(item&&item.externalDependencyTaskId||item&&item.dependencyTaskId||'').trim();
     return {
       title:String(item&&item.title||'').trim(),
       description:String(item&&item.description||'').trim(),
@@ -1951,12 +2076,104 @@ function normalizeTaskItems(items){
       sequenceIndex:Number(item&&item.sequenceIndex||0)||0,
       dependsOnPrevious:!!(item&&item.dependsOnPrevious),
       dependencyTaskIds:Array.isArray(item&&item.dependencyTaskIds)?item.dependencyTaskIds.map(function(id){return String(id||'').trim();}).filter(function(id){return !!id;}):[],
+      dependencyTaskId:dependencyFromSource,
       dependencyBlocked:!!(item&&item.dependencyBlocked),
       dependencyBlockReason:String(item&&item.dependencyBlockReason||''),
+      schedule:normalizeDraftSchedule(scheduleRaw),
       labels:labels,
       subtasks:subtasks
     };
   }).filter(function(item){return !!item.title;});
+}
+
+function splitDraftBilingualText(rawText){
+  var text=String(rawText||'').trim();
+  if(!text)return {de:'',en:''};
+
+  var pipe=text.split('|').map(function(part){return part.trim();}).filter(function(part){return !!part;});
+  if(pipe.length>=2){
+    return {de:pipe[0],en:pipe.slice(1).join(' | ')};
+  }
+
+  var deEnMatch=text.match(/DE:\s*([\s\S]*?)\n\s*EN:\s*([\s\S]*)/i);
+  if(deEnMatch){
+    return {
+      de:String(deEnMatch[1]||'').trim(),
+      en:String(deEnMatch[2]||'').trim()
+    };
+  }
+
+  return {de:text,en:text};
+}
+
+function buildTaskDraftFromStage3(taskItems,summaryMarkdown){
+  var ordered=normalizeTaskItems(taskItems).slice().sort(function(a,b){
+    var aSeq=Number(a&&a.sequenceIndex||0)||0;
+    var bSeq=Number(b&&b.sequenceIndex||0)||0;
+    if(aSeq&&!bSeq)return -1;
+    if(!aSeq&&bSeq)return 1;
+    if(aSeq!==bSeq)return aSeq-bSeq;
+    return 0;
+  });
+  if(!ordered.length)return null;
+
+  var main=ordered[0];
+  var mainTitle=splitDraftBilingualText(main.title);
+  var mainDescription=splitDraftBilingualText(main.description);
+  var dependencyTaskId=normalizeTaskDependencyId(main.dependencyTaskId||main.dependencyTaskIds&&main.dependencyTaskIds[0]||'');
+  var totalEffort=ordered.reduce(function(sum,item){
+    return sum+(Number(item&&item.effortHours||0)||0);
+  },0);
+
+  return {
+    summaryMarkdown:String(summaryMarkdown||'').trim()||'Stufe 3 erzeugte Aufgaben wurden als Entwurf zur Durchsicht uebernommen.',
+    task:{
+      titleDe:mainTitle.de,
+      titleEn:mainTitle.en,
+      descriptionDe:mainDescription.de,
+      descriptionEn:mainDescription.en,
+      priority:main.priority||'medium',
+      urgency:'normal',
+      effortHours:Number(main.effortHours||0)||0,
+      labels:Array.isArray(main.labels)?main.labels.slice():[],
+      sequenceIndex:Number(main.sequenceIndex||1)||1,
+      dependsOnPrevious:!!main.dependsOnPrevious,
+      dependencyTaskId:dependencyTaskId,
+      schedule:normalizeDraftSchedule(main.schedule||{}),
+      subtasksDe:Array.isArray(main.subtasks)?main.subtasks.slice():[],
+      subtasksEn:Array.isArray(main.subtasks)?main.subtasks.slice():[],
+      note:'Aus Stufe 3 uebernommen. Gesamtaufwand aus allen generierten Aufgaben: '+Math.round(totalEffort*100)/100+'h.'
+    },
+    taskSuggestions:ordered.slice(1).map(function(item,idx){
+      var itemTitle=splitDraftBilingualText(item.title);
+      var itemDescription=splitDraftBilingualText(item.description);
+      var itemDependency=normalizeTaskDependencyId(item.dependencyTaskId||item.dependencyTaskIds&&item.dependencyTaskIds[0]||'');
+      return {
+        titleDe:itemTitle.de,
+        titleEn:itemTitle.en,
+        descriptionDe:itemDescription.de,
+        descriptionEn:itemDescription.en,
+        priority:item.priority||'medium',
+        urgency:'normal',
+        effortHours:Number(item.effortHours||0)||0,
+        labels:Array.isArray(item.labels)?item.labels.slice():[],
+        sequenceIndex:Number(item.sequenceIndex||idx+2)||idx+2,
+        dependsOnPrevious:!!item.dependsOnPrevious,
+        dependencyTaskId:itemDependency,
+        note:item.dependsOnPrevious?'Als Folgeaufgabe markiert (Aufgabenkette).':''
+      };
+    }),
+    events:[],
+    event:{
+      create:false,
+      title:'',
+      description:'',
+      type:'meeting',
+      date:'',
+      startTime:'',
+      endTime:''
+    }
+  };
 }
 
 function renderTasksOutput(summaryMarkdown,taskItems){
@@ -1972,6 +2189,8 @@ function renderTasksOutput(summaryMarkdown,taskItems){
     if(item.status)meta.push(item.status);
     if(item.priority)meta.push(item.priority);
     if(item.effortHours)meta.push(item.effortHours+'h');
+    if(item.dependsOnPrevious)meta.push('Folgeaufgabe');
+    if(item.dependencyTaskId)meta.push('Vorgaenger gesetzt');
     if(item.dependencyBlocked)meta.push('wartet auf '+(item.dependencyTaskIds.length||1)+' Aufgabe(n)');
     var labelText=item.labels.length?'<div class="meeting-task-labels">'+item.labels.map(function(label){return '<span class="meeting-chip">'+escapeHtml(label)+'</span>';}).join('')+'</div>':'';
     var subtasks=item.subtasks.length?'<ul class="meeting-task-subtasks">'+item.subtasks.map(function(subtask){return '<li>'+escapeHtml(subtask)+'</li>';}).join('')+'</ul>':'';
@@ -2027,7 +2246,8 @@ function updateWorkflowPersisted(){
     conceptMarkdown:state.conceptMarkdown||'',
     planMarkdown:state.planMarkdown||'',
     tasksSummary:state.tasksSummary||'',
-    taskItems:normalizeTaskItems(state.taskItems||[])
+    taskItems:normalizeTaskItems(state.taskItems||[]),
+    taskDraft:state.taskDraft?normalizeTaskDraft(state.taskDraft,{createSubtasks:true,splitIntoMultiple:true,scheduleMode:'none',eventType:'meeting'}):null
   });
 }
 
@@ -2066,6 +2286,7 @@ function loadStateForProject(projectId){
   state.planMarkdown=flow.planMarkdown||'';
   state.tasksSummary=flow.tasksSummary||'';
   state.taskItems=normalizeTaskItems(flow.taskItems||[]);
+  state.taskDraft=flow.taskDraft?normalizeTaskDraft(flow.taskDraft,{createSubtasks:true,splitIntoMultiple:true,scheduleMode:'none',eventType:'meeting'}):null;
 
   fetchEntriesFromServer(state.projectId).then(function(serverNotes){
     if(serverNotes.length>=state.entries.length){
@@ -2196,6 +2417,8 @@ function openPromptAdapter(stageKey,stageTitle,presetKey){
       models:models,
       projectTitle:getProjectTitle(project),
       meetingNotes:window.KIWorkflow.notesToMarkdown(state.entries),
+      conceptMarkdown:state.conceptMarkdown||'- (nicht vorhanden)',
+      planMarkdown:state.planMarkdown||'- (nicht vorhanden)',
       existingData:buildExistingDataSummary(project),
       language:'DE'
     });
@@ -2209,12 +2432,11 @@ function runConcept(){
     return;
   }
 
-  setBusy('Konzept',true);
   openPromptAdapter('concept','Stufe 1: Projekt-Konzept','creative').then(function(config){
     if(!config){
-      setBusy('',false);
       return null;
     }
+    beginAiAction('Konzept');
     return window.KIWorkflow.runConcept(project,state.entries,config).then(function(result){
       state.conceptMarkdown=window.KIWorkflow.readResponseMarkdown?window.KIWorkflow.readResponseMarkdown(result):(result.markdown||result.result||'');
       if(!state.conceptMarkdown)state.conceptMarkdown='(Leere Antwort erhalten)';
@@ -2224,9 +2446,13 @@ function runConcept(){
       return result;
     });
   }).catch(function(err){
+    if(window.KIWorkflow&&typeof window.KIWorkflow.isAbortError==='function'&&window.KIWorkflow.isAbortError(err)){
+      notify('Konzept wurde abgebrochen.',false);
+      return;
+    }
     notify('Konzept konnte nicht erstellt werden: '+(err.message||String(err)),true);
   }).finally(function(){
-    setBusy('',false);
+    finishAiAction(state.aiCancelRequested);
   });
 }
 
@@ -2241,12 +2467,11 @@ function runPlan(){
     return;
   }
 
-  setBusy('Plan',true);
   openPromptAdapter('plan','Stufe 2: Projektplan','manager').then(function(config){
     if(!config){
-      setBusy('',false);
       return null;
     }
+    beginAiAction('Plan');
     return window.KIWorkflow.runPlan(project,state.entries,state.conceptMarkdown,config).then(function(result){
       state.planMarkdown=window.KIWorkflow.readResponseMarkdown?window.KIWorkflow.readResponseMarkdown(result):(result.markdown||result.result||'');
       if(!state.planMarkdown)state.planMarkdown='(Leere Antwort erhalten)';
@@ -2256,9 +2481,13 @@ function runPlan(){
       return result;
     });
   }).catch(function(err){
+    if(window.KIWorkflow&&typeof window.KIWorkflow.isAbortError==='function'&&window.KIWorkflow.isAbortError(err)){
+      notify('Plan wurde abgebrochen.',false);
+      return;
+    }
     notify('Plan konnte nicht erstellt werden: '+(err.message||String(err)),true);
   }).finally(function(){
-    setBusy('',false);
+    finishAiAction(state.aiCancelRequested);
   });
 }
 
@@ -2273,27 +2502,34 @@ function runTasks(){
     return;
   }
 
-  setBusy('Tasks',true);
   openPromptAdapter('tasks','Stufe 3: Aufgaben erzeugen','technical').then(function(config){
     if(!config){
-      setBusy('',false);
       return null;
     }
+    beginAiAction('Tasks');
     return window.KIWorkflow.runTasks(project,state.entries,state.conceptMarkdown,state.planMarkdown,config).then(function(result){
       var count=result&&Array.isArray(result.createdTasks)?result.createdTasks.length:0;
       state.taskItems=normalizeTaskItems(result.createdTasks||result.tasks||[]);
       var taskMarkdown=window.KIWorkflow.readResponseMarkdown?window.KIWorkflow.readResponseMarkdown(result):(result.summaryMarkdown||result.markdown||result.result||'');
       state.tasksSummary='Erstellte Tasks: '+count+'\n\n'+taskMarkdown;
+      state.taskDraft=buildTaskDraftFromStage3(result.tasks||result.createdTasks||[],taskMarkdown)||state.taskDraft;
+      var draftPanel=byId('meeting-task-draft-collapsible');
+      if(draftPanel)draftPanel.open=true;
       updateWorkflowPersisted();
       touchMeetingProtocol(state.projectId);
+      renderTaskDraftPreview();
       renderWorkflow();
       notify(count+' Tasks ins Dashboard importiert.',false);
       return result;
     });
   }).catch(function(err){
+    if(window.KIWorkflow&&typeof window.KIWorkflow.isAbortError==='function'&&window.KIWorkflow.isAbortError(err)){
+      notify('Task-Generierung wurde abgebrochen.',false);
+      return;
+    }
     notify('Tasks konnten nicht erzeugt werden: '+(err.message||String(err)),true);
   }).finally(function(){
-    setBusy('',false);
+    finishAiAction(state.aiCancelRequested);
   });
 }
 
@@ -2310,7 +2546,16 @@ function bind(){
         +'<button type="button" class="btn btn-secondary" id="meeting-toggle-closed">Als Closed markieren</button>'
         +'<span id="meeting-protocol-status" class="meeting-loading">Status: Open</span>'
         +'<button type="button" class="btn btn-primary" id="meeting-save">Speichern</button>'
-        +'<span id="meeting-loading" class="meeting-loading">Bereit</span>'
+        +'<div class="meeting-ai-status">'
+          +'<div class="meeting-ai-status-row">'
+            +'<span id="meeting-loading" class="meeting-loading">Bereit</span>'
+            +'<button type="button" class="btn btn-secondary meeting-ai-cancel" id="meeting-cancel-ai" hidden>Abbrechen</button>'
+          +'</div>'
+          +'<div id="meeting-ai-progress" class="meeting-ai-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">'
+            +'<div id="meeting-ai-progress-fill" class="meeting-ai-progress-fill"></div>'
+          +'</div>'
+          +'<div id="meeting-ai-progress-meta" class="meeting-ai-progress-meta">Bereit</div>'
+        +'</div>'
       +'</div>'
 
       +'<section class="meeting-flow-shell">'
@@ -2420,6 +2665,7 @@ function bind(){
   byId('meeting-create-project').addEventListener('click',openCreateProjectModal);
   byId('meeting-toggle-closed').addEventListener('click',toggleMeetingProtocolStatus);
   byId('meeting-save').addEventListener('click',saveMeetingState);
+  byId('meeting-cancel-ai').addEventListener('click',cancelAiAction);
   byId('meeting-add-entry').addEventListener('click',addEntry);
   byId('meeting-analyze-note').addEventListener('click',analyzeNoteInput);
   byId('meeting-export-md').addEventListener('click',exportMarkdown);

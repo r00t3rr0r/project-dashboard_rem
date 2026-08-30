@@ -6,8 +6,8 @@
 
 var NAMESPACE='ProjectsModule';
 var REPO_URL_RE=/(?:^|\/\/)(?:www\.)?github\.com\/([^\/#?]+)\/([^\/#?]+)(?:[\/#?]|$)/i;
-var MAX_ATTACHMENT_SIZE=1024*1024;
-var MAX_TOTAL_ATTACHMENT_SIZE=6*1024*1024;
+var MAX_ATTACHMENT_SIZE=100*1024*1024;
+var MAX_TOTAL_ATTACHMENT_SIZE=100*1024*1024;
 var AI_BACKEND_URL=(window.location&&/^https?:/i.test(window.location.origin||''))?window.location.origin.replace(/\/$/,''):'';
 var DEFAULT_OLLAMA_MODEL='hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M';
 var GITHUB_TOKEN_SESSION_KEY='projektDashboard.githubApiToken';
@@ -1557,6 +1557,146 @@ function progressToneClass(progress){
   return 'is-low';
 }
 
+function formatEffortHoursLabel(value){
+  var hours=Math.max(0,Math.round((Number(value)||0)*10)/10);
+  var text=String(hours);
+  if(text.indexOf('.')!==-1)text=text.replace(/\.0$/,'').replace('.',',');
+  return text+' h Aufwand';
+}
+
+function formatWorkdaysLabel(value){
+  var days=Math.max(0.5,Math.round((Number(value)||0)*10)/10);
+  var text=String(days);
+  if(text.indexOf('.')!==-1)text=text.replace(/\.0$/,'').replace('.',',');
+  return 'ca. '+text+' AT';
+}
+
+function addWorkingDays(startTs,daysToAdd){
+  var date=new Date(startTs);
+  var remaining=Math.max(0,Math.ceil(Number(daysToAdd)||0)-1);
+  while(remaining>0){
+    date.setDate(date.getDate()+1);
+    var weekday=date.getDay();
+    if(weekday!==0&&weekday!==6)remaining--;
+  }
+  return date.getTime();
+}
+
+function getPlanScheduleDateCandidates(schedule){
+  var cfg=schedule&&typeof schedule==='object'?schedule:{};
+  var list=[];
+  ['deadline','fixedAt','rangeStart','rangeEnd'].forEach(function(key){
+    var value=String(cfg[key]||'').trim();
+    if(value)list.push(value);
+  });
+  return list;
+}
+
+function calculateProjectStartProjection(project){
+  var draft=ensureProjectExecutionPlan(project);
+  var queuedTasks=Array.isArray(draft.queuedTasks)?draft.queuedTasks:[];
+  var queuedEvents=Array.isArray(draft.queuedEvents)?draft.queuedEvents:[];
+  var milestoneItems=draft.milestoneDraft&&Array.isArray(draft.milestoneDraft.items)?draft.milestoneDraft.items:[];
+  var totalEffortHours=0;
+  var scheduledDates=[];
+  var assigneeIds={};
+
+  queuedTasks.forEach(function(task){
+    if(!task)return;
+    totalEffortHours+=Math.max(0,Number(task.effortHours||0)||0);
+    getPlanScheduleDateCandidates(task.schedule).forEach(function(value){
+      scheduledDates.push(value);
+    });
+    var assigneeId=String(task.assigneeId||'').trim();
+    if(assigneeId)assigneeIds[assigneeId]=true;
+  });
+
+  queuedEvents.forEach(function(item){
+    var value=String(item&&item.date||item&&item.startDate||'').trim();
+    if(value)scheduledDates.push(value);
+  });
+
+  milestoneItems.forEach(function(item){
+    var value=String(item&&item.date||'').trim();
+    if(value)scheduledDates.push(value);
+  });
+
+  var taskCount=queuedTasks.length;
+  var eventCount=queuedEvents.length;
+  var milestoneCount=milestoneItems.length;
+  var hasPlan=taskCount>0||eventCount>0||milestoneCount>0;
+  if(!hasPlan){
+    return {
+      hasPlan:false,
+      totalEffortHours:0,
+      estimatedWorkdays:0,
+      startDate:'',
+      endDate:'',
+      periodLabel:'',
+      counts:{tasks:0,events:0,milestones:0}
+    };
+  }
+
+  var teamSize=Math.max(1,Object.keys(assigneeIds).length||normalizeProjectTeamMembers(project).length||1);
+  var effectiveDailyHours=Math.max(8,teamSize*8);
+  var estimatedWorkdays=totalEffortHours>0?Math.max(1,Math.ceil((totalEffortHours/effectiveDailyHours)*10)/10):0;
+  var startTs=getStartOfDayTimestamp(Date.now());
+  var estimatedEndTs=estimatedWorkdays?addWorkingDays(startTs,estimatedWorkdays):startTs;
+
+  scheduledDates.forEach(function(value){
+    var ts=getProjectTimelineDayTimestamp(value);
+    if(!isNaN(ts)&&ts>estimatedEndTs)estimatedEndTs=ts;
+  });
+
+  var startDate=new Date(startTs).toISOString().slice(0,10);
+  var endDate=new Date(estimatedEndTs).toISOString().slice(0,10);
+  var periodLabel=formatDate(startDate)+' - '+formatDate(endDate);
+
+  return {
+    hasPlan:true,
+    totalEffortHours:Math.round(totalEffortHours*10)/10,
+    estimatedWorkdays:estimatedWorkdays,
+    startDate:startDate,
+    endDate:endDate,
+    periodLabel:periodLabel,
+    counts:{tasks:taskCount,events:eventCount,milestones:milestoneCount}
+  };
+}
+
+function renderProjectStartPlanInline(project,canEdit){
+  var projection=calculateProjectStartProjection(project);
+  var status=String(project&&project.status||'').toLowerCase();
+  if(!projection.hasPlan&&status!=='planning')return '';
+
+  var chips=[];
+  if(projection.counts.tasks||projection.counts.events||projection.counts.milestones){
+    chips.push('<span class="badge badge-blue">Startvorlage: '+projection.counts.tasks+' Aufgaben · '+projection.counts.events+' Termine · '+projection.counts.milestones+' Meilensteine</span>');
+  }
+  if(projection.totalEffortHours>0){
+    chips.push('<span class="badge badge-blue">'+escapeHtml(formatEffortHoursLabel(projection.totalEffortHours))+'</span>');
+  }
+  if(projection.estimatedWorkdays>0){
+    chips.push('<span class="badge badge-green">'+escapeHtml(formatWorkdaysLabel(projection.estimatedWorkdays))+'</span>');
+  }
+  if(projection.periodLabel){
+    chips.push('<span class="badge badge-green">'+escapeHtml(projection.periodLabel)+'</span>');
+  }
+
+  var actions='';
+  if(projection.hasPlan&&status!=='active'&&status!=='done'){
+    actions=''
+      +'<button class="btn btn-primary project-card-head-inline-btn" data-action="start-project" data-id="'+escapeHtml(project.id)+'" '+(canEdit?'':'disabled')+'>Projektstart & Meilensteine</button>';
+  }
+
+  return '<div class="project-card-head-titlebar">'
+    +'<h3>'+escapeHtml(getProjectTitle(project))+'</h3>'
+    +'<div class="project-card-head-inline">'
+      +(chips.length?'<div class="project-card-head-inline-chips">'+chips.join('')+'</div>':'')
+      +actions
+    +'</div>'
+  +'</div>';
+}
+
 function renderProjectHeadProgress(project, summary){
   var flow=calculateProjectFlowMetrics(project);
   var progress=getProjectProgressValue(project,flow);
@@ -2685,7 +2825,8 @@ function renderProjectList(){
     var executionPlan=ensureProjectExecutionPlan(project);
     var queuedTaskCount=executionPlan.queuedTasks.length;
     var queuedEventCount=executionPlan.queuedEvents.length;
-    var hasQueuedPlan=queuedTaskCount>0||queuedEventCount>0;
+    var queuedMilestoneCount=executionPlan.milestoneDraft&&Array.isArray(executionPlan.milestoneDraft.items)?executionPlan.milestoneDraft.items.length:0;
+    var hasQueuedPlan=queuedTaskCount>0||queuedEventCount>0||queuedMilestoneCount>0;
     var isPlanning=String(project.status||'').toLowerCase()==='planning';
     var meetingIsClosed=meeting.status==='closed';
     var meetingEntriesPreview=meeting.entries.slice(-3).reverse();
@@ -2706,7 +2847,7 @@ function renderProjectList(){
 
     html+='<article class="project-card'+(hasEmployeeWork?' project-card-active-work':'')+'" data-project-id="'+escapeHtml(project.id)+'" data-project-editable="'+(canEdit?'true':'false')+'" data-has-active-work="'+(hasEmployeeWork?'true':'false')+'">';
     html+='<div class="project-card-head">';
-    html+='<div class="project-card-head-main"><h3>'+escapeHtml(getProjectTitle(project))+'</h3>';
+    html+='<div class="project-card-head-main">'+renderProjectStartPlanInline(project,canEdit);
     html+='<p class="text-muted">'+escapeHtml(project.description||'Keine Beschreibung')+'</p>';
     if(hasEmployeeWork){
       html+='<p class="project-active-work-note">Mitarbeiter arbeitet aktuell an einer Aufgabe.</p>';
@@ -2740,7 +2881,7 @@ function renderProjectList(){
     html+='<span class="badge badge-blue">Status: '+escapeHtml(project.status||'active')+'</span>';
     html+='<span class="badge '+(currentProgress>=70?'badge-green':'badge-blue')+'">Fortschritt: '+currentProgress+'%</span>';
     html+='<span class="badge '+(flow.overdue>0?'badge-red':'badge-green')+'">'+escapeHtml(progressLabel)+'</span>';
-    if(hasQueuedPlan)html+='<span class="badge badge-blue">Startvorlage: '+queuedTaskCount+' Tasks · '+queuedEventCount+' Termine</span>';
+    if(hasQueuedPlan)html+='<span class="badge badge-blue">Startvorlage: '+queuedTaskCount+' Tasks · '+queuedEventCount+' Termine · '+queuedMilestoneCount+' Meilensteine</span>';
     html+='</div>';
     if(project.startDate)projectPeriod.push('Start '+formatDate(project.startDate));
     if(project.endDate)projectPeriod.push('Ende '+formatDate(project.endDate));
@@ -2748,13 +2889,8 @@ function renderProjectList(){
       {label:'Zeitraum', value:projectPeriod.length?projectPeriod.join(' · '):'Nicht terminiert'},
       {label:'Delivery-Score', value:flow.deliveryScore+'/100'},
       {label:'Rhythmus-Score', value:flow.rhythmScore+'/100'},
-      {label:'Startvorlage', value:hasQueuedPlan?(queuedTaskCount+' Aufgaben · '+queuedEventCount+' Termine'):'Keine vorgemerkten KI-Eintraege'}
+      {label:'Startvorlage', value:hasQueuedPlan?(queuedTaskCount+' Aufgaben · '+queuedEventCount+' Termine · '+queuedMilestoneCount+' Meilensteine'):'Keine vorgemerkten KI-Eintraege'}
     ]);
-    if(isPlanning){
-      html+='<div class="project-actions-inline mt-1">';
-      html+='<button class="btn btn-primary" data-action="start-project" data-id="'+escapeHtml(project.id)+'" '+(canEdit?'':'disabled')+'>Projekt starten (Meilensteine pruefen)</button>';
-      html+='</div>';
-    }
     html+='</div>';
 
     html+='<div class="project-meta-block">';
@@ -3776,6 +3912,7 @@ function openAiKnowledgeTaskDialog(projectId,options){
     draft.status='queued';
     if(!draft.generatedAt)draft.generatedAt=new Date().toISOString();
     draft.updatedAt=new Date().toISOString();
+    baseProject.status=baseProject.status==='done'?'done':'planning';
     window.DataLayer.updateProject(baseProject);
 
     var freshProject=window.DataLayer.getProjectById(projectId);

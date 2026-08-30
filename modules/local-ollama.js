@@ -51,7 +51,7 @@ function buildPrompt(path,payload){
     return 'Du bist ein erfahrener Projektmanager. Erstelle aus Konzept und Meeting-Notizen einen umsetzbaren Phasenplan mit Meilensteinen, Abhaengigkeiten, Ressourcen, Risiken und einem 6-Wochen-Aktionsplan. Antworte nur mit dem finalen Markdown.'+context;
   }
   if(path==='/api/ai/plan-to-tasks'){
-    return 'Du bist Tech-Lead und Product Owner. Erzeuge 6 bis 20 realistische, geordnete Kanban-Aufgaben. Antworte ausschliesslich als JSON mit {"summaryMarkdown":"...","tasks":[{"title":"...","description":"...","status":"todo","priority":"medium","effortHours":4,"labels":[],"subtasks":[],"sequenceIndex":1,"dependsOnPrevious":false,"schedule":{"mode":"none","deadline":"","fixedAt":"","rangeStart":"","rangeEnd":""}}]}.'+context;
+    return 'Du bist Tech-Lead und Product Owner. Zerlege den Projektplan in technisch ausführbare Entwicklungsaufgabenschritte und formuliere jede Aufgabe als konkrete Arbeitseinheit mit klarer Aktion. Erzeuge 6 bis 20 realistische, geordnete Kanban-Aufgaben. Antworte ausschliesslich als JSON mit {"summaryMarkdown":"...","tasks":[{"title":"...","description":"...","status":"todo","priority":"medium","effortHours":4,"labels":[],"subtasks":[],"sequenceIndex":1,"dependsOnPrevious":false,"schedule":{"mode":"none","deadline":"","fixedAt":"","rangeStart":"","rangeEnd":""}}]}.'+context;
   }
   if(path==='/api/ai/meeting-task-draft'){
     return 'Du bist ein zweisprachiger Projektassistent. Erzeuge aus Benutzereingabe und Projektkontext einen realistischen Aufgabenentwurf. Antworte ausschliesslich als JSON mit {"summaryMarkdown":"...","task":{"titleDe":"...","titleEn":"...","descriptionDe":"...","descriptionEn":"...","priority":"medium","urgency":"normal","effortHours":3,"labels":[],"schedule":{"mode":"none","deadline":"","fixedAt":"","rangeStart":"","rangeEnd":""},"sequenceIndex":1,"dependsOnPrevious":false,"subtasksDe":[],"subtasksEn":[],"note":""},"taskSuggestions":[],"event":{"create":false,"title":"","description":"","type":"task","date":"","startTime":"","endTime":""}}. Liefere bei mehreren Arbeitspaketen 2 bis 8 taskSuggestions im gleichen Aufgabenformat.'+context;
@@ -127,12 +127,13 @@ function wrapResult(path,payload,text){
   return parsed;
 }
 
-function remoteFetch(path,method,payload){
+function remoteFetch(path,method,payload,options){
   var url=(window.location&&window.location.origin?window.location.origin:'')+String(path||'');
   var init={
     method:String(method||'GET'),
     headers:{'Content-Type':'application/json'}
   };
+  if(options&&options.signal)init.signal=options.signal;
   if(method&&String(method).toUpperCase()!=='GET'&&typeof payload!=='undefined'){
     init.body=JSON.stringify(payload||{});
   }
@@ -144,17 +145,18 @@ function remoteFetch(path,method,payload){
   });
 }
 
-function requestGeneration(requestBody){
+function requestGeneration(requestBody,options){
   return localFetch('/api/generate',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(requestBody)
+    body:JSON.stringify(requestBody),
+    signal:options&&options.signal?options.signal:undefined
   });
 }
 
-function generate(path,payload){
+function generate(path,payload,options){
   if(isRemoteProxyMode()){
-    return remoteFetch(path,'POST',payload||{}).then(function(result){
+    return remoteFetch(path,'POST',payload||{},options||{}).then(function(result){
       return result.body||{};
     });
   }
@@ -168,7 +170,7 @@ function generate(path,payload){
   };
   if(isJsonPath(path))requestBody.format='json';
 
-  return requestGeneration(requestBody).then(function(result){
+  return requestGeneration(requestBody,options||{}).then(function(result){
     try{
       return wrapResult(path,payload||{},String(result.body.response||''));
     }catch(firstError){
@@ -177,7 +179,7 @@ function generate(path,payload){
       retryBody.prompt+='\n\nDie vorige Ausgabe war unvollstaendig oder syntaktisch ungueltig. Erzeuge das JSON erneut, kompakt und vollstaendig. Validiere intern alle Klammern, Arrays, Kommata und Anfuehrungszeichen. Gib ausschliesslich ein einziges gueltiges JSON-Objekt aus.';
       retryBody.options.temperature=0;
       retryBody.options.num_predict=Math.min(6000,Math.max(3600,config.maxTokens*2));
-      return requestGeneration(retryBody).then(function(retryResult){
+      return requestGeneration(retryBody,options||{}).then(function(retryResult){
         try{
           return wrapResult(path,payload||{},String(retryResult.body.response||''));
         }catch(retryError){
@@ -188,16 +190,16 @@ function generate(path,payload){
   });
 }
 
-function request(path,method,payload){
+function request(path,method,payload,options){
   if(path==='/api/ai/health'&&method==='GET')return health();
   if(isRemoteProxyMode()){
     if(method!=='POST')return Promise.reject(new Error('Nicht unterstuetzte remote Ollama-Methode: '+method));
-    return remoteFetch(path,method,payload||{}).then(function(result){
+    return remoteFetch(path,method,payload||{},options||{}).then(function(result){
       return {endpoint:result.endpoint,body:result.body||{}};
     });
   }
   if(method!=='POST')return Promise.reject(new Error('Nicht unterstuetzte lokale Ollama-Methode: '+method));
-  return generate(path,payload||{}).then(function(body){return {endpoint:OLLAMA_BASES[0]+'/api/generate',body:body};});
+  return generate(path,payload||{},options||{}).then(function(body){return {endpoint:OLLAMA_BASES[0]+'/api/generate',body:body};});
 }
 
 window.LocalOllama={

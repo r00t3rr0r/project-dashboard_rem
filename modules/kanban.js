@@ -38,8 +38,8 @@
   var liveRefreshHandle = null;
   var pauseDialogState = null;
   var skipNextTaskRender = false;
-  var MAX_TASK_ATTACHMENT_SIZE = 1024 * 1024;
-  var MAX_TOTAL_TASK_ATTACHMENT_SIZE = 6 * 1024 * 1024;
+  var MAX_TASK_ATTACHMENT_SIZE = 100 * 1024 * 1024;
+  var MAX_TOTAL_TASK_ATTACHMENT_SIZE = 100 * 1024 * 1024;
 
   function getAuthManager() {
     return window.AuthManager || null;

@@ -2062,6 +2062,38 @@ body.projects-modal-open {
   gap: 0.55rem;
 }
 
+.project-card-head-titlebar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.project-card-head-inline {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  flex: 1 1 24rem;
+  flex-wrap: wrap;
+}
+
+.project-card-head-inline-chips {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.project-card-head-inline-btn {
+  padding: 0.48rem 0.72rem;
+  font-size: 0.76rem;
+  border-radius: 0.7rem;
+  min-height: 2.2rem;
+}
+
 .project-card-head h3 {
   color: var(--text-primary);
   margin-bottom: 0.35rem;
@@ -3508,6 +3540,13 @@ body.projects-modal-open {
   .project-card-head-actions {
     width: 100%;
     max-width: 100%;
+  }
+
+  .project-card-head-titlebar,
+  .project-card-head-inline,
+  .project-card-head-inline-chips {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .project-card-head-summary {

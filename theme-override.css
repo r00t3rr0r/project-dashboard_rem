@@ -5507,6 +5507,80 @@ body.light-mode .resolution-dialog::backdrop {
     font-size: 0.78rem;
   }
 
+  .meeting-ai-status {
+    margin-left: auto;
+    display: grid;
+    gap: 0.35rem;
+    min-width: min(18rem, 100%);
+    width: clamp(18rem, 26vw, 24rem);
+  }
+
+  .meeting-ai-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.55rem;
+  }
+
+  .meeting-ai-status .meeting-loading {
+    margin-left: 0;
+    flex: 1 1 auto;
+    color: var(--text-primary);
+    font-size: 0.74rem;
+    letter-spacing: 0.02em;
+  }
+
+  .meeting-ai-cancel {
+    flex: 0 0 auto;
+    min-height: 1.95rem;
+    padding-inline: 0.7rem;
+    font-size: 0.72rem;
+  }
+
+  .meeting-ai-progress {
+    position: relative;
+    height: 0.78rem;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--progress-bg);
+    border: 1px solid rgba(110, 148, 201, 0.28);
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.15);
+  }
+
+  .meeting-ai-progress::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+    transform: translateX(-120%);
+    animation: meetingAiShimmer 1.8s linear infinite;
+    opacity: 0.9;
+    pointer-events: none;
+  }
+
+  .meeting-ai-progress-fill {
+    position: relative;
+    z-index: 1;
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--accent-blue), var(--accent-green));
+    box-shadow: 0 0 18px rgba(74, 158, 255, 0.38);
+    transition: width 220ms ease;
+  }
+
+  .meeting-ai-progress.is-busy .meeting-ai-progress-fill {
+    background: linear-gradient(90deg, #5fa8ff, #4ce1a1);
+  }
+
+  .meeting-ai-progress-meta {
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    min-height: 1rem;
+  }
+
   .meeting-editor {
     padding: 1rem;
     background: transparent;
@@ -6154,6 +6228,15 @@ body.light-mode .resolution-dialog::backdrop {
     opacity: 0.92;
   }
 
+  @keyframes meetingAiShimmer {
+    0% {
+      transform: translateX(-120%);
+    }
+    100% {
+      transform: translateX(120%);
+    }
+  }
+
   .prompt-config-modal {
     display: grid;
     gap: 0.8rem;
@@ -6232,6 +6315,12 @@ body.light-mode .resolution-dialog::backdrop {
 
     .meeting-loading {
       margin-left: 0;
+    }
+
+    .meeting-ai-status {
+      margin-left: 0;
+      width: 100%;
+      min-width: 0;
     }
 
     .meeting-editor-head {

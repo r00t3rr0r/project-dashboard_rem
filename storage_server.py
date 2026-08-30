@@ -1089,7 +1089,9 @@ class StorageHandler(BaseHTTPRequestHandler):
             'Wichtig: Gib ausschliesslich das JSON-Objekt zurueck. Kein Markdown, kein Codeblock, keine Analyse, keine Vorrede, kein Erklaerungstext. '
             'Regeln: 6-20 Tasks, realistische Aufwandsschaetzung, Status aus {backlog,todo,in-progress,review,done}, Prioritaet aus {low,medium,high,blocker}, summaryMarkdown maximal 5 knappe Stichpunkte. '
             'Ordne die Aufgaben sauber und setze sequenceIndex fortlaufend ab 1. '
-            'Wenn eine Aufgabe logisch auf die vorherige aufbaut, setze dependsOnPrevious=true. '
+            'Wenn eine Aufgabe logisch auf die vorherige aufbaut, setze dependsOnPrevious=true (Aufgabenkette). '
+            'Jede Aufgabe muss eine sinnvolle effortHours-Sollzeit > 0 enthalten. '
+            'Gib pro Aufgabe 1-8 passende subtasks an (kurz, konkret, umsetzbar). '
             'Nutze schedule fuer zeitliche Einordnung, wenn der Plan eine Phase, Deadline oder einen Termin hergibt.'
         )
 
@@ -1495,14 +1497,40 @@ class StorageHandler(BaseHTTPRequestHandler):
             title = str(item.get('title') or '').strip()
             if not title:
                 continue
+            schedule = item.get('schedule') if isinstance(item.get('schedule'), dict) else {}
+            normalized_subtasks = []
+            for sub in item.get('subtasks') if isinstance(item.get('subtasks'), list) else []:
+                if isinstance(sub, str):
+                    text = sub.strip()
+                elif isinstance(sub, dict):
+                    text = str(sub.get('title') or sub.get('text') or '').strip()
+                else:
+                    text = ''
+                if text:
+                    normalized_subtasks.append(text)
+
+            dependency_task_id = str(item.get('dependencyTaskId') or item.get('externalDependencyTaskId') or '').strip()
             normalized_tasks.append({
                 'title': title,
                 'description': str(item.get('description') or '').strip(),
                 'status': str(item.get('status') or 'todo').strip(),
                 'priority': str(item.get('priority') or 'medium').strip(),
-                'effortHours': item.get('effortHours') if isinstance(item.get('effortHours'), (int, float)) else 0,
+                'urgency': self._normalize_urgency(item.get('urgency')),
+                'effortHours': self._normalize_effort(item.get('effortHours')),
                 'labels': item.get('labels') if isinstance(item.get('labels'), list) else [],
-                'subtasks': item.get('subtasks') if isinstance(item.get('subtasks'), list) else []
+                'subtasks': normalized_subtasks,
+                'sequenceIndex': self._normalize_sequence_index(item.get('sequenceIndex')),
+                'dependsOnPrevious': bool(item.get('dependsOnPrevious')),
+                'dependencyTaskId': dependency_task_id,
+                'schedule': {
+                    'mode': self._normalize_schedule_mode(schedule.get('mode')),
+                    'deadline': self._normalize_date_value(schedule.get('deadline')),
+                    'fixedAt': self._normalize_date_value(schedule.get('fixedAt')),
+                    'rangeStart': self._normalize_date_value(schedule.get('rangeStart')),
+                    'rangeEnd': self._normalize_date_value(schedule.get('rangeEnd'))
+                },
+                'note': str(item.get('note') or '').strip(),
+                'assigneeId': str(item.get('assigneeId') or '').strip()
             })
 
         return {
