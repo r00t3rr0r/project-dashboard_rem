@@ -1944,7 +1944,7 @@ function looksLikeNoiseLine(line){
 
 var STAGE_SECTION_ORDER={
   concept:['Zielbild','Scope','Stakeholder','Risiken','Annahmen','Nächste Schritte'],
-  plan:['Phasen','Meilensteine','Abhängigkeiten','Ressourcen','Risiken','6-Wochen-Plan']
+  plan:['Phasen','Meilensteine','Abhängigkeiten','Ressourcen','Risiken','6-Wochen-Plan','Startplan (10 Arbeitstage)']
 };
 
 var STAGE_SECTION_ALIASES={
@@ -1970,6 +1970,9 @@ var STAGE_SECTION_ALIASES={
     'risiken':'Risiken',
     '6-wochen-plan':'6-Wochen-Plan',
     '6 wochen plan':'6-Wochen-Plan',
+    'startplan':'Startplan (10 Arbeitstage)',
+    'startplan (10 arbeitstage)':'Startplan (10 Arbeitstage)',
+    '10-arbeitstage-startplan':'Startplan (10 Arbeitstage)',
     'plan':'6-Wochen-Plan'
   }
 };
@@ -2183,12 +2186,28 @@ function renderTasksOutput(summaryMarkdown,taskItems){
     return summary;
   }
 
+  function scheduleToText(schedule){
+    var entry=schedule&&typeof schedule==='object'?schedule:{};
+    var mode=String(entry.mode||'none').toLowerCase();
+    if(mode==='deadline'&&entry.deadline)return 'Deadline: '+entry.deadline;
+    if(mode==='fixed'&&entry.fixedAt)return 'Fixtermin: '+entry.fixedAt;
+    if(mode==='range'&&(entry.rangeStart||entry.rangeEnd))return 'Zeitraum: '+(entry.rangeStart||'?')+' bis '+(entry.rangeEnd||'?');
+    if(mode==='asap')return 'Zeitraum: Umgehend starten';
+    return '';
+  }
+
+  var totalEffort=items.reduce(function(sum,item){
+    return sum+(Number(item&&item.effortHours||0)||0);
+  },0);
+
   var cards=items.map(function(item){
     var meta=[];
     if(item.sequenceIndex)meta.push('#'+item.sequenceIndex);
     if(item.status)meta.push(item.status);
     if(item.priority)meta.push(item.priority);
     if(item.effortHours)meta.push(item.effortHours+'h');
+    var scheduleText=scheduleToText(item.schedule);
+    if(scheduleText)meta.push(scheduleText);
     if(item.dependsOnPrevious)meta.push('Folgeaufgabe');
     if(item.dependencyTaskId)meta.push('Vorgaenger gesetzt');
     if(item.dependencyBlocked)meta.push('wartet auf '+(item.dependencyTaskIds.length||1)+' Aufgabe(n)');
@@ -2206,7 +2225,12 @@ function renderTasksOutput(summaryMarkdown,taskItems){
       +'</article>';
   }).join('');
 
-  return '<div class="meeting-task-summary">'+summary+'</div><div class="meeting-task-grid">'+cards+'</div>';
+  var planningHint='';
+  if(totalEffort>0){
+    planningHint='<p class="text-muted">Gesamter geplanter Entwicklungsaufwand: '+(Math.round(totalEffort*100)/100)+'h</p>';
+  }
+
+  return '<div class="meeting-task-summary">'+summary+planningHint+'</div><div class="meeting-task-grid">'+cards+'</div>';
 }
 
 function extractFinalResultText(markdown){
@@ -2511,7 +2535,7 @@ function runTasks(){
       var count=result&&Array.isArray(result.createdTasks)?result.createdTasks.length:0;
       state.taskItems=normalizeTaskItems(result.createdTasks||result.tasks||[]);
       var taskMarkdown=window.KIWorkflow.readResponseMarkdown?window.KIWorkflow.readResponseMarkdown(result):(result.summaryMarkdown||result.markdown||result.result||'');
-      state.tasksSummary='Erstellte Tasks: '+count+'\n\n'+taskMarkdown;
+      state.tasksSummary='Erstellte Entwicklungs-Tasks: '+count+'\n\n'+taskMarkdown;
       state.taskDraft=buildTaskDraftFromStage3(result.tasks||result.createdTasks||[],taskMarkdown)||state.taskDraft;
       var draftPanel=byId('meeting-task-draft-collapsible');
       if(draftPanel)draftPanel.open=true;
@@ -2519,7 +2543,7 @@ function runTasks(){
       touchMeetingProtocol(state.projectId);
       renderTaskDraftPreview();
       renderWorkflow();
-      notify(count+' Tasks ins Dashboard importiert.',false);
+      notify(count+' Entwicklungs-Tasks ins Dashboard importiert.',false);
       return result;
     });
   }).catch(function(err){
@@ -2575,22 +2599,22 @@ function bind(){
 
         +'<div class="meeting-flow-body">'
           +'<div class="meeting-actions">'
-            +'<button type="button" class="btn btn-primary" id="meeting-run-concept">KI Aufarbeitung starten</button>'
+            +'<button type="button" class="btn btn-primary" id="meeting-run-concept">KI Aufarbeitung starten (Stufe 1)</button>'
             +'<button type="button" class="btn btn-secondary" id="meeting-export-md">Export Markdown</button>'
             +'<button type="button" class="btn btn-secondary" id="meeting-export-json">Export JSON</button>'
           +'</div>'
 
           +'<div class="meeting-workflow-grid">'
             +'<section class="meeting-workflow-card">'
-              +'<div class="meeting-workflow-head"><h3>Stufe 1: Konzept</h3><button type="button" class="btn btn-secondary" id="meeting-run-concept-inline">Neu generieren</button></div>'
+              +'<div class="meeting-workflow-head"><h3>Stufe 1: Konzept (IT-Zielbild)</h3><button type="button" class="btn btn-secondary" id="meeting-run-concept-inline">Neu generieren</button></div>'
               +'<pre id="meeting-concept-output" class="meeting-output"></pre>'
             +'</section>'
             +'<section class="meeting-workflow-card">'
-              +'<div class="meeting-workflow-head"><h3>Stufe 2: Projektplan</h3><button type="button" class="btn btn-secondary" id="meeting-run-plan">Plan erstellen</button></div>'
+              +'<div class="meeting-workflow-head"><h3>Stufe 2: Projektplan (Startplan)</h3><button type="button" class="btn btn-secondary" id="meeting-run-plan">Plan erstellen</button></div>'
               +'<pre id="meeting-plan-output" class="meeting-output"></pre>'
             +'</section>'
             +'<section class="meeting-workflow-card">'
-              +'<div class="meeting-workflow-head"><h3>Stufe 3: Tasks</h3><button type="button" class="btn btn-secondary" id="meeting-run-tasks">Tasks erstellen</button></div>'
+              +'<div class="meeting-workflow-head"><h3>Stufe 3: Konkrete Entwicklungs-Tasks</h3><button type="button" class="btn btn-secondary" id="meeting-run-tasks">Tasks erstellen</button></div>'
               +'<pre id="meeting-tasks-output" class="meeting-output"></pre>'
             +'</section>'
           +'</div>'
@@ -2603,7 +2627,7 @@ function bind(){
               +'</summary>'
               +'<div class="meeting-collapsible-content">'
                 +'<div class="meeting-workflow-head">'
-                  +'<h3>KI: Aufgabe + Termin Entwurf</h3>'
+                  +'<h3>KI: Aufgabe + Termin Entwurf (IT-Umsetzung)</h3>'
                   +'<button type="button" class="btn btn-primary" id="meeting-run-task-draft">Entwurf erzeugen</button>'
                 +'</div>'
                 +'<div class="meeting-draft-grid meeting-draft-grid-3">'
@@ -2626,7 +2650,7 @@ function bind(){
                 +'</div>'
                 +'<label class="meeting-draft-check"><input type="checkbox" id="meeting-task-draft-subtasks" checked> Unteraufgaben automatisch erzeugen</label>'
                 +'<label class="meeting-draft-check"><input type="checkbox" id="meeting-task-draft-multi" checked> Bei Bedarf als Teilaufgaben der Hauptaufgabe vorschlagen</label>'
-                +'<label class="form-group"><span>Input fuer KI (Stichpunkte oder Freitext)</span><textarea id="meeting-task-draft-input" rows="4" placeholder="z. B. Kundenabnahme vorbereiten, bis Ende naechster Woche, Risiko: fehlende Testdaten, Team DE+EN"></textarea></label>'
+                +'<label class="form-group"><span>Input fuer KI (Stichpunkte oder Freitext)</span><textarea id="meeting-task-draft-input" rows="4" placeholder="z. B. API-Auth implementieren, QA-Testdaten bereitstellen, Code-Review einplanen, Deadline naechster Freitag"></textarea></label>'
                 +'<div id="meeting-task-draft-preview" class="meeting-task-draft-preview"></div>'
               +'</div>'
             +'</details>'

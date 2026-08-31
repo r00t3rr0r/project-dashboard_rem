@@ -3242,6 +3242,77 @@ body.projects-modal-open {
   text-decoration: underline;
 }
 
+.project-task-list {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.7rem;
+}
+
+.project-task-list-item {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.project-task-link {
+  justify-content: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent-cyan);
+  box-shadow: none;
+  font-weight: 700;
+  text-align: left;
+  white-space: normal;
+}
+
+.project-task-link:hover {
+  background: transparent;
+  color: var(--accent-blue);
+  text-decoration: underline;
+  transform: none;
+}
+
+.project-task-list-item p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.project-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.project-task-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.45rem;
+  padding: 0.18rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(99, 226, 255, 0.1);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.kanban-card-focus-pulse {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 3px;
+  animation: kanban-card-focus-pulse 0.9s ease-in-out 2;
+}
+
+@keyframes kanban-card-focus-pulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(99, 226, 255, 0); }
+  50% { box-shadow: 0 0 0 6px rgba(99, 226, 255, 0.18); }
+}
+
 .project-meta-empty {
   color: var(--text-secondary);
   font-size: 0.8rem;

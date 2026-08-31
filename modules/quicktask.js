@@ -299,9 +299,9 @@ function openQuickTaskModal(){
     var lOpts=buildLabelOptions(labels);
     var aiToolsHtml=adminMode
       ? '<div class="task-ai-panel">'
-        +'<div class="task-ai-head"><strong>KI-Assistent (Admin)</strong><small>Aus Titel automatisch Entwurf und Verteilung erzeugen</small></div>'
+        +'<div class="task-ai-head"><strong>KI-Assistent (Admin)</strong><small>Aus Titel und Beschreibung automatisch Entwurf und Verteilung erzeugen</small></div>'
         +'<div class="task-ai-actions">'
-          +'<button type="button" class="btn btn-secondary" id="qtm-ai-fill">KI-Entwurf aus Titel</button>'
+          +'<button type="button" class="btn btn-secondary" id="qtm-ai-fill">KI-Entwurf aus Titel + Beschreibung</button>'
           +'<button type="button" class="btn btn-secondary" id="qtm-ai-assign">KI-Zuweisung</button>'
           +'<button type="button" class="btn btn-secondary hidden" id="qtm-ai-chain">Kettenvorschlag uebernehmen</button>'
         +'</div>'
@@ -590,6 +590,7 @@ function openQuickTaskModal(){
     function runAiDraftFromTitle(){
       if(aiState.loading)return;
       var title=((document.getElementById('qtm-title')||{}).value||'').trim();
+      var description=((document.getElementById('qtm-desc')||{}).value||'').trim();
       if(!title){
         updateAiStatus('Bitte zuerst einen kurzen Aufgabentitel eingeben.',true);
         var titleEl=document.getElementById('qtm-title');
@@ -604,18 +605,28 @@ function openQuickTaskModal(){
 
       aiState.loading=true;
       toggleAiButtons(true);
-      updateAiStatus('KI erzeugt Entwurf aus dem Titel ...',false);
+      updateAiStatus('KI erzeugt Entwurf aus Titel und Beschreibung ...',false);
+
+      var draftInput='Titel: '+title;
+      if(description){
+        draftInput+='\n\nBeschreibung:\n'+description;
+      }
 
       var mode=((document.getElementById('qtm-schedule-mode')||{}).value||'none').trim()||'none';
       var payload={
         projectId:String(selection.project.id||''),
         projectTitle:String(selection.project.title||selection.project.name||'Projekt'),
-        draftInput:title,
+        draftInput:draftInput,
+        draftTitle:title,
+        draftDescription:description,
         options:{
           scheduleMode:mode,
           eventType:'task',
           createSubtasks:true,
-          splitIntoMultiple:true
+          splitIntoMultiple:true,
+          planningStyle:'development-workflow',
+          estimateEffortFromSubtasks:true,
+          fillOptionalFields:true
         },
         existingData:collectAiContext(selection.project)
       };

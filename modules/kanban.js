@@ -782,6 +782,37 @@
     });
   }
 
+  function getTaskStackGroupInfo(task) {
+    var assignees = getTaskAssignees(task);
+    if (!assignees.length) return getAssigneeGroupInfo(task);
+    if (assignees.length === 1) {
+      return {
+        id: normalizeComparableId(assignees[0] && assignees[0].id) || 'unassigned',
+        name: assignees[0] && assignees[0].name ? assignees[0].name : 'Mitarbeiter',
+        initials: getAssigneeInitials(assignees[0] && assignees[0].name ? assignees[0].name : ''),
+        isUnassigned: false
+      };
+    }
+
+    var ids = assignees.map(function (assignee) {
+      return normalizeComparableId(assignee && assignee.id);
+    }).filter(Boolean).sort();
+
+    var names = assignees.map(function (assignee) {
+      return String(assignee && assignee.name || '').trim() || 'Mitarbeiter';
+    });
+
+    var shortNames = names.slice(0, 2).join(', ');
+    if (names.length > 2) shortNames += ' +' + (names.length - 2);
+
+    return {
+      id: 'team:' + ids.join('|'),
+      name: 'Team (' + names.length + '): ' + shortNames,
+      initials: 'TM',
+      isUnassigned: false
+    };
+  }
+
   function isTaskOverdue(task) {
     return !!(task && task.dueDate && toDateOnly(task.dueDate) < getTodayDateKey() && task.status !== 'done');
   }
@@ -791,27 +822,25 @@
 
     (tasks || []).forEach(function (task) {
       if (!task) return;
-      var infos = getAssigneeGroupInfos(task);
-      infos.forEach(function (info) {
-        var groupId = info.id;
-        if (!grouped[groupId]) {
-          grouped[groupId] = {
-            id: groupId,
-            name: info.name,
-            initials: info.initials,
-            isUnassigned: info.isUnassigned,
-            taskCount: 0,
-            overdueCount: 0,
-            blockerCount: 0,
-            tasks: []
-          };
-        }
+      var info = getTaskStackGroupInfo(task);
+      var groupId = info.id;
+      if (!grouped[groupId]) {
+        grouped[groupId] = {
+          id: groupId,
+          name: info.name,
+          initials: info.initials,
+          isUnassigned: info.isUnassigned,
+          taskCount: 0,
+          overdueCount: 0,
+          blockerCount: 0,
+          tasks: []
+        };
+      }
 
-        grouped[groupId].tasks.push(task);
-        grouped[groupId].taskCount += 1;
-        if (isTaskOverdue(task)) grouped[groupId].overdueCount += 1;
-        if (task.priority === 'blocker') grouped[groupId].blockerCount += 1;
-      });
+      grouped[groupId].tasks.push(task);
+      grouped[groupId].taskCount += 1;
+      if (isTaskOverdue(task)) grouped[groupId].overdueCount += 1;
+      if (task.priority === 'blocker') grouped[groupId].blockerCount += 1;
     });
 
     return Object.keys(grouped).map(function (key) {
@@ -1799,7 +1828,7 @@
     if (header) {
       var metaLabel = tasks.length + ' sichtbar';
       if (currentBoardGroupingMode === 'stacked') {
-        metaLabel += ' · ' + assigneeCount + ' Mitarbeiter';
+        metaLabel += ' · ' + assigneeCount + ' Gruppen';
       }
       header.innerHTML = '<span class="kanban-column-title">' + escapeHtml(getStatusLabel(status)) + '</span>' +
         '<span class="kanban-column-meta"><span>' + metaLabel + '</span></span>';
@@ -1816,6 +1845,27 @@
     updateViewVisibility();
     syncFilterControls();
     refreshLiveTaskMetrics();
+  }
+
+  function focusTask(taskId, projectId) {
+    var id = normalizeComparableId(taskId);
+    if (!id) return false;
+    if (projectId !== undefined) filterProjectId = normalizeComparableId(projectId);
+    currentKanbanView = 'board';
+    renderAllColumns();
+
+    window.setTimeout(function () {
+      var selector = '.kanban-card[data-task-id="' + id.replace(/"/g, '\\"') + '"]';
+      var card = document.querySelector(selector);
+      if (!card) return;
+      card.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      card.classList.add('kanban-card-focus-pulse');
+      window.setTimeout(function () {
+        card.classList.remove('kanban-card-focus-pulse');
+      }, 1800);
+    }, 0);
+
+    return true;
   }
 
   function refreshLiveTaskMetrics() {
@@ -3123,7 +3173,7 @@
     html += '<button type="button" class="kanban-view-btn" data-kanban-card-mode="compact" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span><span>Kompakt</span></button>';
     html += '</div>';
     html += '<div class="kanban-filter-group kanban-view-switch" role="group" aria-label="Board Gruppierung">';
-    html += '<button type="button" class="kanban-view-btn is-active" data-kanban-group-mode="stacked" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">groups</span><span>Pro Mitarbeiter</span></button>';
+    html += '<button type="button" class="kanban-view-btn is-active" data-kanban-group-mode="stacked" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">groups</span><span>Pro Zuweisung</span></button>';
     html += '<button type="button" class="kanban-view-btn" data-kanban-group-mode="plain" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">stacks</span><span>Nur Karten</span></button>';
     html += '</div>';
     html += '<div class="kanban-filter-group">';
@@ -3238,7 +3288,8 @@
       renderAllColumns: renderAllColumns,
       getFilteredTasks: getFilteredTasks,
       setFilterAssigneeId: function(id) { setAssigneeFilter(id, true); },
-      setFilterPriority: function(p) { filterPriority = p; renderAllColumns(); }
+      setFilterPriority: function(p) { filterPriority = p; renderAllColumns(); },
+      focusTask: focusTask
     };
 
     if (document.readyState === 'loading') {

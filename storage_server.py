@@ -872,10 +872,17 @@ class StorageHandler(BaseHTTPRequestHandler):
         temperature = self._read_temperature(prompt_config)
         max_tokens = self._read_max_tokens(prompt_config)
 
+        user_title = str(payload.get('draftTitle') or '').strip()
+        user_description = str(payload.get('draftDescription') or '').strip()
         user_input = str(payload.get('draftInput') or '').strip()
         if not user_input:
-            self._send_json({'error': 'draftInput is required.'}, status=400)
-            return
+            if user_title or user_description:
+                user_input = 'Titel: ' + user_title
+                if user_description:
+                    user_input += '\n\nBeschreibung:\n' + user_description
+            else:
+                self._send_json({'error': 'draftInput is required.'}, status=400)
+                return
 
         note_markdown = self._meeting_notes_markdown(payload)
         existing_data = payload.get('existingData') if isinstance(payload.get('existingData'), dict) else {}
@@ -884,6 +891,8 @@ class StorageHandler(BaseHTTPRequestHandler):
             generated_prompt = self._build_meeting_task_draft_prompt(
                 project_title=project_title,
                 meeting_notes_markdown=note_markdown,
+                user_title=user_title,
+                user_description=user_description,
                 user_input=user_input,
                 options=options,
                 existing_data=existing_data
@@ -1039,8 +1048,8 @@ class StorageHandler(BaseHTTPRequestHandler):
 
     def _build_meeting_concept_prompt(self, project_title, meeting_notes_markdown, existing_data, output_format, language, preset):
         return (
-            'Du bist ein Senior Projektstratege. '
-            'Erstelle aus Meeting-Notizen ein kompaktes Projektkonzept.\\n\\n'
+            'Du bist ein Senior IT-Projektstratege mit Fokus Softwareentwicklung. '
+            'Erstelle aus Meeting-Notizen ein kompaktes Projektkonzept, das direkt als Grundlage fuer die nachfolgenden Stufen (Projektplan und Entwicklungs-Tasks) dient.\\n\\n'
             'Projekt: ' + project_title + '\\n'
             'Preset: ' + preset + '\\n'
             'Sprache: ' + language + '\\n'
@@ -1048,13 +1057,15 @@ class StorageHandler(BaseHTTPRequestHandler):
             'Meeting-Notizen:\\n' + meeting_notes_markdown + '\\n\\n'
             'Bestehende Projektdaten (JSON):\\n' + json.dumps(existing_data, ensure_ascii=False, indent=2) + '\\n\\n'
             'Liefere nur die finale Antwort. Keine Analyse, keine Vorrede, kein Meta-Text. '
-            'Liefere: Zielbild, Scope, Stakeholder, Risiken, Annahmen, naechste Schritte.'
+            'Liefere: Zielbild, Scope, Stakeholder, Risiken, Annahmen, naechste Schritte. '
+            'Plane aus Sicht eines IT-Mitarbeiters (reale Entwicklungsarbeit, keine abstrakten Management-Floskeln). '
+            'Benenne im Scope und in den naechsten Schritten bereits implementierungsnahe Arbeitspakete inkl. grober Aufwand-/Zeitrahmen-Hinweise (z. B. kurzfristig, diese Woche, innerhalb 2-6 Wochen).'
         )
 
     def _build_concept_to_plan_prompt(self, project_title, concept_markdown, meeting_notes_markdown, existing_data, output_format, language, preset):
         return (
-            'Du bist Projektmanager mit Fokus Umsetzung. '
-            'Erzeuge aus dem Konzept aus Stufe 1 und den Meeting-Notizen einen detaillierten Projektplan. '
+            'Du bist IT-Projektmanager mit Fokus Umsetzung im Entwicklungsteam. '
+            'Erzeuge aus dem Konzept aus Stufe 1 und den Meeting-Notizen einen detaillierten Projektplan als Startplan fuer die technische Umsetzung. '
             'Das Konzept aus Stufe 1 ist die Primärquelle.\n\n'
             'Projekt: ' + project_title + '\\n'
             'Preset: ' + preset + '\\n'
@@ -1064,13 +1075,15 @@ class StorageHandler(BaseHTTPRequestHandler):
             'Meeting-Notizen:\\n' + meeting_notes_markdown + '\\n\\n'
             'Bestehende Projektdaten (JSON):\\n' + json.dumps(existing_data, ensure_ascii=False, indent=2) + '\\n\\n'
             'Liefere nur die finale Antwort. Keine Analyse, keine Vorrede, kein Meta-Text. '
-            'Liefere einen Phasenplan mit Meilensteinen, Abhaengigkeiten, Ressourcen, Risiken und einem 6-Wochen-Aktionsplan.'
+            'Liefere einen Phasenplan mit Meilensteinen, Abhaengigkeiten, Ressourcen, Risiken und einem 6-Wochen-Aktionsplan. '
+            'Fuehre je Phase kurz auf: erwarteter Entwicklungsaufwand (Personenstunden) und geplanter Zeitraum. '
+            'Ergaenze einen klaren Startplan fuer die ersten 10 Arbeitstage mit priorisierten technischen Schritten und erwarteten Ergebnissen.'
         )
 
     def _build_plan_to_tasks_prompt(self, project_title, concept_markdown, plan_markdown, meeting_notes_markdown, existing_data, language, preset):
         return (
-            'Du bist ein erfahrener Tech-Lead und Product Owner. '
-            'Erzeuge importierbare Aufgaben fuer ein Kanban-Board aus dem Projektplan aus Stufe 2. '
+            'Du bist ein erfahrener Tech-Lead und Product Owner in einem IT-Team. '
+            'Erzeuge importierbare, konkrete Entwicklungsaufgaben fuer ein Kanban-Board aus dem Projektplan aus Stufe 2. '
             'Der Plan aus Stufe 2 ist die Primärquelle; das Konzept aus Stufe 1 dient als Kontext.\n\n'
             'Projekt: ' + project_title + '\\n'
             'Preset: ' + preset + '\\n'
@@ -1090,38 +1103,88 @@ class StorageHandler(BaseHTTPRequestHandler):
             'Regeln: 6-20 Tasks, realistische Aufwandsschaetzung, Status aus {backlog,todo,in-progress,review,done}, Prioritaet aus {low,medium,high,blocker}, summaryMarkdown maximal 5 knappe Stichpunkte. '
             'Ordne die Aufgaben sauber und setze sequenceIndex fortlaufend ab 1. '
             'Wenn eine Aufgabe logisch auf die vorherige aufbaut, setze dependsOnPrevious=true (Aufgabenkette). '
+            'Nutze in jeder Antwort beide Strukturmoeglichkeiten: Teilaufgaben UND mindestens eine Aufgabenkette mit klarer Reihenfolge. '
             'Jede Aufgabe muss eine sinnvolle effortHours-Sollzeit > 0 enthalten. '
-            'Gib pro Aufgabe 1-8 passende subtasks an (kurz, konkret, umsetzbar). '
-            'Nutze schedule fuer zeitliche Einordnung, wenn der Plan eine Phase, Deadline oder einen Termin hergibt.'
+            'Gib pro Aufgabe immer 2-8 passende subtasks an (kurz, konkret, umsetzbar). '
+            'Halte die Anzahl einzelner Hauptaufgaben uebersichtlich, indem Arbeitsschritte bevorzugt als subtasks innerhalb der Aufgabe strukturiert werden. '
+            'Auch Aufgaben in einer Aufgabenkette muessen eigene subtasks enthalten. '
+            'Nutze schedule fuer zeitliche Einordnung: wenn moeglich deadline/fixed/range/asap statt none. '
+            'Formuliere jede Aufgabe als reale Entwicklerarbeit (Analyse, Implementierung, Tests, Review, Deployment-Vorbereitung) und nicht als abstrakte Epic-Ueberschrift. '
+            'Beschreibe in summaryMarkdown den geplanten Gesamtaufwand und den vorgesehenen Lieferzeitraum in knapper Form.'
         )
 
-    def _build_meeting_task_draft_prompt(self, project_title, meeting_notes_markdown, user_input, options, existing_data):
+    def _build_default_subtasks(self, title, description):
+        title_text = str(title or '').strip()
+        description_text = str(description or '').strip()
+
+        candidates = []
+        if description_text:
+            for piece in re.split(r'[\n\r;]+', description_text):
+                line = str(piece or '').strip(' -\t')
+                if len(line) < 6:
+                    continue
+                if line not in candidates:
+                    candidates.append(line)
+                if len(candidates) >= 8:
+                    break
+
+        if len(candidates) < 2:
+            base = title_text or 'Aufgabe'
+            fallback = [
+                'Anforderungen und Akzeptanzkriterien fuer "' + base + '" klaeren',
+                'Implementierung fuer "' + base + '" umsetzen',
+                'Tests, Review und Dokumentation fuer "' + base + '" abschliessen'
+            ]
+            for item in fallback:
+                if item not in candidates:
+                    candidates.append(item)
+
+        return candidates[:8]
+
+    def _build_meeting_task_draft_prompt(self, project_title, meeting_notes_markdown, user_input, options, existing_data, user_title='', user_description=''):
         schedule_mode = str(options.get('scheduleMode') or 'none').strip() or 'none'
         event_type = str(options.get('eventType') or 'meeting').strip() or 'meeting'
         create_subtasks = bool(options.get('createSubtasks'))
         split_multi = bool(options.get('splitIntoMultiple'))
+        planning_style = str(options.get('planningStyle') or '').strip().lower()
+        estimate_from_subtasks = bool(options.get('estimateEffortFromSubtasks'))
+        fill_optional_fields = bool(options.get('fillOptionalFields'))
+        title_block = user_title if user_title else '- (nicht separat angegeben)'
+        description_block = user_description if user_description else '- (nicht separat angegeben)'
         return (
-            'Du bist ein zweisprachiger Projektassistent (Deutsch/Englisch) fuer die operative Aufgabenplanung. '
-            'Nutze Meeting-Notizen und User-Input, um Aufgaben, Unteraufgaben und eigenstaendige Termine zu erkennen und getrennt aufzubereiten.\\n\\n'
+            'Du bist ein zweisprachiger IT-Projektassistent (Deutsch/Englisch) fuer die operative Aufgabenplanung. '
+            'Nutze Meeting-Notizen sowie Titel und Beschreibung aus der Eingabe, um Aufgaben, Unteraufgaben und eigenstaendige Termine zu erkennen und getrennt aufzubereiten.\\n\\n'
             'Projekt: ' + project_title + '\\n'
             'Vorgaben aus der UI:\\n'
             '- Terminart (Task-Schedule): ' + schedule_mode + '\\n'
             '- Termin-Typ (Kalender): ' + event_type + '\\n'
             '- Unteraufgaben erzeugen: ' + ('ja' if create_subtasks else 'nein') + '\\n\\n'
             '- Mehrere Aufgaben aufteilen: ' + ('ja' if split_multi else 'nein') + '\\n\\n'
+            '- Planungsstil: ' + (planning_style or 'standard') + '\\n'
+            '- Aufwand aus Teilaufgaben abschaetzen: ' + ('ja' if estimate_from_subtasks else 'nein') + '\\n'
+            '- Optionale Felder nutzen (labels/schedule/note): ' + ('ja' if fill_optional_fields else 'nein') + '\\n\\n'
             'Meeting-Notizen:\\n' + meeting_notes_markdown + '\\n\\n'
+            'Titel (separat):\\n' + title_block + '\\n\\n'
+            'Beschreibung (separat):\\n' + description_block + '\\n\\n'
             'Benutzereingabe:\\n' + user_input + '\\n\\n'
             'Bestehende Projektdaten (JSON):\\n' + json.dumps(existing_data, ensure_ascii=False, indent=2) + '\\n\\n'
             'Wichtig:\\n'
-            '- Formuliere praezise, klar und fuer alle Mitarbeiter verstaendlich.\\n'
+            '- Formuliere praezise, klar und fuer IT-Mitarbeiter verstaendlich.\\n'
             '- Liefere Titel und Beschreibung immer in Deutsch UND Englisch.\\n'
             '- Nutze realistische Werte fuer Prioritaet, Dringlichkeit, Aufwand und Labels.\\n'
+            '- Erzeuge in title/description konkrete Entwicklungsarbeit (z. B. API, UI, Tests, Review, Release-Vorbereitung), keine abstrakten Sammelbegriffe.\\n'
+            '- Leite ueber die Teilaufgaben durch den Loesungsprozess (Analyse -> Design -> Implementierung -> Tests -> Review -> Dokumentation/Release), Reihenfolge klar erkennbar.\\n'
             '- Wenn Unteraufgaben deaktiviert sind, gib leere Listen fuer subtasksDe/subtasksEn zurueck.\\n'
+            '- Wenn Unteraufgaben aktiv sind, liefere 3 bis 8 subtasksDe und 3 bis 8 subtasksEn (kurz, konkret, umsetzbar).\\n'
+            '- Jede Teilaufgabe soll eine grobe Dauer enthalten (z. B. 0.5h, 1h, 2h). Nutze diese Dauern fuer die Aufwandsschaetzung.\\n'
+            '- effortHours soll die plausible Summe der Teilaufgaben sein (gerundet), immer > 0.\\n'
             '- Wenn "Mehrere Aufgaben aufteilen" = ja und die Eingabe mehrere eigenstaendige Arbeitspakete enthaelt, fuelle taskSuggestions mit 2-8 Aufgaben.\\n'
             '- Nummeriere Hauptaufgabe und Vorschlaege mit sequenceIndex. Setze dependsOnPrevious=true fuer jede Folgeaufgabe, die inhaltlich auf der vorherigen aufbaut.\n'
             '- Wenn keine sinnvolle Aufteilung moeglich ist, liefere taskSuggestions als leeres Array.\\n'
             '- Unterscheide Aufgaben-Deadlines von eigenstaendigen Kalenderterminen. Aufgaben-Deadlines gehoeren in task.schedule; Meetings, Abnahmen und andere feste Termine in events.\\n'
             '- Erfasse jeden erkannten eigenstaendigen Termin als separates Element in events. Wenn kein Termin erkannt wird, liefere events als leeres Array.\\n'
+            '- Ordne Zeitraum und Aufwand plausibel ein: effortHours > 0, schedule moeglichst nicht none (deadline/fixed/range/asap), wenn zeitlich ableitbar.\\n'
+            '- Optionale Felder labels, schedule und note duerfen und sollen befuellt werden, wenn aus Kontext sinnvoll ableitbar.\\n'
             '- Gib Datumswerte im Format YYYY-MM-DD aus, Zeiten als HH:MM oder leer.\\n'
             '- Erfinde keine harten Fakten, wenn sie nicht aus den Eingaben ableitbar sind.\\n\\n'
             'Antworte nur mit einem gueltigen JSON-Objekt in exakt diesem Format (ohne Markdown, ohne Codeblock):\\n'
@@ -1510,6 +1573,8 @@ class StorageHandler(BaseHTTPRequestHandler):
                     normalized_subtasks.append(text)
 
             dependency_task_id = str(item.get('dependencyTaskId') or item.get('externalDependencyTaskId') or '').strip()
+            if not normalized_subtasks:
+                normalized_subtasks = self._build_default_subtasks(title, str(item.get('description') or ''))
             normalized_tasks.append({
                 'title': title,
                 'description': str(item.get('description') or '').strip(),
@@ -1532,6 +1597,18 @@ class StorageHandler(BaseHTTPRequestHandler):
                 'note': str(item.get('note') or '').strip(),
                 'assigneeId': str(item.get('assigneeId') or '').strip()
             })
+
+        for idx, task in enumerate(normalized_tasks):
+            if not task.get('sequenceIndex'):
+                task['sequenceIndex'] = idx + 1
+            if not task.get('subtasks'):
+                task['subtasks'] = self._build_default_subtasks(task.get('title', ''), task.get('description', ''))
+
+        if len(normalized_tasks) > 1:
+            has_chain = any(bool(task.get('dependsOnPrevious')) for task in normalized_tasks)
+            if not has_chain:
+                for idx, task in enumerate(normalized_tasks):
+                    task['dependsOnPrevious'] = idx > 0
 
         return {
             'markdown': str(payload.get('summaryMarkdown') or '').strip() or json.dumps(payload, ensure_ascii=False, indent=2),

@@ -409,7 +409,18 @@ function normalizeRepoUrl(url){
 }
 
 function getProjectTitle(project){
-  return project.title||project.name||'Unbenanntes Projekt';
+  var source=project&&typeof project==='object'?project:{};
+  var candidates=[source.title,source.name,source.projectName,source.repoName];
+  if(source.github&&typeof source.github==='object'){
+    candidates.push(source.github.name,source.github.repo,source.github.zipName);
+  }
+  candidates.push(source.id);
+
+  for(var i=0;i<candidates.length;i++){
+    var value=String(candidates[i]||'').trim();
+    if(value)return value;
+  }
+  return 'Unbenanntes Projekt';
 }
 
 function safeReadLocalStorage(key){
@@ -1117,6 +1128,190 @@ function getEventsForProject(projectId){
   return window.DataLayer.getCalendarEvents().filter(function(evt){return evt.projectId===projectId;});
 }
 
+function isDoneTask(task){
+  return String(task&&task.status||'').toLowerCase()==='done';
+}
+
+function getTaskPlannedEffortHours(task){
+  return Math.max(0,Number(task&&task.effortHours||0)||0);
+}
+
+function getTaskTrackedMinutes(task){
+  var tracking=task&&task.timeTracking&&typeof task.timeTracking==='object'?task.timeTracking:{};
+  var minutes=Math.round(Math.max(0,Number(tracking.totalMinutes||0)||0));
+  if(task&&String(task.status||'').toLowerCase()==='in-progress'&&tracking.activeStartedAt&&!tracking.isPaused){
+    var startedTs=Date.parse(tracking.activeStartedAt);
+    if(!isNaN(startedTs))minutes+=Math.max(0,Math.floor((Date.now()-startedTs)/60000));
+  }
+  return minutes;
+}
+
+function getTaskRemainingEffortHours(task){
+  if(isDoneTask(task))return 0;
+  var plannedMinutes=Math.round(getTaskPlannedEffortHours(task)*60);
+  if(plannedMinutes<=0)return 0;
+  return Math.max(0,(plannedMinutes-getTaskTrackedMinutes(task))/60);
+}
+
+function formatHoursCompact(value, suffix){
+  var hours=Math.max(0,Math.round((Number(value)||0)*10)/10);
+  var text=String(hours);
+  if(text.indexOf('.')!==-1)text=text.replace(/\.0$/,'').replace('.',',');
+  return text+' h '+suffix;
+}
+
+function addDateCandidate(list,value){
+  var ts=getProjectTimelineDayTimestamp(value);
+  if(!isNaN(ts))list.push(ts);
+}
+
+function calculateRunningProjectSummary(project){
+  var tasks=getTasksForProject(project.id);
+  var events=getEventsForProject(project.id);
+  var releases=window.DataLayer&&typeof window.DataLayer.getReleases==='function'
+    ?window.DataLayer.getReleases().filter(function(item){return item&&item.projectId===project.id;})
+    :[];
+  var openTasks=tasks.filter(function(task){return !isDoneTask(task);});
+  var milestones=events.filter(function(evt){return String(evt&&evt.type||'').toLowerCase()==='release'||/^meilenstein:/i.test(String(evt&&evt.title||''));});
+  var appointments=events.filter(function(evt){return milestones.indexOf(evt)===-1;});
+  var totalRemainingEffort=0;
+  var totalPlannedEffort=0;
+  var trackedMinutes=0;
+  var dateCandidates=[];
+
+  if(project.startDate)addDateCandidate(dateCandidates,project.startDate);
+  if(project.endDate)addDateCandidate(dateCandidates,project.endDate);
+
+  tasks.forEach(function(task){
+    totalPlannedEffort+=getTaskPlannedEffortHours(task);
+    totalRemainingEffort+=getTaskRemainingEffortHours(task);
+    trackedMinutes+=getTaskTrackedMinutes(task);
+    if(task.dueDate)addDateCandidate(dateCandidates,task.dueDate);
+    getPlanScheduleDateCandidates(task.schedule).forEach(function(value){addDateCandidate(dateCandidates,value);});
+  });
+
+  events.forEach(function(evt){
+    addDateCandidate(dateCandidates,evt.date||evt.startDate);
+    addDateCandidate(dateCandidates,evt.endDate);
+  });
+
+  releases.forEach(function(item){
+    addDateCandidate(dateCandidates,item.releaseDate||item.date);
+  });
+
+  dateCandidates.sort(function(a,b){return a-b;});
+  var periodLabel='Nicht terminiert';
+  if(dateCandidates.length){
+    var startDate=new Date(dateCandidates[0]).toISOString().slice(0,10);
+    var endDate=new Date(dateCandidates[dateCandidates.length-1]).toISOString().slice(0,10);
+    periodLabel=formatDate(startDate)+' - '+formatDate(endDate);
+  }
+
+  return {
+    hasWork:tasks.length>0||events.length>0||releases.length>0,
+    taskCount:tasks.length,
+    openTaskCount:openTasks.length,
+    appointmentCount:appointments.length,
+    eventCount:appointments.length,
+    milestoneCount:milestones.length+releases.length,
+    totalPlannedEffortHours:Math.round(totalPlannedEffort*10)/10,
+    totalRemainingEffortHours:Math.round(totalRemainingEffort*10)/10,
+    trackedHours:Math.round((trackedMinutes/60)*10)/10,
+    periodLabel:periodLabel
+  };
+}
+
+function getProjectTaskStatusLabel(status){
+  var value=String(status||'').toLowerCase();
+  if(value==='backlog')return 'Backlog';
+  if(value==='todo')return 'To Do';
+  if(value==='in-progress')return 'In Arbeit';
+  if(value==='review')return 'Review';
+  if(value==='done')return 'Erledigt';
+  if(value==='blocked')return 'Blockiert';
+  return status||'Unbekannt';
+}
+
+function formatProjectStatusSummary(statusCounts){
+  var counts=statusCounts&&typeof statusCounts==='object'?statusCounts:{};
+  return [
+    'Backlog '+Number(counts.backlog||0),
+    'To Do '+Number(counts.todo||0),
+    'In Arbeit '+Number(counts['in-progress']||0),
+    'Review '+Number(counts.review||0),
+    'Erledigt '+Number(counts.done||0)
+  ].join(' · ');
+}
+
+function getEmployeeNameById(employeeId){
+  var id=String(employeeId||'').trim();
+  if(!id||!window.DataLayer||typeof window.DataLayer.getEmployees!=='function')return '';
+  var employees=window.DataLayer.getEmployees()||[];
+  var found=employees.find(function(emp){return String(emp&&emp.id||'')===id;});
+  return found&&found.name?found.name:'';
+}
+
+function formatTaskDescriptionPreview(task){
+  var text=String(task&&task.description||'').replace(/\s+/g,' ').trim();
+  if(!text)return 'Keine Beschreibung hinterlegt.';
+  return text.length>150?text.slice(0,147)+'...':text;
+}
+
+function getProjectTasksSorted(projectId){
+  var order={ 'in-progress':0, review:1, todo:2, backlog:3, blocked:4, done:5 };
+  return getTasksForProject(projectId).slice().sort(function(a,b){
+    var aStatus=String(a&&a.status||'').toLowerCase();
+    var bStatus=String(b&&b.status||'').toLowerCase();
+    var aOrder=order[aStatus]!==undefined?order[aStatus]:9;
+    var bOrder=order[bStatus]!==undefined?order[bStatus]:9;
+    if(aOrder!==bOrder)return aOrder-bOrder;
+    var aDue=String(a&&a.dueDate||'9999-12-31');
+    var bDue=String(b&&b.dueDate||'9999-12-31');
+    if(aDue!==bDue)return aDue.localeCompare(bDue);
+    return String(b&&b.createdAt||'').localeCompare(String(a&&a.createdAt||''));
+  });
+}
+
+function renderProjectTaskList(project){
+  var tasks=getProjectTasksSorted(project.id);
+  if(!tasks.length)return '<p class="project-meta-empty">Noch keine Aufgaben fuer dieses Projekt vorhanden.</p>';
+
+  return '<div class="project-task-list">'+tasks.map(function(task){
+    var trackedHours=Math.round((getTaskTrackedMinutes(task)/60)*10)/10;
+    var remainingHours=Math.round(getTaskRemainingEffortHours(task)*10)/10;
+    var assigneeName=getEmployeeNameById(task.assigneeId)||'Nicht zugewiesen';
+    var meta=[
+      getProjectTaskStatusLabel(task.status),
+      assigneeName,
+      formatHoursCompact(getTaskPlannedEffortHours(task),'Aufwand'),
+      formatHoursCompact(trackedHours,'Arbeitszeit'),
+      formatHoursCompact(remainingHours,'Rest')
+    ];
+    if(task.dueDate)meta.push('Faellig '+formatDate(task.dueDate));
+
+    return '<article class="project-task-list-item">'
+      +'<button type="button" class="project-task-link" data-action="open-task" data-id="'+escapeHtml(project.id)+'" data-task-id="'+escapeHtml(task.id)+'">'+escapeHtml(task.title||'Unbenannte Aufgabe')+'</button>'
+      +'<p>'+escapeHtml(formatTaskDescriptionPreview(task))+'</p>'
+      +'<div class="project-task-meta">'+meta.map(function(item){return '<span>'+escapeHtml(item)+'</span>';}).join('')+'</div>'
+      +'</article>';
+  }).join('')+'</div>';
+}
+
+function hasProjectEverStarted(project){
+  var status=String(project&&project.status||'').toLowerCase();
+  if(status==='active'||status==='done'||status==='blocked')return true;
+  if(project&&String(project.startDate||project.startedAt||'').trim())return true;
+  var draft=project&&project.executionPlanDraft&&typeof project.executionPlanDraft==='object'?project.executionPlanDraft:null;
+  if(draft&&String(draft.status||'').toLowerCase()==='applied')return true;
+  return calculateRunningProjectSummary(project).hasWork;
+}
+
+function shouldShowProjectStartTemplate(project, projection){
+  var status=String(project&&project.status||'').toLowerCase();
+  if(status&&status!=='planning'&&status!=='draft'&&status!=='new')return false;
+  return !!(projection&&projection.hasPlan&&!hasProjectEverStarted(project));
+}
+
 function getEmployeesForTasks(tasks){
   var employees=window.DataLayer.getEmployees();
   var byIdMap={};
@@ -1665,25 +1860,33 @@ function calculateProjectStartProjection(project){
 
 function renderProjectStartPlanInline(project,canEdit){
   var projection=calculateProjectStartProjection(project);
-  var status=String(project&&project.status||'').toLowerCase();
-  if(!projection.hasPlan&&status!=='planning')return '';
+  var showStartTemplate=shouldShowProjectStartTemplate(project,projection);
+  var runningSummary=calculateRunningProjectSummary(project);
+  var showRunningSummary=hasProjectEverStarted(project)&&runningSummary.hasWork;
 
   var chips=[];
-  if(projection.counts.tasks||projection.counts.events||projection.counts.milestones){
+  if(showStartTemplate&&(projection.counts.tasks||projection.counts.events||projection.counts.milestones)){
     chips.push('<span class="badge badge-blue">Startvorlage: '+projection.counts.tasks+' Aufgaben · '+projection.counts.events+' Termine · '+projection.counts.milestones+' Meilensteine</span>');
   }
-  if(projection.totalEffortHours>0){
+  if(showStartTemplate&&projection.totalEffortHours>0){
     chips.push('<span class="badge badge-blue">'+escapeHtml(formatEffortHoursLabel(projection.totalEffortHours))+'</span>');
   }
-  if(projection.estimatedWorkdays>0){
+  if(showStartTemplate&&projection.estimatedWorkdays>0){
     chips.push('<span class="badge badge-green">'+escapeHtml(formatWorkdaysLabel(projection.estimatedWorkdays))+'</span>');
   }
-  if(projection.periodLabel){
+  if(showStartTemplate&&projection.periodLabel){
     chips.push('<span class="badge badge-green">'+escapeHtml(projection.periodLabel)+'</span>');
+  }
+  if(showRunningSummary){
+    chips.push('<span class="badge badge-green">Aktiv: '+runningSummary.openTaskCount+' Aufgaben</span>');
+    chips.push('<span class="badge badge-blue">'+runningSummary.appointmentCount+' Termine · '+runningSummary.milestoneCount+' Meilensteine</span>');
+    chips.push('<span class="badge badge-blue">'+escapeHtml(formatHoursCompact(runningSummary.totalRemainingEffortHours,'Restaufwand'))+'</span>');
+    chips.push('<span class="badge badge-green">'+escapeHtml(formatHoursCompact(runningSummary.trackedHours,'Arbeitszeit'))+'</span>');
+    chips.push('<span class="badge badge-green">'+escapeHtml(runningSummary.periodLabel)+'</span>');
   }
 
   var actions='';
-  if(projection.hasPlan&&status!=='active'&&status!=='done'){
+  if(showStartTemplate){
     actions=''
       +'<button class="btn btn-primary project-card-head-inline-btn" data-action="start-project" data-id="'+escapeHtml(project.id)+'" '+(canEdit?'':'disabled')+'>Projektstart & Meilensteine</button>';
   }
@@ -2827,14 +3030,16 @@ function renderProjectList(){
     var queuedEventCount=executionPlan.queuedEvents.length;
     var queuedMilestoneCount=executionPlan.milestoneDraft&&Array.isArray(executionPlan.milestoneDraft.items)?executionPlan.milestoneDraft.items.length:0;
     var hasQueuedPlan=queuedTaskCount>0||queuedEventCount>0||queuedMilestoneCount>0;
-    var isPlanning=String(project.status||'').toLowerCase()==='planning';
+    var startProjection=calculateProjectStartProjection(project);
+    var showQueuedPlan=hasQueuedPlan&&shouldShowProjectStartTemplate(project,startProjection);
+    var runningSummary=calculateRunningProjectSummary(project);
     var meetingIsClosed=meeting.status==='closed';
     var meetingEntriesPreview=meeting.entries.slice(-3).reverse();
     var gh=project.github||{};
     var gm=project.githubMetrics||{};
     var commitPreview=(project.githubCommits||[]).slice(0,5);
     var projectPeriod=[];
-    var activityStatus='Done '+flow.statusCounts.done+' · In Progress '+flow.statusCounts['in-progress']+' · Todo '+flow.statusCounts.todo;
+    var activityStatus=formatProjectStatusSummary(flow.statusCounts);
     var teamSummary=flow.teamMembers.length
       ?flow.teamMembers.map(function(member){
         return member.employeeName+' ('+(member.role||'ohne Rolle')+')';
@@ -2881,7 +3086,8 @@ function renderProjectList(){
     html+='<span class="badge badge-blue">Status: '+escapeHtml(project.status||'active')+'</span>';
     html+='<span class="badge '+(currentProgress>=70?'badge-green':'badge-blue')+'">Fortschritt: '+currentProgress+'%</span>';
     html+='<span class="badge '+(flow.overdue>0?'badge-red':'badge-green')+'">'+escapeHtml(progressLabel)+'</span>';
-    if(hasQueuedPlan)html+='<span class="badge badge-blue">Startvorlage: '+queuedTaskCount+' Tasks · '+queuedEventCount+' Termine · '+queuedMilestoneCount+' Meilensteine</span>';
+    if(showQueuedPlan)html+='<span class="badge badge-blue">Startvorlage: '+queuedTaskCount+' Tasks · '+queuedEventCount+' Termine · '+queuedMilestoneCount+' Meilensteine</span>';
+    if(runningSummary.hasWork)html+='<span class="badge badge-green">Restaufwand: '+escapeHtml(formatHoursCompact(runningSummary.totalRemainingEffortHours,'geplant'))+'</span>';
     html+='</div>';
     if(project.startDate)projectPeriod.push('Start '+formatDate(project.startDate));
     if(project.endDate)projectPeriod.push('Ende '+formatDate(project.endDate));
@@ -2889,7 +3095,10 @@ function renderProjectList(){
       {label:'Zeitraum', value:projectPeriod.length?projectPeriod.join(' · '):'Nicht terminiert'},
       {label:'Delivery-Score', value:flow.deliveryScore+'/100'},
       {label:'Rhythmus-Score', value:flow.rhythmScore+'/100'},
-      {label:'Startvorlage', value:hasQueuedPlan?(queuedTaskCount+' Aufgaben · '+queuedEventCount+' Termine · '+queuedMilestoneCount+' Meilensteine'):'Keine vorgemerkten KI-Eintraege'}
+      {label:'Startvorlage', value:showQueuedPlan?(queuedTaskCount+' Aufgaben · '+queuedEventCount+' Termine · '+queuedMilestoneCount+' Meilensteine'):'Nur bei nicht gestarteten Projekten'},
+      {label:'Restaufwand', value:runningSummary.hasWork?formatHoursCompact(runningSummary.totalRemainingEffortHours,'geplant'):''},
+      {label:'Arbeitszeit', value:runningSummary.hasWork?formatHoursCompact(runningSummary.trackedHours,'gebucht'):''},
+      {label:'Ist-Zeitraum', value:runningSummary.hasWork?runningSummary.periodLabel:''}
     ]);
     html+='</div>';
 
@@ -2920,17 +3129,21 @@ function renderProjectList(){
     html+='</div>';
 
     html+='<div class="project-meta-block">';
-    html+='<h4>Aufgaben, Zeit, Events, Bearbeiter</h4>';
+    html+='<h4>Aufgaben, Termine, Aufwand</h4>';
     html+=renderProjectMetaGrid([
-      {label:'Tasks', value:flow.tasksTotal},
+      {label:'Aufgaben', value:runningSummary.taskCount},
       {label:'Status', value:activityStatus},
       {label:'Due soon', value:flow.dueSoon},
       {label:'Overdue', value:flow.overdue},
-      {label:'Kalender-Events', value:flow.events},
-      {label:'Releases', value:flow.releases},
+      {label:'Termine', value:runningSummary.appointmentCount},
+      {label:'Meilensteine', value:runningSummary.milestoneCount},
+      {label:'Restaufwand', value:formatHoursCompact(runningSummary.totalRemainingEffortHours,'geplant')},
+      {label:'Arbeitszeit', value:formatHoursCompact(runningSummary.trackedHours,'gebucht')},
+      {label:'Zeitraum', value:runningSummary.periodLabel},
       {label:'Aktive Bearbeiter', value:flow.assignees.length},
       {label:'Projektteam', value:teamSummary}
     ]);
+    html+=renderProjectTaskList(project);
     html+='</div>';
 
     var activeProjectBlocker=getOpenBlockerHistoryEntry(project);
@@ -4705,6 +4918,22 @@ function bindListActions(){
 
     if(action==='open-meeting'){
       openMeetingForProject(projectId);
+      return;
+    }
+
+    if(action==='open-task'){
+      var taskId=target.dataset.taskId;
+      if(!taskId)return;
+      if(window.AppShell&&typeof window.AppShell.navigateTo==='function'){
+        window.AppShell.navigateTo('kanban');
+      }else{
+        window.location.hash='page=kanban';
+      }
+      window.setTimeout(function(){
+        if(window.KanbanBoard&&typeof window.KanbanBoard.focusTask==='function'){
+          window.KanbanBoard.focusTask(taskId,projectId);
+        }
+      },0);
       return;
     }
 
