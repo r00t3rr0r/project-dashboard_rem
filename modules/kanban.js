@@ -1128,7 +1128,7 @@
     var currentUserId = getCurrentLoggedInEmployeeId();
 
     return getVisibleTasks().filter(function (task) {
-      return task && task.status === 'backlog';
+      return task && task.status === 'backlog' && task.kanbanChainIntakeReady !== false;
     }).sort(function (left, right) {
       function getBucket(task) {
         var assigneeIds = getTaskAssigneeIds(task);
@@ -1281,9 +1281,11 @@
         return (Number(left.sequenceIndex || 0) || 0) - (Number(right.sequenceIndex || 0) || 0);
       })[0] || null;
       var hidden = isChainTask && task.status !== 'done' && !!openPredecessor;
+      var intakeReady = !isChainTask || task.status === 'done' || !openPredecessor;
       var remaining = isChainTask && !hidden ? countOpenDescendants(task.id) : 0;
       meta[task.id] = {
         hidden: hidden,
+        intakeReady: intakeReady,
         remaining: remaining,
         nextTitle: nextTask ? (nextTask.title || 'Folgeaufgabe') : ''
       };
@@ -1295,6 +1297,7 @@
   function attachTaskSequenceMeta(task, meta) {
     if (!task) return task;
     var copy = Object.assign({}, task);
+    copy.kanbanChainIntakeReady = !meta || meta.intakeReady !== false;
     copy.kanbanChainRemainingCount = meta && typeof meta.remaining === 'number' ? meta.remaining : 0;
     copy.kanbanChainNextTitle = meta && meta.nextTitle ? meta.nextTitle : '';
     return copy;
@@ -1737,7 +1740,7 @@
         var chainPreview = chainRemainingCount > 0
           ? '<div class="kanban-intake-chain" title="Diese Folgeaufgabe bleibt bis zum Abschluss des aktuellen Schritts gesperrt.">' +
               '<span class="material-symbols-rounded" aria-hidden="true">link</span>' +
-              '<span><strong>Danach gesperrt:</strong> ' + escapeHtml(chainNextTitle || (chainRemainingCount === 1 ? '1 Folgeaufgabe' : chainRemainingCount + ' Folgeaufgaben')) + '</span>' +
+              '<span><strong>Aktuell in der Kette.</strong> Danach: ' + escapeHtml(chainNextTitle || (chainRemainingCount === 1 ? '1 Folgeaufgabe' : chainRemainingCount + ' Folgeaufgaben')) + '</span>' +
             '</div>'
           : '';
 

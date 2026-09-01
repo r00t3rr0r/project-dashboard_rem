@@ -2255,20 +2255,24 @@ body.light-mode .nav-menu li a:hover {
 
 .kanban-intake-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
-  gap: 0.45rem;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.65rem;
 }
 
 .kanban-intake-card {
   border: 1px solid var(--border-color);
   border-left: 4px solid var(--kanban-project-tone, var(--accent-cyan));
   border-radius: 0.6rem;
-  min-height: 8.1rem;
-  padding: 0.45rem 0.5rem;
+  min-height: 9.4rem;
+  padding: 0.65rem;
   background: linear-gradient(100deg, color-mix(in srgb, var(--kanban-project-tone, var(--accent-cyan)) 11%, transparent), rgba(94, 162, 255, 0.025));
   display: grid;
+  grid-template-rows: auto auto auto auto 1fr;
   gap: 0.25rem;
   min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  isolation: isolate;
   transition: border-color 180ms ease, box-shadow 180ms ease;
   position: relative;
   z-index: 0;
@@ -2345,11 +2349,13 @@ body.light-mode .nav-menu li a:hover {
   gap: 0.5rem;
   color: var(--text-secondary);
   font-size: 0.64rem;
+  min-width: 0;
 }
 
 .kanban-intake-project {
   display: inline-flex;
   align-items: center;
+  flex: 1 1 auto;
   min-width: 0;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -2371,9 +2377,14 @@ body.light-mode .nav-menu li a:hover {
 }
 
 .kanban-intake-owner {
+  flex: 0 1 auto;
+  max-width: 46%;
   border-radius: 999px;
   padding: 0.16rem 0.45rem;
   background: rgba(255,255,255,0.07);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .kanban-intake-card h4 {
@@ -2381,6 +2392,10 @@ body.light-mode .nav-menu li a:hover {
   font-size: 0.78rem;
   line-height: 1.25;
   font-family: var(--font-display);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .kanban-intake-details {
@@ -2394,7 +2409,7 @@ body.light-mode .nav-menu li a:hover {
 
 .kanban-intake-chain {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.3rem;
   padding: 0.3rem 0.4rem;
   border-left: 2px solid var(--kanban-project-tone, var(--accent-cyan));
@@ -2402,9 +2417,21 @@ body.light-mode .nav-menu li a:hover {
   color: var(--text-secondary);
   font-size: 0.62rem;
   line-height: 1.2;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 0.45rem;
+}
+
+.kanban-intake-chain span:not(.material-symbols-rounded) {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .kanban-intake-chain .material-symbols-rounded {
+  flex: 0 0 auto;
   color: var(--kanban-project-tone, var(--accent-cyan));
   font-size: 0.95rem;
 }
@@ -2422,12 +2449,14 @@ body.light-mode .nav-menu li a:hover {
 .kanban-intake-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 0.3rem;
 }
 
 .kanban-intake-actions .kanban-intake-icon-btn {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 0 0 2.15rem;
+  width: 2.15rem;
   height: 1.8rem;
   min-height: 1.8rem;
   padding: 0;
