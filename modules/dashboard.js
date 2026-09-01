@@ -297,7 +297,6 @@
       };
     }
 
-    var docEl = document.scrollingElement || document.documentElement || document.body;
     var mainContent = document.querySelector('.main-content');
     var teamChat = document.getElementById('chart-task-distribution');
     var teamChatList = teamChat ? teamChat.querySelector('[data-team-chat-messages]') : null;
@@ -315,8 +314,6 @@
     }
     return {
       focus: focusState,
-      docScrollTop: docEl ? docEl.scrollTop : 0,
-      docScrollLeft: docEl ? docEl.scrollLeft : 0,
       mainScrollTop: mainContent ? mainContent.scrollTop : null,
       mainScrollLeft: mainContent ? mainContent.scrollLeft : null,
       projectDetails: projectDetails,
@@ -332,12 +329,6 @@
 
   function restoreDashboardUiState(state) {
     if (!state) return;
-
-    var docEl = document.scrollingElement || document.documentElement || document.body;
-    if (docEl) {
-      docEl.scrollTop = Number(state.docScrollTop) || 0;
-      docEl.scrollLeft = Number(state.docScrollLeft) || 0;
-    }
 
     var mainContent = document.querySelector('.main-content');
     if (mainContent && state.mainScrollTop !== null) {

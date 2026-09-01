@@ -16,6 +16,8 @@
 
 html {
   font-size: 16px;
+  scrollbar-gutter: stable;
+  overscroll-behavior-y: none;
 }
 
 body {
@@ -24,6 +26,12 @@ body {
   min-height: 100vh;
   overflow-x: hidden;
   transition: background-color 0.3s, color 0.3s;
+}
+
+#dashboard,
+#projects,
+#kanban {
+  overflow-anchor: none;
 }
 
 /* ---------- Dark Mode (default) ---------- */
