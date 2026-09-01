@@ -5,7 +5,6 @@
 (function(){'use strict';
 
 var OLLAMA_BASES=['http://127.0.0.1:11434','http://localhost:11434'];
-var DEFAULT_MODEL='hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M';
 var discoveredModels=[];
 var activeOperations=[];
 var operationSequence=0;
@@ -105,20 +104,10 @@ function isRemoteProxyMode(){
   return !!(window.location&&window.location.origin)&&!isLocalBrowserHost();
 }
 
-function modelFrom(payload){
-  var config=payload&&payload.promptConfig&&typeof payload.promptConfig==='object'?payload.promptConfig:{};
-  var global=globalConfig();
-  var selected=config.model||payload&&payload.model||global.primaryModel||global.fallbackModel||DEFAULT_MODEL;
-  return String(selected).trim()||DEFAULT_MODEL;
-}
-
 function configFrom(payload){
   var config=payload&&payload.promptConfig&&typeof payload.promptConfig==='object'?payload.promptConfig:{};
-  var global=globalConfig();
   var temperature=Number(config.temperature);
   var maxTokens=Number(config.maxTokens);
-  if(!isFinite(temperature))temperature=Number(global.temperature);
-  if(!isFinite(maxTokens))maxTokens=Number(global.maxTokens);
   return {
     temperature:isFinite(temperature)?Math.max(0,Math.min(1,temperature)):0.3,
     maxTokens:isFinite(maxTokens)?Math.max(200,Math.min(6000,Math.round(maxTokens))):3200
@@ -189,6 +178,7 @@ function localFetch(path,options){
 function health(){
   if(isRemoteProxyMode()){
     return remoteFetch('/api/ai/health','GET').then(function(result){
+      discoveredModels=Array.isArray(result.body&&result.body.models)?result.body.models.map(function(item){return String(item&&(item.name||item.model)||item||'').trim();}).filter(Boolean):[];
       return {
         endpoint:result.endpoint,
         body:result.body||{status:'error'}
@@ -208,24 +198,41 @@ function resolvedPayload(payload){
   var next=Object.assign({},payload||{});
   var supplied=next.promptConfig&&typeof next.promptConfig==='object'?next.promptConfig:{};
   var global=globalConfig();
-  next.promptConfig=Object.assign({},global,supplied);
+  next.promptConfig=Object.assign({},supplied,{
+    temperature:global.temperature,
+    maxTokens:global.maxTokens
+  });
   return next;
 }
 
-function resolveModel(payload){
-  var config=payload&&payload.promptConfig&&typeof payload.promptConfig==='object'?payload.promptConfig:{};
-  var configured=String(config.model||payload&&payload.model||config.primaryModel||'').trim();
-  if(configured)return Promise.resolve(configured);
-  if(discoveredModels.length)return Promise.resolve(discoveredModels[0]);
-  return localFetch('/api/tags',{method:'GET'}).then(function(result){
-    discoveredModels=Array.isArray(result.body.models)?result.body.models.map(function(item){return String(item&&(item.name||item.model)||'').trim();}).filter(Boolean):[];
-    return discoveredModels[0]||DEFAULT_MODEL;
-  }).catch(function(){return DEFAULT_MODEL;});
+function resolveModels(){
+  var global=globalConfig();
+  var routing=String(global.routing||'auto').toLowerCase();
+  var primary=String(global.primaryModel||'').trim();
+  var fallback=String(global.fallbackModel||'').trim();
+  var configured=routing==='fixed'?[primary]:(routing==='fallback'?[primary,fallback]:[primary,fallback]);
+  configured=configured.filter(function(model,index){return !!model&&configured.indexOf(model)===index;});
+  if(configured.length)return Promise.resolve(configured);
+  if(discoveredModels.length)return Promise.resolve([discoveredModels[0]]);
+  return health().then(function(){
+    if(discoveredModels.length)return [discoveredModels[0]];
+    throw new Error('Kein Ollama-Modell verfuegbar. Bitte auf der KI-Konfiguration ein installiertes Primaer- oder Fallback-Modell auswaehlen.');
+  });
+}
+
+function applyModel(payload,model){
+  payload.model=model;
+  payload.promptConfig=Object.assign({},payload.promptConfig||{},{model:model});
+  return payload;
+}
+
+function isMissingModelError(error){
+  return /model .+ not found|model.*nicht gefunden|unknown model/i.test(String(error&&error.message||error||''));
 }
 
 function wrapResult(path,payload,text){
   var generatedAt=new Date().toISOString();
-  var model=modelFrom(payload);
+  var model=String(payload&&payload.model||'').trim();
   if(path==='/api/ai/meeting-to-concept')return {ok:true,stage:'concept',model:model,generatedAt:generatedAt,markdown:text,markdownChunks:[text]};
   if(path==='/api/ai/concept-to-plan')return {ok:true,stage:'plan',model:model,generatedAt:generatedAt,markdown:text,markdownChunks:[text]};
   if(path==='/api/ai/project-knowledge')return {ok:true,model:model,generatedAt:generatedAt,markdown:text,filePath:'',bytes:new TextEncoder().encode(text).length};
@@ -266,14 +273,19 @@ function requestGeneration(requestBody,options){
 
 function generateCore(path,payload,options){
   payload=resolvedPayload(payload);
-  if(isRemoteProxyMode()){
-    return remoteFetch(path,'POST',payload||{},options||{}).then(function(result){
-      return result.body||{};
-    });
-  }
-
   var config=configFrom(payload||{});
-  return resolveModel(payload).then(function(selectedModel){
+  return resolveModels().then(function(models){
+    var selectedModel=models[0];
+    applyModel(payload,selectedModel);
+    if(isRemoteProxyMode()){
+      return remoteFetch(path,'POST',payload||{},options||{}).then(function(result){
+        return result.body||{};
+      }).catch(function(error){
+        if(models.length<2||!isMissingModelError(error))throw error;
+        applyModel(payload,models[1]);
+        return remoteFetch(path,'POST',payload||{},options||{}).then(function(result){return result.body||{};});
+      });
+    }
     var requestBody={
       model:selectedModel,
       prompt:buildPrompt(path,payload||{}),
@@ -281,7 +293,15 @@ function generateCore(path,payload,options){
       options:{temperature:config.temperature,num_predict:config.maxTokens}
     };
     if(isJsonPath(path))requestBody.format='json';
-    return requestGeneration(requestBody,options||{}).then(function(result){
+    function generateWithModel(model){
+      requestBody.model=model;
+      applyModel(payload,model);
+      return requestGeneration(requestBody,options||{});
+    }
+    return generateWithModel(selectedModel).catch(function(error){
+      if(models.length<2||!isMissingModelError(error))throw error;
+      return generateWithModel(models[1]);
+    }).then(function(result){
     try{
       return wrapResult(path,payload||{},String(result.body.response||''));
     }catch(firstError){
