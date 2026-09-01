@@ -3,13 +3,5 @@ __pycache__/
 *.pyc
 .venv/
 
-# Local dashboard data and database artifacts
-data/.projekt-dashboard.snapshot.json
-data/.projekt-dashboard.snapshot.json.gz
-data/.projekt-dashboard.backup.*.sqlite.tmp
-data/projekt-dashboard.backup.json
-data/projekt-dashboard.backup.sqlite
-data/projekt-dashboard.backup.stamp
-data/projekt-dashboard.sqlite
-data/projekt-dashboard.sqlite-shm
-data/projekt-dashboard.sqlite-wal
+# Local dashboard data and database artifacts (runtime only, never tracked)
+data/
