@@ -940,14 +940,20 @@
     return parts.slice(0, 2).map(function (part) { return part.charAt(0).toUpperCase(); }).join('');
   }
 
+  function isEmployeeDashboardOnline(employee) {
+    return !!(window.AuthManager && typeof window.AuthManager.isEmployeeDashboardOnline === 'function' && window.AuthManager.isEmployeeDashboardOnline(employee));
+  }
+
   function getAssigneeAvatarHtml(task, assigneeName, assigneeInitials) {
+    var assignee = getAssignee(task);
+    var onlineClass = isEmployeeDashboardOnline(assignee) ? ' is-online' : '';
     var avatarUrl = getAssigneeGitHubAvatarUrl(task);
     if (!avatarUrl) {
-      return '<span class="kanban-assignee-avatar" title="' + escapeHtml(assigneeName) + '">' + escapeHtml(assigneeInitials) + '</span>';
+      return '<span class="kanban-assignee-avatar' + onlineClass + '" title="' + escapeHtml(assigneeName) + '">' + escapeHtml(assigneeInitials) + '</span>';
     }
 
     var safeUrl = String(avatarUrl).replace(/'/g, '%27');
-    return '<span class="kanban-assignee-avatar kanban-assignee-avatar-image" title="' + escapeHtml(assigneeName) + '" style="background-image:url(\'' + escapeHtml(safeUrl) + '\')" aria-label="' + escapeHtml(assigneeName) + '"></span>';
+    return '<span class="kanban-assignee-avatar kanban-assignee-avatar-image' + onlineClass + '" title="' + escapeHtml(assigneeName) + '" style="background-image:url(\'' + escapeHtml(safeUrl) + '\')" aria-label="' + escapeHtml(assigneeName) + '"></span>';
   }
 
   function getAssigneeAvatarStackHtml(task) {
@@ -967,11 +973,12 @@
       var name = String(assignee && assignee.name || '').trim() || 'Mitarbeiter';
       var initials = getAssigneeInitials(name);
       var avatarUrl = getEmployeeGitHubAvatarUrl(assignee);
+      var onlineClass = isEmployeeDashboardOnline(assignee) ? ' is-online' : '';
       if (avatarUrl) {
         var safeUrl = String(avatarUrl).replace(/'/g, '%27');
-        html += '<span class="kanban-assignee-avatar kanban-assignee-avatar-image" style="background-image:url(\'' + escapeHtml(safeUrl) + '\')" aria-label="' + escapeHtml(name) + '"></span>';
+        html += '<span class="kanban-assignee-avatar kanban-assignee-avatar-image' + onlineClass + '" style="background-image:url(\'' + escapeHtml(safeUrl) + '\')" aria-label="' + escapeHtml(name) + '"></span>';
       } else {
-        html += '<span class="kanban-assignee-avatar" aria-label="' + escapeHtml(name) + '">' + escapeHtml(initials) + '</span>';
+        html += '<span class="kanban-assignee-avatar' + onlineClass + '" aria-label="' + escapeHtml(name) + '">' + escapeHtml(initials) + '</span>';
       }
     });
     if (hiddenCount > 0) {
@@ -1266,10 +1273,20 @@
       if (!task || !task.id) return;
       var isChainTask = !!predecessorById[task.id] || !!((dependentsById[task.id] || []).length);
       var openPredecessor = isChainTask && task.status !== 'done' ? getNearestOpenPredecessor(task.id) : null;
-      var showAsNextStep = !!(openPredecessor && openPredecessor.status === 'in-progress');
-      var hidden = isChainTask && task.status !== 'done' && !!openPredecessor && !showAsNextStep;
+      var nextTask = (dependentsById[task.id] || []).map(function (dependentId) {
+        return byId[dependentId];
+      }).filter(function (dependentTask) {
+        return dependentTask && dependentTask.status !== 'done';
+      }).sort(function (left, right) {
+        return (Number(left.sequenceIndex || 0) || 0) - (Number(right.sequenceIndex || 0) || 0);
+      })[0] || null;
+      var hidden = isChainTask && task.status !== 'done' && !!openPredecessor;
       var remaining = isChainTask && !hidden ? countOpenDescendants(task.id) : 0;
-      meta[task.id] = { hidden: hidden, remaining: remaining };
+      meta[task.id] = {
+        hidden: hidden,
+        remaining: remaining,
+        nextTitle: nextTask ? (nextTask.title || 'Folgeaufgabe') : ''
+      };
     });
 
     return meta;
@@ -1279,6 +1296,7 @@
     if (!task) return task;
     var copy = Object.assign({}, task);
     copy.kanbanChainRemainingCount = meta && typeof meta.remaining === 'number' ? meta.remaining : 0;
+    copy.kanbanChainNextTitle = meta && meta.nextTitle ? meta.nextTitle : '';
     return copy;
   }
 
@@ -1391,6 +1409,18 @@
     return project ? (project.title || project.name || 'Projekt') : 'Ohne Projekt';
   }
 
+  function getProjectColor(projectId) {
+    var project = (window.DataLayer.getProjects() || []).find(function (item) {
+      return item.id === projectId;
+    });
+    if (project && /^#[0-9a-f]{6}$/i.test(String(project.color || ''))) return project.color;
+    var palette = ['#2f80ed', '#16a085', '#e67e22', '#d64550', '#8e6bbf', '#198f9c'];
+    var source = String(projectId || 'general');
+    var hash = 0;
+    for (var index = 0; index < source.length; index += 1) hash = ((hash << 5) - hash) + source.charCodeAt(index);
+    return palette[Math.abs(hash) % palette.length];
+  }
+
   // --- Status-Farbe für Badges ---
   function getStatusColor(status) {
     switch (status) {
@@ -1446,6 +1476,7 @@
     var urgency = task.urgency || 'normal';
     var assigneeName = getAssigneeName(task);
     var assigneeAvatarStack = getAssigneeAvatarStackHtml(task);
+    var hasOnlineAssignee = getTaskAssignees(task).some(isEmployeeDashboardOnline);
     var effortSnapshot = buildTaskEffortSnapshot(task);
     var confirmationState = getInProgressConfirmationState(task);
     var timingState = effortSnapshot.state;
@@ -1568,7 +1599,7 @@
 
     html += '<div class="kanban-card-footer">';
     html += '<div class="kanban-card-footer-meta">';
-    html += '<span class="kanban-assignee" title="' + escapeHtml(assigneeName) + '">' + escapeHtml(assigneeName) + '</span>';
+    html += '<span class="kanban-assignee" title="' + escapeHtml(assigneeName) + '">' + escapeHtml(assigneeName) + (hasOnlineAssignee ? '<span class="employee-presence" title="Online im Dashboard"><span class="profile-presence-dot" aria-hidden="true"></span><span>Online</span></span>' : '') + '</span>';
     html += attachmentBadge;
     if (task.dueDate) {
       html += '<span class="kanban-due-date ' + (isOverdue ? 'overdue' : '') + '" title="Faellig am ' + escapeHtml(task.dueDate) + '">' + escapeHtml(dueDateLabel) + '</span>';
@@ -1677,7 +1708,7 @@
 
     html += '<section class="kanban-intake-panel">';
     html += '<div class="kanban-intake-head">';
-    html += '<div><h3>Aufgaben aufnehmen</h3><p>Backlog-Aufgaben fuer dich oder aus dem Team direkt in To Do uebernehmen.</p></div>';
+    html += '<div><h3>Aufgaben aufnehmen</h3><p>Backlog-Aufgaben fuer dich oder aus dem Team uebernehmen und anschliessend bewusst einplanen.</p></div>';
     html += '<span class="kanban-intake-count">' + intakeTasks.length + ' im Pool</span>';
     html += '</div>';
 
@@ -1698,22 +1729,36 @@
           : (createdByCurrent ? 'Von dir erstellt' : (assigneeIds.length ? 'Team-Aufgabe' : 'Frei verfuegbar'));
         var dueLabel = task.dueDate ? ('Faellig ' + formatDateShort(task.dueDate)) : getScheduleLabel(task);
         var overdueClass = isTaskOverdue(task) ? ' is-overdue' : '';
+        var projectTitle = getProjectTitle(task.projectId);
+        var projectTone = getProjectColor(task.projectId);
+        var chainRemainingCount = Number(task.kanbanChainRemainingCount || 0) || 0;
+        var chainNextTitle = String(task.kanbanChainNextTitle || '').trim();
+        var chainClass = chainRemainingCount > 0 ? ' is-chain-active' : '';
+        var chainPreview = chainRemainingCount > 0
+          ? '<div class="kanban-intake-chain" title="Diese Folgeaufgabe bleibt bis zum Abschluss des aktuellen Schritts gesperrt.">' +
+              '<span class="material-symbols-rounded" aria-hidden="true">link</span>' +
+              '<span><strong>Danach gesperrt:</strong> ' + escapeHtml(chainNextTitle || (chainRemainingCount === 1 ? '1 Folgeaufgabe' : chainRemainingCount + ' Folgeaufgaben')) + '</span>' +
+            '</div>'
+          : '';
 
-        html += '<article class="kanban-intake-card">';
+        html += '<article class="kanban-intake-card' + chainClass + '" style="--kanban-project-tone:' + escapeHtml(projectTone) + '" tabindex="0">';
         html += '<div class="kanban-intake-meta">';
-        html += '<span class="kanban-intake-project">' + escapeHtml(getProjectTitle(task.projectId)) + '</span>';
+        html += '<span class="kanban-intake-project"><span class="kanban-intake-project-dot" aria-hidden="true"></span>' + escapeHtml(projectTitle) + '</span>';
         html += '<span class="kanban-intake-owner">' + escapeHtml(ownershipLabel) + '</span>';
         html += '</div>';
         html += '<h4>' + escapeHtml(task.title || 'Ohne Titel') + '</h4>';
-        html += '<p>' + escapeHtml(getAssigneeName(task)) + ' · ' + escapeHtml(dueLabel) + '</p>';
+        html += '<p class="kanban-intake-details">' + escapeHtml(getAssigneeName(task)) + ' · ' + escapeHtml(dueLabel) + '</p>';
+        html += chainPreview;
+        html += '<div class="kanban-intake-expandable">';
         html += '<div class="kanban-intake-signals">';
         html += '<span class="kanban-pill">' + escapeHtml(getPriorityLabel(task.priority)) + '</span>';
         html += '<span class="kanban-pill' + overdueClass + '">' + escapeHtml(getStatusLabel(task.status)) + '</span>';
         html += '</div>';
         html += '<div class="kanban-intake-actions">';
-        html += '<button type="button" class="btn btn-primary" data-overview-task-intake="' + escapeHtml(task.id) + '" ' + (canIntake ? '' : 'disabled') + '>In To Do</button>';
-        html += '<button type="button" class="btn btn-secondary" data-overview-task-assign="' + escapeHtml(task.id) + '" ' + (canAssignToSelf ? '' : 'disabled') + '>Mir zuweisen</button>';
-        html += '<button type="button" class="btn btn-secondary" data-task-open="' + escapeHtml(task.id) + '" ' + (canEditTask ? '' : 'disabled') + '>Bearbeiten</button>';
+        html += '<button type="button" class="btn btn-primary kanban-intake-icon-btn" data-overview-task-intake="' + escapeHtml(task.id) + '" title="Aufgabe uebernehmen" aria-label="Aufgabe uebernehmen" ' + (canIntake ? '' : 'disabled') + '><span class="material-symbols-rounded" aria-hidden="true">assignment_turned_in</span></button>';
+        html += '<button type="button" class="btn btn-secondary kanban-intake-icon-btn" data-overview-task-assign="' + escapeHtml(task.id) + '" title="Mir zuweisen" aria-label="Mir zuweisen" ' + (canAssignToSelf ? '' : 'disabled') + '><span class="material-symbols-rounded" aria-hidden="true">person_add</span></button>';
+        html += '<button type="button" class="btn btn-secondary kanban-intake-icon-btn" data-task-open="' + escapeHtml(task.id) + '" title="Aufgabe bearbeiten" aria-label="Aufgabe bearbeiten" ' + (canEditTask ? '' : 'disabled') + '><span class="material-symbols-rounded" aria-hidden="true">edit</span></button>';
+        html += '</div>';
         html += '</div>';
         html += '</article>';
       });
@@ -1981,8 +2026,7 @@
     var auth = getAuthManager();
     var canMove = !auth || typeof auth.canMoveTask !== 'function' || auth.canMoveTask(task);
     if (!canMove && !assignTaskToCurrentUser(taskId)) return;
-
-    setTaskStatus(taskId, 'todo');
+    assignTaskToCurrentUser(taskId);
   }
 
   // --- Drag & Drop Setup ---

@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0" rel="stylesheet">
 <link rel="stylesheet" href="styles.css?v=20260831a">
-<link rel="stylesheet" href="theme-override.css?v=20260820f">
+<link rel="stylesheet" href="theme-override.css?v=20260901b">
 <!-- Data Layer -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
 <script>
@@ -125,7 +125,8 @@
 <script src="modules/labels.js?v=20260730y"></script>
 <script src="modules/notifications.js?v=20260730b"></script>
 <script src="modules/prompt-config.js?v=20260830a"></script>
-<script src="modules/local-ollama.js?v=20260830a"></script>
+<script src="modules/local-ollama.js?v=20260901c"></script>
+<script src="modules/ai-conf.js?v=20260901c"></script>
   <script src="modules/projects.js?v=20260831a"></script>
 <script src="modules/ki-workflow.js?v=20260830a"></script>
 <script src="modules/meeting.js?v=20260830a"></script>
@@ -182,6 +183,7 @@
       <li><a href="#" data-page="employees" data-label="Mitarbeiter" data-kicker="Teamstruktur"><span class="nav-icon material-symbols-rounded" aria-hidden="true">groups</span><span>Mitarbeiter</span></a></li>
       <li><a href="#" data-page="labels" data-label="Labels" data-kicker="Taxonomie"><span class="nav-icon material-symbols-rounded" aria-hidden="true">sell</span><span>Labels</span></a></li>
       <li><a href="#" data-page="quicktask" data-label="QuickTask" data-kicker="Schnellerfassung"><span class="nav-icon material-symbols-rounded" aria-hidden="true">bolt</span><span>QuickTask</span></a></li>
+      <li><a href="#" data-page="ai-conf" data-label="AI Conf" data-kicker="KI Steuerung"><span class="nav-icon material-symbols-rounded" aria-hidden="true">tune</span><span>AI Conf</span></a></li>
       <li><a href="#" data-page="healthcheck" data-label="Gesundheits-Check" data-kicker="Risikoanalyse"><span class="nav-icon material-symbols-rounded" aria-hidden="true">health_and_safety</span><span>Gesundheits-Check</span></a></li>
       <li><a href="#" data-page="timeline" data-label="Timeline" data-kicker="Verlauf"><span class="nav-icon material-symbols-rounded" aria-hidden="true">timeline</span><span>Timeline</span></a></li>
       <li><a href="#" data-page="releases" data-label="Releases" data-kicker="Auslieferung"><span class="nav-icon material-symbols-rounded" aria-hidden="true">deployed_code</span><span>Releases</span></a></li>
@@ -394,6 +396,18 @@
       </div>
 
       <div id="meeting-root" class="meeting-root"></div>
+    </section>
+
+    <!-- AI Conf -->
+    <section id="ai-conf" class="page">
+      <div class="section-header section-header-inline">
+        <div>
+          <p class="section-kicker">KI Steuerung</p>
+          <h1>AI Conf</h1>
+          <p class="section-description">Modelle, Routing, Prompt-Bibliothek und operative KI-Automationen zentral steuern.</p>
+        </div>
+      </div>
+      <div id="ai-conf-root" class="ai-conf-root"></div>
     </section>
 
     <!-- QuickTask -->

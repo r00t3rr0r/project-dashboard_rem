@@ -6,6 +6,91 @@
 
 var OLLAMA_BASES=['http://127.0.0.1:11434','http://localhost:11434'];
 var DEFAULT_MODEL='hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M';
+var discoveredModels=[];
+var activeOperations=[];
+var operationSequence=0;
+var progressTimer=null;
+var activityState={status:'idle',progress:0,label:'Bereit',activeCount:0,error:'',updatedAt:''};
+
+function operationLabel(path){
+  var labels={
+    '/api/ai/meeting-to-concept':'Projektkonzept erstellen',
+    '/api/ai/concept-to-plan':'Projektplan erstellen',
+    '/api/ai/plan-to-tasks':'Aufgaben erzeugen',
+    '/api/ai/meeting-task-draft':'Aufgabenentwurf erstellen',
+    '/api/ai/project-milestones-draft':'Meilensteine erstellen',
+    '/api/ai/project-knowledge':'Projektwissen aufbereiten'
+  };
+  return labels[path]||'KI-Anfrage bearbeiten';
+}
+
+function publishActivity(next){
+  activityState=Object.assign({},activityState,next||{},{updatedAt:new Date().toISOString()});
+  window.dispatchEvent(new CustomEvent('localOllamaStatusChanged',{detail:Object.assign({},activityState)}));
+}
+
+function stopProgressTimer(){
+  if(progressTimer){clearInterval(progressTimer);progressTimer=null;}
+}
+
+function syncWorkingActivity(){
+  if(!activeOperations.length){stopProgressTimer();return;}
+  var current=activeOperations[activeOperations.length-1];
+  publishActivity({
+    status:current.stopping?'stopping':'working',
+    progress:current.progress,
+    label:current.label,
+    activeCount:activeOperations.length,
+    error:''
+  });
+}
+
+function beginOperation(path,externalSignal){
+  var controller=typeof AbortController!=='undefined'?new AbortController():null;
+  var operation={id:++operationSequence,label:operationLabel(path),progress:8,controller:controller,stopping:false};
+  if(controller&&externalSignal){
+    if(externalSignal.aborted)controller.abort();
+    else externalSignal.addEventListener('abort',function(){controller.abort();},{once:true});
+  }
+  activeOperations.push(operation);
+  syncWorkingActivity();
+  if(!progressTimer){
+    progressTimer=setInterval(function(){
+      activeOperations.forEach(function(item){
+        if(!item.stopping)item.progress=Math.min(92,item.progress+(item.progress<40?2:item.progress<70?1.2:0.5));
+      });
+      syncWorkingActivity();
+    },300);
+  }
+  return operation;
+}
+
+function finishOperation(operation,error){
+  activeOperations=activeOperations.filter(function(item){return item.id!==operation.id;});
+  if(activeOperations.length){syncWorkingActivity();return;}
+  stopProgressTimer();
+  var aborted=!!error&&(error.name==='AbortError'||/abort/i.test(String(error.message||'')));
+  publishActivity({
+    status:error?(aborted?'stopped':'error'):'complete',
+    progress:error?0:100,
+    label:error?(aborted?'KI-Arbeit gestoppt':'KI-Anfrage fehlgeschlagen'):'KI-Arbeit abgeschlossen',
+    activeCount:0,
+    error:error&&!aborted?String(error.message||error):''
+  });
+}
+
+function stopAll(){
+  activeOperations.forEach(function(operation){
+    operation.stopping=true;
+    if(operation.controller)operation.controller.abort();
+  });
+  if(activeOperations.length)syncWorkingActivity();
+}
+
+function globalConfig(){
+  if(window.AIConfModule&&typeof window.AIConfModule.getConfiguration==='function')return window.AIConfModule.getConfiguration()||{};
+  return {};
+}
 
 function isLocalBrowserHost(){
   try{
@@ -22,13 +107,18 @@ function isRemoteProxyMode(){
 
 function modelFrom(payload){
   var config=payload&&payload.promptConfig&&typeof payload.promptConfig==='object'?payload.promptConfig:{};
-  return String(config.model||payload&&payload.model||DEFAULT_MODEL).trim()||DEFAULT_MODEL;
+  var global=globalConfig();
+  var selected=config.model||payload&&payload.model||global.primaryModel||global.fallbackModel||DEFAULT_MODEL;
+  return String(selected).trim()||DEFAULT_MODEL;
 }
 
 function configFrom(payload){
   var config=payload&&payload.promptConfig&&typeof payload.promptConfig==='object'?payload.promptConfig:{};
+  var global=globalConfig();
   var temperature=Number(config.temperature);
   var maxTokens=Number(config.maxTokens);
+  if(!isFinite(temperature))temperature=Number(global.temperature);
+  if(!isFinite(maxTokens))maxTokens=Number(global.maxTokens);
   return {
     temperature:isFinite(temperature)?Math.max(0,Math.min(1,temperature)):0.3,
     maxTokens:isFinite(maxTokens)?Math.max(200,Math.min(6000,Math.round(maxTokens))):3200
@@ -54,7 +144,7 @@ function buildPrompt(path,payload){
     return 'Du bist Tech-Lead und Product Owner. Zerlege den Projektplan in technisch ausführbare Entwicklungsaufgabenschritte und formuliere jede Aufgabe als konkrete Arbeitseinheit mit klarer Aktion. Erzeuge 6 bis 20 realistische, geordnete Kanban-Aufgaben. Antworte ausschliesslich als JSON mit {"summaryMarkdown":"...","tasks":[{"title":"...","description":"...","status":"todo","priority":"medium","effortHours":4,"labels":[],"subtasks":[],"sequenceIndex":1,"dependsOnPrevious":false,"schedule":{"mode":"none","deadline":"","fixedAt":"","rangeStart":"","rangeEnd":""}}]}.'+context;
   }
   if(path==='/api/ai/meeting-task-draft'){
-    return 'Du bist ein zweisprachiger Projektassistent (Deutsch/Englisch) fuer operative IT-Umsetzung. Erzeuge aus Titel, Beschreibung und Projektkontext einen realistischen Aufgabenentwurf. Nutze den Entwicklungsprozess als Leitfaden: Analyse, technisches Design, Implementierung, Tests, Review, Dokumentation/Release. Erzeuge 3 bis 8 konkrete subtasksDe/subtasksEn als Arbeitsschritte in sinnvoller Reihenfolge. Schaetze effortHours plausibel auf Basis der Anzahl der Teilaufgaben und ihrer ungefaehren Dauer; die Summe soll zu den subtasks passen und > 0 sein. Wenn sinnvoll, fuelle optionale Felder wie labels, schedule und note mit realistischen Werten. Antworte ausschliesslich als JSON mit {"summaryMarkdown":"...","task":{"titleDe":"...","titleEn":"...","descriptionDe":"...","descriptionEn":"...","priority":"medium","urgency":"normal","effortHours":3,"labels":[],"schedule":{"mode":"none","deadline":"","fixedAt":"","rangeStart":"","rangeEnd":""},"sequenceIndex":1,"dependsOnPrevious":false,"subtasksDe":[],"subtasksEn":[],"note":""},"taskSuggestions":[],"event":{"create":false,"title":"","description":"","type":"task","date":"","startTime":"","endTime":""}}. Liefere bei mehreren Arbeitspaketen 2 bis 8 taskSuggestions im gleichen Aufgabenformat und setze fuer inhaltliche Folgeaufgaben dependsOnPrevious=true.'+context;
+    return 'Du bist ein zweisprachiger Projektassistent (Deutsch/Englisch) fuer operative IT-Umsetzung. Erzeuge aus Titel, Beschreibung und Projektkontext einen realistischen Aufgabenentwurf. Nutze den Entwicklungsprozess als Leitfaden: Analyse, technisches Design, Implementierung, Tests, Review, Dokumentation/Release. Erzeuge 3 bis 8 konkrete subtasksDe/subtasksEn als Arbeitsschritte in sinnvoller Reihenfolge. Schaetze effortHours plausibel auf Basis der Anzahl der Teilaufgaben und ihrer ungefaehren Dauer; die Summe soll zu den subtasks passen und > 0 sein. Wenn Mitarbeiterdaten im Kontext enthalten sind, darf assigneeId ausschliesslich eine dort vorhandene Mitarbeiter-ID sein. Wenn sinnvoll, fuelle optionale Felder wie labels, schedule und note mit realistischen Werten. Antworte ausschliesslich als JSON mit {"summaryMarkdown":"...","task":{"titleDe":"...","titleEn":"...","descriptionDe":"...","descriptionEn":"...","priority":"medium","urgency":"normal","effortHours":3,"assigneeId":"","labels":[],"schedule":{"mode":"none","deadline":"","fixedAt":"","rangeStart":"","rangeEnd":""},"sequenceIndex":1,"dependsOnPrevious":false,"subtasksDe":[],"subtasksEn":[],"note":""},"taskSuggestions":[],"event":{"create":false,"title":"","description":"","type":"task","date":"","startTime":"","endTime":""}}. Liefere bei mehreren Arbeitspaketen 2 bis 8 taskSuggestions im gleichen Aufgabenformat und setze fuer inhaltliche Folgeaufgaben dependsOnPrevious=true.'+context;
   }
   if(path==='/api/ai/project-milestones-draft'){
     return 'Du bist Senior Delivery Manager. Erzeuge 3 bis 10 realistische Meilensteine aus den Projektdaten. Antworte ausschliesslich als JSON mit {"summaryMarkdown":"...","milestones":[{"title":"...","description":"...","date":"YYYY-MM-DD","startTime":"","endTime":"","type":"release"}]}.'+context;
@@ -106,11 +196,31 @@ function health(){
     });
   }
   return localFetch('/api/tags',{method:'GET'}).then(function(result){
+    discoveredModels=Array.isArray(result.body.models)?result.body.models.map(function(item){return String(item&&(item.name||item.model)||'').trim();}).filter(Boolean):[];
     return {
       endpoint:result.endpoint,
       body:{status:'ok',models:Array.isArray(result.body.models)?result.body.models:[],ollamaBaseUrl:result.endpoint.replace(/\/api\/tags$/,'')}
     };
   });
+}
+
+function resolvedPayload(payload){
+  var next=Object.assign({},payload||{});
+  var supplied=next.promptConfig&&typeof next.promptConfig==='object'?next.promptConfig:{};
+  var global=globalConfig();
+  next.promptConfig=Object.assign({},global,supplied);
+  return next;
+}
+
+function resolveModel(payload){
+  var config=payload&&payload.promptConfig&&typeof payload.promptConfig==='object'?payload.promptConfig:{};
+  var configured=String(config.model||payload&&payload.model||config.primaryModel||'').trim();
+  if(configured)return Promise.resolve(configured);
+  if(discoveredModels.length)return Promise.resolve(discoveredModels[0]);
+  return localFetch('/api/tags',{method:'GET'}).then(function(result){
+    discoveredModels=Array.isArray(result.body.models)?result.body.models.map(function(item){return String(item&&(item.name||item.model)||'').trim();}).filter(Boolean):[];
+    return discoveredModels[0]||DEFAULT_MODEL;
+  }).catch(function(){return DEFAULT_MODEL;});
 }
 
 function wrapResult(path,payload,text){
@@ -154,7 +264,8 @@ function requestGeneration(requestBody,options){
   });
 }
 
-function generate(path,payload,options){
+function generateCore(path,payload,options){
+  payload=resolvedPayload(payload);
   if(isRemoteProxyMode()){
     return remoteFetch(path,'POST',payload||{},options||{}).then(function(result){
       return result.body||{};
@@ -162,15 +273,15 @@ function generate(path,payload,options){
   }
 
   var config=configFrom(payload||{});
-  var requestBody={
-    model:modelFrom(payload||{}),
-    prompt:buildPrompt(path,payload||{}),
-    stream:false,
-    options:{temperature:config.temperature,num_predict:config.maxTokens}
-  };
-  if(isJsonPath(path))requestBody.format='json';
-
-  return requestGeneration(requestBody,options||{}).then(function(result){
+  return resolveModel(payload).then(function(selectedModel){
+    var requestBody={
+      model:selectedModel,
+      prompt:buildPrompt(path,payload||{}),
+      stream:false,
+      options:{temperature:config.temperature,num_predict:config.maxTokens}
+    };
+    if(isJsonPath(path))requestBody.format='json';
+    return requestGeneration(requestBody,options||{}).then(function(result){
     try{
       return wrapResult(path,payload||{},String(result.body.response||''));
     }catch(firstError){
@@ -187,6 +298,21 @@ function generate(path,payload,options){
         }
       });
     }
+    });
+  });
+}
+
+function generate(path,payload,options){
+  var suppliedOptions=options||{};
+  var operation=beginOperation(path,suppliedOptions.signal);
+  var trackedOptions=Object.assign({},suppliedOptions);
+  if(operation.controller)trackedOptions.signal=operation.controller.signal;
+  return generateCore(path,payload,trackedOptions).then(function(result){
+    finishOperation(operation,null);
+    return result;
+  }).catch(function(error){
+    finishOperation(operation,error);
+    throw error;
   });
 }
 
@@ -205,8 +331,10 @@ function request(path,method,payload,options){
 window.LocalOllama={
   bases:OLLAMA_BASES.slice(),
   request:request,
-  generate:function(path,payload){return generate(path,payload||{});},
-  health:health
+  generate:function(path,payload,options){return generate(path,payload||{},options||{});},
+  health:health,
+  getStatus:function(){return Object.assign({},activityState);},
+  stopAll:stopAll
 };
 
 })();

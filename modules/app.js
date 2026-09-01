@@ -408,6 +408,7 @@ function refreshAllModules(options){
     if(window.TaskHistoryModule&&window.TaskHistoryModule.render)window.TaskHistoryModule.render();
     if(window.TimelineModule&&window.TimelineModule.render)window.TimelineModule.render();
     if(window.MeetingModule&&window.MeetingModule.render)window.MeetingModule.render();
+    if(window.AIConfModule&&window.AIConfModule.render)window.AIConfModule.render();
     if(window.AuthManager&&window.AuthManager.refreshUi)window.AuthManager.refreshUi();
   }catch(e){console.error('[Refresh]',e);}
 }
@@ -457,6 +458,8 @@ function refreshActivePageModule(options){
       if(window.SprintModule&&window.SprintModule.render)window.SprintModule.render();
     }else if(page==='quicktask'){
       if(window.QuickTaskModule&&window.QuickTaskModule.renderRecentTasks)window.QuickTaskModule.renderRecentTasks();
+    }else if(page==='ai-conf'){
+      if(window.AIConfModule&&window.AIConfModule.render)window.AIConfModule.render();
     }else if(page==='tasks'){
       if(window.TaskHistoryModule&&window.TaskHistoryModule.render)window.TaskHistoryModule.render();
     }else if(page==='timeline'){

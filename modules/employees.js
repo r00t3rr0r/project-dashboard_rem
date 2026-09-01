@@ -249,7 +249,8 @@
     var hasGitHubAvatar = !!(emp.github && (emp.github.username || emp.github.profileUrl));
     var actionTitle = isUploadable ? (hasCustomAvatar ? 'Bild ändern oder zu GitHub zurücksetzen' : 'Profilbild hochladen') : (hasGitHubAvatar ? 'GitHub-Profil' : emp.role);
     var clickAttrs = isUploadable ? ' data-action="upload-avatar" data-emp-id="' + escapeHtml(emp.id) + '" role="button" tabindex="0" style="cursor: pointer;"' : '';
-    return '<div class="employee-avatar employee-avatar-image" ' + clickAttrs + ' style="background-color:' + getRoleColor(emp.role) + '; background-image:url(\'' + escapeHtml(avatarUrl) + '\'); background-size:cover; background-position:center;" title="' + escapeHtml(actionTitle) + '"></div>';
+    var isOnline = !!(window.AuthManager && typeof window.AuthManager.isEmployeeDashboardOnline === 'function' && window.AuthManager.isEmployeeDashboardOnline(emp));
+    return '<span class="employee-avatar-presence' + (isOnline ? ' is-online' : '') + '"><div class="employee-avatar employee-avatar-image" ' + clickAttrs + ' style="background-color:' + getRoleColor(emp.role) + '; background-image:url(\'' + escapeHtml(avatarUrl) + '\'); background-size:cover; background-position:center;" title="' + escapeHtml(actionTitle) + '"></div>' + (isOnline ? '<span class="profile-presence-dot" aria-hidden="true"></span>' : '') + '</span>';
   }
 
   function formatDateTime(value) {
@@ -1279,6 +1280,7 @@
       var adminDisabledAttr = canManageAccess ? '' : ' disabled';
       var loadBand = loadBandConfig[vm.metrics.loadBand] || loadBandConfig.balanced;
       var utilizationWidth = Math.min(160, vm.metrics.utilization);
+      var isOnline = !!(window.AuthManager && typeof window.AuthManager.isEmployeeDashboardOnline === 'function' && window.AuthManager.isEmployeeDashboardOnline(emp));
       var authPills = '' +
         buildAuthStatusPill(access.accessLevel === 'admin' ? 'Administrator' : 'Mitarbeiter', access.accessLevel === 'admin' ? 'accent' : 'neutral') +
         buildAuthStatusPill(access.login.enabled ? 'Login aktiv' : 'Ohne Login', access.login.enabled ? 'success' : 'muted');
@@ -1287,7 +1289,7 @@
         '<div class="employee-card-head">' +
           renderEmployeeAvatar(emp) +
           '<div class="employee-meta">' +
-            '<div class="employee-name">' + escapeHtml(emp.name) + '</div>' +
+            '<div class="employee-name">' + escapeHtml(emp.name) + (isOnline ? '<span class="employee-presence" title="Online im Dashboard"><span class="profile-presence-dot" aria-hidden="true"></span><span>Online</span></span>' : '') + '</div>' +
             '<span class="badge employee-role-badge" style="background:' + getRoleColor(emp.role) + '">' + escapeHtml(emp.role) + '</span>' +
           '</div>' +
           '<span class="badge employee-status-badge" style="background:' + getAvailColor(emp.availability) + '">' + escapeHtml(emp.availability) + '</span>' +

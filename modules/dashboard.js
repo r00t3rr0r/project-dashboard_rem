@@ -1386,6 +1386,7 @@
       var replyState = getTeamChatReplyState(message, messages);
       var currentUserMustReply = !!(replyState && currentUserId && replyState.openIds.indexOf(currentUserId) !== -1);
       var avatarUrl = getEmployeeAvatarUrl(author || { id: message.authorId, name: authorName });
+      var authorOnline = isEmployeeDashboardOnline(author);
       var requirementHtml = '';
       if (replyState) {
         requirementHtml = replyState.openIds.length
@@ -1396,9 +1397,9 @@
         ? '<div class="team-chat-parent">Antwort auf <strong>' + escapeHtml(replyParent.authorName || 'Mitarbeiter') + '</strong>: ' + escapeHtml(String(replyParent.body || '').slice(0, 90)) + '</div>'
         : '';
       return '<article class="team-chat-message' + (isAddressed ? ' is-addressed' : '') + (isOwn ? ' is-own' : '') + (currentUserMustReply ? ' needs-reply' : '') + '">' +
-        '<img class="team-chat-avatar" src="' + escapeHtml(avatarUrl) + '" alt="">' +
+        '<span class="team-chat-avatar-presence' + (authorOnline ? ' is-online' : '') + '"><img class="team-chat-avatar" src="' + escapeHtml(avatarUrl) + '" alt="">' + (authorOnline ? '<span class="profile-presence-dot" aria-hidden="true"></span>' : '') + '</span>' +
         '<div class="team-chat-message-main">' +
-          '<div class="team-chat-message-head"><strong>' + escapeHtml(authorName) + '</strong><time datetime="' + escapeHtml(message.createdAt || '') + '">' + escapeHtml(formatDateTime(message.createdAt)) + '</time></div>' +
+          '<div class="team-chat-message-head"><strong>' + escapeHtml(authorName) + (authorOnline ? '<span class="employee-presence" title="Online im Dashboard"><span class="profile-presence-dot" aria-hidden="true"></span><span>Online</span></span>' : '') + '</strong><time datetime="' + escapeHtml(message.createdAt || '') + '">' + escapeHtml(formatDateTime(message.createdAt)) + '</time></div>' +
           parentHtml +
           '<div class="team-chat-target' + (isAddressed ? ' is-addressed' : '') + '">An ' + escapeHtml(targetName) + '</div>' +
           '<div class="team-chat-body">' + escapeHtml(message.body || '') + '</div>' +
@@ -1674,6 +1675,10 @@
   }
 
   // --- Team-Load Donut-Chart ---
+  function isEmployeeDashboardOnline(employee) {
+    return !!(window.AuthManager && typeof window.AuthManager.isEmployeeDashboardOnline === 'function' && window.AuthManager.isEmployeeDashboardOnline(employee));
+  }
+
   function renderTeamLoad() {
     var employees = getDashboardEmployeesSnapshot();
     var tasks = window.DataLayer.getTasks() || [];
@@ -1722,8 +1727,9 @@
       var dailySick = !!(dailyStatus && dailyStatus.sick);
       var dailyWorkplace = dailyStatus && dailyStatus.workplace ? String(dailyStatus.workplace).trim() : workplace;
       var activeLabel = activeTasks.length === 1 ? '1 aktiv' : activeTasks.length + ' aktiv';
+      var isOnline = isEmployeeDashboardOnline(employee);
 
-      html += '<article class="team-load-card">';
+      html += '<article class="team-load-card' + (isOnline ? ' is-online' : '') + '">';
       if (avatarUrl && profileUrl) {
         html += '<a class="team-load-avatar-link" href="' + escapeHtml(profileUrl) + '" target="_blank" rel="noopener noreferrer" aria-label="GitHub Profil von ' + escapeHtml(employee.name || 'Mitarbeiter') + '">';
         html += '<img class="team-load-avatar" src="' + escapeHtml(avatarUrl) + '" alt="' + escapeHtml(employee.name || 'Mitarbeiter') + '">';
@@ -1739,7 +1745,11 @@
       html += '<div class="team-load-main">';
       html += '<div class="team-load-header">';
       html += '<div class="team-load-headcopy">';
-      html += '<div class="team-load-name">' + escapeHtml(employee.name || 'Mitarbeiter') + '</div>';
+      html += '<div class="team-load-name">' + escapeHtml(employee.name || 'Mitarbeiter');
+      if (isOnline) {
+        html += '<span class="team-load-presence" title="Online im Dashboard"><span class="team-load-presence-dot" aria-hidden="true"></span><span>Online</span></span>';
+      }
+      html += '</div>';
       html += '<div class="team-load-meta">';
       if (githubLabel) {
         html += '<span>' + escapeHtml(githubLabel) + '</span>';

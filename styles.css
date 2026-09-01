@@ -16,7 +16,6 @@
 
 html {
   font-size: 16px;
-  scroll-behavior: smooth;
 }
 
 body {
@@ -1737,6 +1736,63 @@ textarea#retro-notes {
   transform: scale(0.95);
 }
 
+.employee-avatar-presence,
+.team-chat-avatar-presence {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.employee-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin-left: 0.35rem;
+  color: #8aebbd;
+  font-size: 0.59rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  vertical-align: 0.08rem;
+}
+
+.profile-presence-dot,
+.kanban-assignee-avatar.is-online::after,
+.project-head-contact-avatar.is-online::after {
+  content: '';
+  position: absolute;
+  right: -0.05rem;
+  bottom: -0.05rem;
+  width: 0.48rem;
+  height: 0.48rem;
+  border: 2px solid var(--bg-card);
+  border-radius: 50%;
+  background: #58d39b;
+  box-shadow: 0 0 0 0 rgba(88, 211, 155, 0.52);
+  animation: teamLoadPresencePulse 1.8s ease-out infinite;
+}
+
+.employee-presence .profile-presence-dot {
+  position: static;
+  width: 0.38rem;
+  height: 0.38rem;
+  border: 0;
+}
+
+.kanban-assignee-avatar.is-online,
+.project-head-contact-avatar.is-online {
+  position: relative;
+  overflow: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-presence-dot,
+  .kanban-assignee-avatar.is-online::after,
+  .project-head-contact-avatar.is-online::after {
+    animation: none;
+  }
+}
+
 .employee-control-group select {
   font-size: 0.875rem;
   padding: 0.6rem 0.8rem;
@@ -2483,6 +2539,47 @@ body.projects-modal-open {
   font-size: 0.95rem;
   font-weight: 700;
   line-height: 1.08;
+}
+
+.team-load-card.is-online {
+  border-color: rgba(88, 211, 155, 0.34);
+}
+
+.team-load-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  margin-left: 0.38rem;
+  color: #8aebbd;
+  font-size: 0.59rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  vertical-align: 0.08rem;
+}
+
+.team-load-presence-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: #58d39b;
+  box-shadow: 0 0 0 0 rgba(88, 211, 155, 0.52);
+  animation: teamLoadPresencePulse 1.8s ease-out infinite;
+}
+
+@keyframes teamLoadPresencePulse {
+  70% {
+    box-shadow: 0 0 0 0.38rem rgba(88, 211, 155, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(88, 211, 155, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-load-presence-dot {
+    animation: none;
+  }
 }
 
 .team-load-meta {

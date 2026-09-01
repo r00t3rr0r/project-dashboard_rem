@@ -29,6 +29,7 @@
     'employees',
     'labels',
     'quicktask',
+    'ai-conf',
     'healthcheck',
     'timeline',
     'releases',
@@ -51,6 +52,7 @@
     employees: 'Mitarbeiter',
     labels: 'Labels',
     quicktask: 'QuickTask',
+    'ai-conf': 'AI Conf',
     healthcheck: 'Gesundheits-Check',
     timeline: 'Timeline',
     releases: 'Releases',
@@ -72,6 +74,7 @@
   var SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000;
   var SESSION_TOUCH_INTERVAL_MS = 30 * 1000;
   var AUTH_REFRESH_INTERVAL_MS = 15000;
+  var DASHBOARD_PRESENCE_TOUCH_INTERVAL_MS = 45000;
   var wrapped = false;
   var originalMethods = {};
   var authRefreshTimer = null;
@@ -82,6 +85,7 @@
   var dailyStatusPromptTimer = null;
   var dailyStatusDialogOpen = false;
   var dailyStatusConfirmedKey = '';
+  var dashboardPresenceLastTouchedAt = 0;
 
   function stableHashHex(input) {
     var text = String(input || '');
@@ -158,6 +162,26 @@
     if (!isNaN(lastSeenAt) && (now - lastSeenAt) < SESSION_TOUCH_INTERVAL_MS) return;
     session.lastSeenAt = new Date(now).toISOString();
     writeSession(session);
+  }
+
+  function touchDashboardPresence() {
+    if (document.visibilityState !== 'visible') return;
+    var dashboardPage = document.getElementById('dashboard');
+    if (!dashboardPage || !dashboardPage.classList.contains('active')) return;
+    if ((Date.now() - dashboardPresenceLastTouchedAt) < DASHBOARD_PRESENCE_TOUCH_INTERVAL_MS) return;
+
+    var user = getCurrentUser();
+    if (!user || !window.DataLayer || typeof window.DataLayer.updateEmployee !== 'function') return;
+
+    var next = clone(user);
+    next.dashboardPresenceAt = new Date().toISOString();
+    dashboardPresenceLastTouchedAt = Date.now();
+    window.DataLayer.updateEmployee(next);
+  }
+
+  function isEmployeeDashboardOnline(employee) {
+    var lastPresenceAt = Date.parse(String(employee && employee.dashboardPresenceAt || ''));
+    return !isNaN(lastPresenceAt) && (Date.now() - lastPresenceAt) <= 100000;
   }
 
   function readSession() {
@@ -1003,6 +1027,8 @@
           return { ok: false, message: 'Passwort ist nicht korrekt.' };
         }
         writeSession(buildSessionForEmployee(employee));
+        dashboardPresenceLastTouchedAt = 0;
+        touchDashboardPresence();
         emitAuthChanged();
         refreshUi();
         return { ok: true, user: employee };
@@ -1012,6 +1038,7 @@
 
   function logout() {
     writeSession(null);
+    dashboardPresenceLastTouchedAt = 0;
     emitAuthChanged();
     refreshUi();
   }
@@ -1492,10 +1519,13 @@
     });
 
     window.addEventListener('authChanged', refreshUi);
+    window.addEventListener('hashchange', touchDashboardPresence);
+    window.setInterval(touchDashboardPresence, DASHBOARD_PRESENCE_TOUCH_INTERVAL_MS);
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'visible') {
         syncAuthStateFromServer().then(function () {
           refreshUi();
+          touchDashboardPresence();
         });
       }
     });
@@ -1513,6 +1543,7 @@
     buildEmployeeAuth: buildEmployeeAuth,
     getMode: getMode,
     getCurrentUser: getCurrentUser,
+    isEmployeeDashboardOnline: isEmployeeDashboardOnline,
     getSessionState: getSessionState,
     getVisiblePages: getVisiblePages,
     getFallbackPage: getFallbackPage,

@@ -2255,17 +2255,87 @@ body.light-mode .nav-menu li a:hover {
 
 .kanban-intake-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+  gap: 0.45rem;
 }
 
 .kanban-intake-card {
   border: 1px solid var(--border-color);
-  border-radius: 0.9rem;
-  padding: 0.75rem;
-  background: linear-gradient(170deg, rgba(99, 226, 255, 0.08), rgba(94, 162, 255, 0.03));
+  border-left: 4px solid var(--kanban-project-tone, var(--accent-cyan));
+  border-radius: 0.6rem;
+  min-height: 8.1rem;
+  padding: 0.45rem 0.5rem;
+  background: linear-gradient(100deg, color-mix(in srgb, var(--kanban-project-tone, var(--accent-cyan)) 11%, transparent), rgba(94, 162, 255, 0.025));
   display: grid;
-  gap: 0.5rem;
+  gap: 0.25rem;
+  min-width: 0;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+  position: relative;
+  z-index: 0;
+}
+
+.kanban-intake-card:hover,
+.kanban-intake-card:focus-within {
+  border-color: color-mix(in srgb, var(--kanban-project-tone, var(--accent-cyan)) 55%, var(--border-color));
+  animation: kanban-intake-project-glow 4.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  z-index: 2;
+}
+
+@keyframes kanban-intake-project-glow {
+  0%, 100% { box-shadow: 0 0 9px 2px color-mix(in srgb, var(--kanban-project-tone, var(--accent-cyan)) 18%, transparent); }
+  28% { box-shadow: 0 0 15px 3px color-mix(in srgb, var(--kanban-project-tone, var(--accent-cyan)) 27%, transparent); }
+  54% { box-shadow: 0 0 23px 5px color-mix(in srgb, var(--kanban-project-tone, var(--accent-cyan)) 36%, transparent); }
+  76% { box-shadow: 0 0 30px 7px color-mix(in srgb, var(--kanban-project-tone, var(--accent-cyan)) 43%, transparent); }
+}
+
+.kanban-intake-card:hover .kanban-intake-project-dot,
+.kanban-intake-project:hover .kanban-intake-project-dot,
+.kanban-intake-card:focus-within .kanban-intake-project-dot {
+  animation: kanban-intake-project-dot-glow 3.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: transform, box-shadow, filter;
+}
+
+@keyframes kanban-intake-project-dot-glow {
+  0%, 100% {
+    transform: scale(1);
+    filter: brightness(1);
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
+  }
+  38% {
+    transform: scale(1.18);
+    filter: brightness(1.18);
+    box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 28%, transparent), 0 0 12px 3px color-mix(in srgb, currentColor 36%, transparent);
+  }
+  58% {
+    transform: scale(1.08);
+    filter: brightness(1.08);
+    box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 24%, transparent), 0 0 8px 2px color-mix(in srgb, currentColor 28%, transparent);
+  }
+}
+
+.kanban-intake-card:focus-visible {
+  outline: 2px solid var(--kanban-project-tone, var(--accent-cyan));
+  outline-offset: 2px;
+}
+
+.kanban-intake-expandable {
+  display: grid;
+  gap: 0.3rem;
+  margin-top: auto;
+  padding-top: 0.25rem;
+  border-top: 1px solid color-mix(in srgb, var(--kanban-project-tone, var(--accent-cyan)) 25%, var(--border-color));
+}
+
+.kanban-intake-card.is-chain-active {
+  border-color: color-mix(in srgb, var(--kanban-project-tone, var(--accent-cyan)) 45%, var(--border-color));
+}
+
+.kanban-intake-card.is-chain-active .kanban-intake-project-dot {
+  animation: kanban-chain-dot-pulse 2.8s ease-in-out infinite;
+}
+
+@keyframes kanban-chain-dot-pulse {
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 12%, transparent); }
 }
 
 .kanban-intake-meta {
@@ -2274,13 +2344,30 @@ body.light-mode .nav-menu li a:hover {
   align-items: center;
   gap: 0.5rem;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.64rem;
 }
 
 .kanban-intake-project {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 700;
+  color: var(--kanban-project-tone, var(--accent-cyan));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kanban-intake-project-dot {
+  flex: 0 0 auto;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.35rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
 }
 
 .kanban-intake-owner {
@@ -2291,15 +2378,39 @@ body.light-mode .nav-menu li a:hover {
 
 .kanban-intake-card h4 {
   margin: 0;
-  font-size: 0.94rem;
-  line-height: 1.3;
+  font-size: 0.78rem;
+  line-height: 1.25;
   font-family: var(--font-display);
 }
 
-.kanban-intake-card p {
+.kanban-intake-details {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 0.78rem;
+  font-size: 0.64rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kanban-intake-chain {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.4rem;
+  border-left: 2px solid var(--kanban-project-tone, var(--accent-cyan));
+  background: color-mix(in srgb, var(--kanban-project-tone, var(--accent-cyan)) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  line-height: 1.2;
+}
+
+.kanban-intake-chain .material-symbols-rounded {
+  color: var(--kanban-project-tone, var(--accent-cyan));
+  font-size: 0.95rem;
+}
+
+.kanban-intake-chain strong {
+  color: var(--text-primary);
 }
 
 .kanban-intake-signals {
@@ -2310,13 +2421,22 @@ body.light-mode .nav-menu li a:hover {
 
 .kanban-intake-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
+  align-items: center;
+  gap: 0.3rem;
 }
 
-.kanban-intake-actions .btn {
-  flex: 1 1 auto;
-  min-width: 6.5rem;
+.kanban-intake-actions .kanban-intake-icon-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 1.8rem;
+  min-height: 1.8rem;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+.kanban-intake-icon-btn .material-symbols-rounded {
+  font-size: 1rem;
 }
 
 .kanban-team-load-card {
@@ -6291,6 +6411,87 @@ body.light-mode .resolution-dialog::backdrop {
     font-size: 0.82rem;
   }
 
+  .ai-conf-root { display: grid; gap: 1rem; max-width: 1320px; }
+  .ai-conf-statusbar, .ai-conf-panel-head, .ai-conf-actions { display: flex; align-items: center; gap: 0.75rem; }
+  .ai-conf-statusbar { justify-content: space-between; border: 1px solid var(--border-color); background: var(--bg-card); padding: 0.85rem 1rem; }
+  .ai-conf-statusbar > div:first-child { display: grid; gap: 0.15rem; }
+  .ai-conf-statusbar span:not(.ai-conf-state) { color: var(--text-muted); font-size: 0.78rem; }
+  .ai-conf-state { margin-left: auto; padding: 0.3rem 0.55rem; border-radius: 4px; font-family: var(--font-mono); font-size: 0.72rem; }
+  .ai-conf-state.is-ready { color: #147a4c; background: rgba(34,197,94,.14); }
+  .ai-conf-state.is-warning { color: #9a6411; background: rgba(245,158,11,.15); }
+  .ai-conf-state.is-error { color: #b42318; background: rgba(239,68,68,.13); }
+  .ai-conf-state.is-checking { color: var(--accent-primary); background: rgba(59,130,246,.12); }
+  #ai-conf-refresh.is-loading .material-symbols-rounded { animation: ai-conf-spin .8s linear infinite; }
+  .ai-conf-layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(20rem, 1fr); gap: 1rem; }
+  .ai-conf-panel { border: 1px solid var(--border-color); background: var(--bg-card); padding: 1rem; }
+  .ai-conf-panel-head { justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; }
+  .ai-conf-panel-head h2 { margin: 0.15rem 0 0; font-size: 1.05rem; }
+  .ai-conf-panel-head > .material-symbols-rounded { color: var(--accent-primary); }
+  .ai-conf-panel-head p { margin: 0.35rem 0 0; color: var(--text-muted); font-size: 0.82rem; }
+  .ai-conf-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+  .ai-conf-fields .form-group { margin: 0; }
+  .ai-conf-fields .form-group span { display: flex; justify-content: space-between; font-size: .78rem; color: var(--text-secondary); margin-bottom: .3rem; }
+  .ai-conf-fields output { font-family: var(--font-mono); }
+  .ai-conf-switch { display: flex; gap: .7rem; padding: .75rem 0; border-bottom: 1px solid var(--border-color); cursor: pointer; }
+  .ai-conf-switch input { margin-top: .25rem; accent-color: var(--accent-primary); }
+  .ai-conf-switch span { display: grid; gap: .2rem; }
+  .ai-conf-switch small { color: var(--text-muted); line-height: 1.4; }
+  .ai-conf-actions { align-items: stretch; flex-direction: column; margin-top: 1rem; }
+  .ai-conf-actions .btn { justify-content: flex-start; }
+  .ai-conf-activity { display: grid; gap: .65rem; min-height: 8.75rem; margin-bottom: .75rem; padding: .8rem; border: 1px solid var(--border-color); background: rgba(127,127,127,.045); }
+  .ai-conf-activity-head { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: .6rem; align-items: center; min-height: 2.4rem; }
+  .ai-conf-activity-head > div { display: grid; gap: .15rem; min-width: 0; }
+  .ai-conf-activity-head strong, .ai-conf-activity-head small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ai-conf-activity-head small { color: var(--text-muted); font-size: .73rem; }
+  .ai-conf-activity-head output { min-width: 2.8rem; color: var(--text-secondary); font-family: var(--font-mono); font-size: .76rem; text-align: right; }
+  .ai-conf-live-dot { width: .55rem; height: .55rem; border-radius: 50%; background: var(--text-muted); }
+  .ai-conf-activity.is-working .ai-conf-live-dot, .ai-conf-activity.is-stopping .ai-conf-live-dot { background: var(--accent-primary); box-shadow: 0 0 0 .25rem rgba(59,130,246,.12); animation: ai-conf-pulse 1.2s ease-in-out infinite; }
+  .ai-conf-activity.is-complete .ai-conf-live-dot { background: #16a060; }
+  .ai-conf-activity.is-error .ai-conf-live-dot { background: #dc3b30; }
+  .ai-conf-progress { position: relative; overflow: hidden; height: .48rem; border-radius: 3px; background: rgba(127,127,127,.18); }
+  .ai-conf-progress > span { display: block; width: 0; height: 100%; background: var(--accent-primary); transition: width .25s ease; }
+  .ai-conf-activity.is-complete .ai-conf-progress > span { background: #16a060; }
+  .ai-conf-activity.is-error .ai-conf-progress > span, .ai-conf-activity.is-stopped .ai-conf-progress > span { background: #dc3b30; }
+  .ai-conf-stop { justify-self: start; min-width: 8.5rem; }
+  .ai-conf-stop:not(:disabled) { color: #b42318; border-color: rgba(220,59,48,.45); }
+  .ai-assistant-project { display: grid; gap: .35rem; margin: 0 0 .7rem; }
+  .ai-assistant-project > span { color: var(--text-secondary); font-size: .74rem; font-weight: 600; text-transform: uppercase; }
+  .ai-assistant-project select { width: 100%; }
+  .ai-assistant-list { display: grid; gap: .4rem; margin-bottom: .75rem; }
+  .ai-assistant-card { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: .55rem; align-items: center; width: 100%; min-height: 3.35rem; padding: .55rem .6rem; border: 1px solid var(--border-color); border-radius: 5px; color: var(--text-primary); background: rgba(127,127,127,.035); font: inherit; text-align: left; cursor: pointer; }
+  .ai-assistant-card:hover { border-color: var(--accent-primary); background: rgba(59,130,246,.07); }
+  .ai-assistant-card:disabled { opacity: .55; cursor: wait; }
+  .ai-assistant-card > .material-symbols-rounded:first-child { color: var(--accent-primary); font-size: 1.15rem; }
+  .ai-assistant-card > span:nth-child(2) { display: grid; gap: .08rem; min-width: 0; }
+  .ai-assistant-card strong { font-size: .79rem; }
+  .ai-assistant-card small { overflow: hidden; color: var(--text-muted); font-size: .68rem; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+  .ai-assistant-run { color: var(--text-muted); font-size: 1.1rem; }
+  .ai-assistant-result { display: grid; gap: .65rem; margin: 0 0 .8rem; padding: .65rem; border: 1px solid var(--border-color); background: rgba(127,127,127,.04); }
+  .ai-assistant-result-head { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; }
+  .ai-assistant-result-head > div { display: grid; gap: .1rem; }
+  .ai-assistant-result-head small { color: var(--text-muted); font-size: .68rem; }
+  .ai-assistant-result-head .btn { padding: .45rem .55rem; font-size: .7rem; }
+  .ai-assistant-task-list { display: grid; gap: .4rem; max-height: 22rem; overflow-y: auto; }
+  .ai-assistant-task { display: grid; grid-template-columns: auto minmax(0,1fr); gap: .45rem; padding: .5rem; border: 1px solid var(--border-color); cursor: pointer; }
+  .ai-assistant-task > input { margin-top: .18rem; accent-color: var(--accent-primary); }
+  .ai-assistant-task > span { display: grid; gap: .2rem; min-width: 0; }
+  .ai-assistant-task strong { font-size: .75rem; }
+  .ai-assistant-task small { display: -webkit-box; overflow: hidden; color: var(--text-muted); font-size: .68rem; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+  .ai-assistant-task-meta { display: flex; flex-wrap: wrap; gap: .25rem; }
+  .ai-assistant-task-meta b { padding: .12rem .28rem; border-radius: 3px; color: var(--text-secondary); background: rgba(127,127,127,.1); font-size: .62rem; font-weight: 500; }
+  .ai-assistant-pending { display: flex; gap: .45rem; align-items: center; min-height: 2.5rem; color: var(--text-secondary); font-size: .74rem; }
+  .ai-assistant-pending .material-symbols-rounded { animation: ai-conf-spin .8s linear infinite; }
+  .ai-assistant-error { color: #b42318; font-size: .74rem; line-height: 1.4; }
+  @keyframes ai-conf-spin { to { transform: rotate(360deg); } }
+  @keyframes ai-conf-pulse { 50% { opacity: .45; } }
+  .ai-template-list { display: grid; gap: .7rem; }
+  .ai-template-item { display: grid; grid-template-columns: minmax(11rem, .45fr) minmax(0, 1fr) auto; gap: .65rem; align-items: start; padding: .75rem; background: rgba(127,127,127,.06); border: 1px solid var(--border-color); }
+  .ai-template-meta { display: grid; gap: .45rem; }
+  .ai-template-name { font-weight: 600; }
+  .ai-template-scope { font-size: .78rem; }
+  .ai-template-text { min-height: 4.75rem; font-family: var(--font-mono); font-size: .78rem; }
+  .ai-conf-loading { color: var(--text-muted); padding: 2rem; text-align: center; }
+
   @media (max-width: 1150px) {
     .meeting-draft-primary-grid {
       grid-template-columns: 1fr;
@@ -6303,6 +6504,8 @@ body.light-mode .resolution-dialog::backdrop {
     .prompt-config-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+
+    .ai-conf-layout { grid-template-columns: 1fr; }
   }
 
   @media (max-width: 760px) {
@@ -6322,6 +6525,10 @@ body.light-mode .resolution-dialog::backdrop {
       width: 100%;
       min-width: 0;
     }
+
+    .ai-conf-fields, .ai-template-item { grid-template-columns: 1fr; }
+    .ai-conf-statusbar { align-items: flex-start; flex-wrap: wrap; }
+    .ai-conf-state { margin-left: 0; }
 
     .meeting-editor-head {
       grid-template-columns: 1fr;

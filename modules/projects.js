@@ -1366,6 +1366,10 @@ function getEmployeeInitials(name){
   return parts.slice(0,2).map(function(part){return part.charAt(0).toUpperCase();}).join('');
 }
 
+function isEmployeeDashboardOnline(employee){
+  return !!(window.AuthManager&&typeof window.AuthManager.isEmployeeDashboardOnline==='function'&&window.AuthManager.isEmployeeDashboardOnline(employee));
+}
+
 function getTaskCompletionTimestamp(task){
   var fallback=Date.parse(task&&task.updatedAt||task&&task.createdAt||'')||0;
   if(!task||!Array.isArray(task.history))return fallback;
@@ -1732,17 +1736,19 @@ function renderProjectHeadContact(summary){
   var name=employee.name||'Unbekannt';
   var initials=getEmployeeInitials(name);
   var avatarUrl=getEmployeeGitHubAvatarUrl(employee);
-  var avatarHtml='<span class="project-head-contact-avatar" aria-hidden="true">'+escapeHtml(initials)+'</span>';
+  var isOnline=isEmployeeDashboardOnline(employee);
+  var avatarClass='project-head-contact-avatar'+(isOnline?' is-online':'');
+  var avatarHtml='<span class="'+avatarClass+'" aria-hidden="true">'+escapeHtml(initials)+'</span>';
   if(avatarUrl){
     var safeUrl=String(avatarUrl).replace(/'/g,'%27');
-    avatarHtml='<span class="project-head-contact-avatar project-head-contact-avatar-image" style="background-image:url(\''+escapeHtml(safeUrl)+'\')" aria-hidden="true"></span>';
+    avatarHtml='<span class="'+avatarClass+' project-head-contact-avatar-image" style="background-image:url(\''+escapeHtml(safeUrl)+'\')" aria-hidden="true"></span>';
   }
 
   return '<div class="project-head-contact">'
     +'<span class="project-head-contact-label">Ansprechpartner</span>'
     +'<div class="project-head-contact-user">'
     +avatarHtml
-    +'<span class="project-head-contact-name">'+escapeHtml(name)+'</span>'
+    +'<span class="project-head-contact-name">'+escapeHtml(name)+(isOnline?'<span class="employee-presence" title="Online im Dashboard"><span class="profile-presence-dot" aria-hidden="true"></span><span>Online</span></span>':'')+'</span>'
     +'</div></div>';
 }
 
@@ -3236,18 +3242,22 @@ function renderProjectList(){
   container.innerHTML=html;
 }
 
+var projectPageWasActive=false;
+
 function render(){
   var config=arguments[0]&&typeof arguments[0]==='object'?arguments[0]:{};
   renderOverview();
   renderProjectList();
 
-  if(config.restoreState===false)return;
-
   var projectsPage=byId('projects');
-  if(!projectsPage||!projectsPage.classList.contains('active'))return;
+  var projectsPageIsActive=!!(projectsPage&&projectsPage.classList.contains('active'));
+  var shouldRestoreState=projectsPageIsActive&&!projectPageWasActive&&config.restoreState!==false;
+  projectPageWasActive=projectsPageIsActive;
+
+  if(!shouldRestoreState)return;
 
   window.setTimeout(function(){
-    restoreProjectPageState();
+    if(projectsPage.classList.contains('active'))restoreProjectPageState();
   },0);
 }
 
@@ -3469,14 +3479,11 @@ function restoreProjectPageState(){
 
   var projectList=byId('project-list');
   if(projectList && typeof snapshot.listScrollTop==='number'){
-    window.setTimeout(function(){
-      if(projectList){ projectList.scrollTop=snapshot.listScrollTop; }
-    },0);
+    projectList.scrollTop=snapshot.listScrollTop;
   }
   if(typeof snapshot.pageScrollTop==='number'){
-    window.setTimeout(function(){
-      window.scrollTo(0, snapshot.pageScrollTop);
-    },0);
+    var scrollContainer=document.scrollingElement||document.documentElement||document.body;
+    if(scrollContainer)scrollContainer.scrollTop=snapshot.pageScrollTop;
   }
 
   if(snapshot.modals&&snapshot.modals.createOpen){
