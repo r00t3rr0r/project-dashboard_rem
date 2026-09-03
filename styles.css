@@ -3297,6 +3297,25 @@ body.projects-modal-open {
   margin-bottom: 0;
 }
 
+.project-card-grid > * {
+  min-width: 0;
+}
+
+.project-card-grid > .project-tasks-meta-block {
+  grid-column: 1 / -1;
+}
+
+.project-card-grid > .project-meta-block {
+  order: 0;
+}
+
+.project-card-grid > .project-flow-meta-block { order: 1; }
+.project-card-grid > .project-github-meta-block { order: 2; }
+.project-card-grid > .project-meeting-meta-block { order: 3; }
+.project-card-grid > .project-blocker-meta-block { order: 4; }
+.project-card-grid > .project-knowledge-meta-block { order: 5; }
+.project-card-grid > .project-tasks-meta-block { order: 6; }
+
 .project-meta-block {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
@@ -3414,7 +3433,116 @@ body.projects-modal-open {
   margin-top: 0.7rem;
 }
 
+.project-task-list-trigger {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 0.65rem;
+  padding: 0.8rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.65rem;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  text-align: left;
+  white-space: normal;
+  box-shadow: none;
+}
+
+.project-task-list-trigger:hover {
+  border-color: var(--accent-cyan);
+  background: var(--bg-secondary);
+  transform: none;
+}
+
+.project-task-list-details {
+  width: 100%;
+  min-width: 0;
+  margin-bottom: 0.75rem;
+}
+
+.project-task-list-summary {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 0.75rem;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.project-task-list-summary::-webkit-details-marker {
+  display: none;
+}
+
+.project-task-list-summary::before {
+  content: '▸';
+  position: absolute;
+  margin-left: -1rem;
+  margin-right: 0.35rem;
+  color: var(--accent-cyan);
+  transition: transform 0.18s ease;
+}
+
+.project-task-list-details[open] .project-task-list-summary::before {
+  transform: rotate(90deg);
+}
+
+.project-task-list-summary-head {
+  display: flex;
+  width: min(100%, 620px);
+  margin-inline: auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.project-task-compact-list {
+  display: grid;
+  width: 100%;
+  max-width: 620px;
+  margin-inline: auto;
+  min-width: 0;
+  gap: 0.25rem;
+  padding-left: 0.1rem;
+}
+
+.project-task-compact-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.project-task-compact-row span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-task-compact-row span:last-child {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+  max-width: 40%;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.project-task-list-total {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 .project-task-list-item {
+  position: relative;
   display: grid;
   gap: 0.35rem;
   padding: 0.65rem 0.7rem;
@@ -3445,6 +3573,14 @@ body.projects-modal-open {
   transform: none;
 }
 
+.project-task-compact-effort {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.7rem;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
 .project-task-list-item p {
   color: var(--text-secondary);
   font-size: 0.8rem;
@@ -3466,6 +3602,105 @@ body.projects-modal-open {
   background: rgba(99, 226, 255, 0.1);
   color: var(--text-secondary);
   font-size: 0.72rem;
+}
+
+.project-task-list-footer {
+  display: flex;
+  width: min(100%, 620px);
+  margin-inline: auto;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.8rem;
+  margin-top: 0.6rem;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.project-task-list-open-label {
+  margin-left: auto;
+  color: var(--accent-cyan);
+}
+
+.project-task-dialog {
+  width: min(94vw, 900px);
+  max-height: 88vh;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 0.8rem;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.35);
+}
+
+.project-task-dialog::backdrop {
+  background: rgba(10, 18, 30, 0.62);
+  backdrop-filter: blur(3px);
+}
+
+.project-task-dialog form {
+  display: grid;
+  gap: 1rem;
+  max-height: 88vh;
+  padding: 1.1rem;
+  overflow: hidden;
+}
+
+.project-task-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.project-task-dialog-head h2 {
+  margin-top: 0.2rem;
+  overflow-wrap: anywhere;
+}
+
+.project-task-dialog-list {
+  display: grid;
+  gap: 0.65rem;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.project-task-dialog-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.project-task-dialog-stats span {
+  max-width: 100%;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.project-task-dialog-item {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.6rem;
+  background: var(--bg-secondary);
+}
+
+.project-task-dialog-item h3 {
+  overflow-wrap: anywhere;
+  color: var(--accent-cyan);
+  font-size: 0.95rem;
+}
+
+.project-task-dialog-item p {
+  color: var(--text-secondary);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .kanban-card-focus-pulse {

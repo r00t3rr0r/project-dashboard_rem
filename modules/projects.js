@@ -1273,10 +1273,58 @@ function getProjectTasksSorted(projectId){
 }
 
 function renderProjectTaskList(project){
-  var tasks=getProjectTasksSorted(project.id);
-  if(!tasks.length)return '<p class="project-meta-empty">Noch keine Aufgaben fuer dieses Projekt vorhanden.</p>';
+  var tasks=getProjectTasksSorted(project.id).filter(function(task){
+    return String(task&&task.status||'').toLowerCase()!=='done';
+  });
+  if(!tasks.length)return '<p class="project-meta-empty">Keine offenen Aufgaben fuer dieses Projekt vorhanden.</p>';
 
-  return '<div class="project-task-list">'+tasks.map(function(task){
+  var totalPlannedHours=Math.round(tasks.reduce(function(sum,task){
+    return sum+getTaskPlannedEffortHours(task);
+  },0)*10)/10;
+  var totalTrackedHours=Math.round((tasks.reduce(function(sum,task){
+    return sum+getTaskTrackedMinutes(task)/60;
+  },0))*10)/10;
+  var compactTaskHtml=tasks.map(function(task){
+    return '<span class="project-task-compact-row"><span>'+escapeHtml(task.title||'Unbenannte Aufgabe')+'</span><span>'+escapeHtml(formatHoursCompact(getTaskPlannedEffortHours(task),'Aufwand'))+'</span></span>';
+  }).join('');
+  var detailTaskHtml=tasks.map(function(task){
+    var trackedHours=Math.round((getTaskTrackedMinutes(task)/60)*10)/10;
+    var remainingHours=Math.round(getTaskRemainingEffortHours(task)*10)/10;
+    var assigneeName=getEmployeeNameById(task.assigneeId)||'Nicht zugewiesen';
+    var meta=[
+      getProjectTaskStatusLabel(task.status),
+      assigneeName,
+      formatHoursCompact(getTaskPlannedEffortHours(task),'Aufwand'),
+      formatHoursCompact(trackedHours,'Arbeitszeit'),
+      formatHoursCompact(remainingHours,'Rest')
+    ];
+    if(task.dueDate)meta.push('Faellig '+formatDate(task.dueDate));
+    return '<article class="project-task-list-item">'
+      +'<button type="button" class="project-task-link" data-action="open-task" data-id="'+escapeHtml(project.id)+'" data-task-id="'+escapeHtml(task.id)+'">'+escapeHtml(task.title||'Unbenannte Aufgabe')+'</button>'
+      +'<p>'+escapeHtml(String(task.description||'Keine Beschreibung hinterlegt.'))+'</p>'
+      +'<div class="project-task-meta">'+meta.map(function(item){return '<span>'+escapeHtml(item)+'</span>';}).join('')+'</div>'
+      +'</article>';
+  }).join('');
+
+  return '<details class="project-task-list-details">'
+    +'<summary class="project-task-list-summary">'
+    +'<span class="project-task-list-summary-head"><span>Aufgaben anzeigen</span><span class="project-task-list-total">'
+    +tasks.length+' · '+formatHoursCompact(totalPlannedHours,'Gesamtaufwand')
+    +'</span></span><span class="project-task-compact-list">'+compactTaskHtml+'</span>'
+    +'<span class="project-task-list-footer"><span>Gesamtaufwand '+escapeHtml(formatHoursCompact(totalPlannedHours,''))+'</span><span>Arbeitszeit '+escapeHtml(formatHoursCompact(totalTrackedHours,''))+'</span><span class="project-task-list-open-label">Details oeffnen</span></span>'
+    +'</summary>'
+    +'<div class="project-task-list">'+detailTaskHtml+'</div>'
+    +'</details>';
+}
+
+function openProjectTaskDetailsDialog(projectId){
+  var project=window.DataLayer&&typeof window.DataLayer.getProjectById==='function'?window.DataLayer.getProjectById(projectId):null;
+  if(!project)return;
+  var tasks=getProjectTasksSorted(project.id);
+  if(!tasks.length)return;
+  var totalPlannedHours=Math.round(tasks.reduce(function(sum,task){return sum+getTaskPlannedEffortHours(task);},0)*10)/10;
+  var totalTrackedHours=Math.round((tasks.reduce(function(sum,task){return sum+getTaskTrackedMinutes(task)/60;},0))*10)/10;
+  var taskHtml=tasks.map(function(task){
     var trackedHours=Math.round((getTaskTrackedMinutes(task)/60)*10)/10;
     var remainingHours=Math.round(getTaskRemainingEffortHours(task)*10)/10;
     var assigneeName=getEmployeeNameById(task.assigneeId)||'Nicht zugewiesen';
@@ -1289,12 +1337,27 @@ function renderProjectTaskList(project){
     ];
     if(task.dueDate)meta.push('Faellig '+formatDate(task.dueDate));
 
-    return '<article class="project-task-list-item">'
-      +'<button type="button" class="project-task-link" data-action="open-task" data-id="'+escapeHtml(project.id)+'" data-task-id="'+escapeHtml(task.id)+'">'+escapeHtml(task.title||'Unbenannte Aufgabe')+'</button>'
-      +'<p>'+escapeHtml(formatTaskDescriptionPreview(task))+'</p>'
+    return '<article class="project-task-dialog-item">'
+      +'<h3>'+escapeHtml(task.title||'Unbenannte Aufgabe')+'</h3>'
+      +'<p>'+escapeHtml(String(task.description||'Keine Beschreibung hinterlegt.'))+'</p>'
       +'<div class="project-task-meta">'+meta.map(function(item){return '<span>'+escapeHtml(item)+'</span>';}).join('')+'</div>'
       +'</article>';
-  }).join('')+'</div>';
+  }).join('');
+  var dialog=document.createElement('dialog');
+  dialog.className='project-task-dialog';
+  dialog.innerHTML='<form method="dialog">'
+    +'<div class="project-task-dialog-head"><div><p class="section-kicker">Projektaufgaben</p><h2>'+escapeHtml(project.title||project.name||'Projekt')+'</h2></div><button type="submit" class="toolbar-icon-btn" aria-label="Dialog schliessen" title="Dialog schliessen"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>'
+    +'<div class="project-task-dialog-stats"><span>'+tasks.length+' Aufgaben</span><span>Gesamtaufwand '+escapeHtml(formatHoursCompact(totalPlannedHours,''))+'</span><span>Arbeitszeit '+escapeHtml(formatHoursCompact(totalTrackedHours,''))+'</span></div>'
+    +'<div class="project-task-dialog-list">'+taskHtml+'</div>'
+    +'</form>';
+  function closeDialog(){
+    try{dialog.close();}catch(_errClose){}
+    if(dialog.parentNode)dialog.parentNode.removeChild(dialog);
+  }
+  dialog.addEventListener('cancel',function(event){event.preventDefault();closeDialog();});
+  dialog.addEventListener('click',function(event){if(event.target===dialog)closeDialog();});
+  document.body.appendChild(dialog);
+  dialog.showModal();
 }
 
 function hasProjectEverStarted(project){
@@ -3126,7 +3189,7 @@ function renderProjectList(){
     html+='<details class="project-card-sections" data-project-state-key="project-card-sections-'+escapeHtml(project.id)+'">';
     html+='<summary class="project-card-sections-toggle">Projektdetails</summary>';
     html+='<div class="project-card-grid">';
-    html+='<div class="project-meta-block">';
+    html+='<div class="project-meta-block project-flow-meta-block">';
     html+='<h4>Projektablauf & Fortschritt</h4>';
     html+='<div class="project-badges">';
     html+='<span class="badge badge-blue">Status: '+escapeHtml(project.status||'active')+'</span>';
@@ -3149,7 +3212,7 @@ function renderProjectList(){
     ]);
     html+='</div>';
 
-    html+='<div class="project-meta-block">';
+    html+='<div class="project-meta-block project-github-meta-block">';
     html+='<h4>GitHub Verknuepfung</h4>';
     if(gh.url){
       html+=renderProjectMetaGrid([
@@ -3176,7 +3239,7 @@ function renderProjectList(){
     }
     html+='</div>';
 
-    html+='<div class="project-meta-block">';
+    html+='<div class="project-meta-block project-tasks-meta-block">';
     html+='<h4>Aufgaben, Termine, Aufwand</h4>';
     html+=renderProjectMetaGrid([
       {label:'Aufgaben', value:runningSummary.taskCount},
@@ -3194,7 +3257,7 @@ function renderProjectList(){
     html+='</div>';
 
     var activeProjectBlocker=getOpenBlockerHistoryEntry(project);
-    html+='<div class="project-meta-block">';
+    html+='<div class="project-meta-block project-blocker-meta-block">';
     html+='<h4>Blocker-Status</h4>';
     if(project.blocked){
       html+='<div class="project-badges"><span class="badge badge-red">Aktiv blockiert</span></div>';
@@ -3214,7 +3277,7 @@ function renderProjectList(){
     html+='</details>';
     html+='</div>';
 
-    html+='<div class="project-meta-block">';
+    html+='<div class="project-meta-block project-knowledge-meta-block">';
     html+='<h4>Projektwissen</h4>';
     html+=renderProjectMetaGrid([
       {label:'Anhaenge', value:flow.attachmentCount},
@@ -3225,7 +3288,7 @@ function renderProjectList(){
     ]);
     html+='</div>';
 
-    html+='<div class="project-meta-block">';
+    html+='<div class="project-meta-block project-meeting-meta-block">';
     html+='<h4>Meeting-Protokoll</h4>';
     html+='<div class="project-badges">';
     html+='<span class="badge '+(meetingIsClosed?'badge-red':'badge-green')+'">'+(meetingIsClosed?'Closed':'Open')+'</span>';
@@ -4882,6 +4945,13 @@ function bindForm(){
     if(isProjectImportModalOpen()){
       closeProjectImportDialog();
     }
+  });
+
+  document.addEventListener('click',function(evt){
+    var trigger=evt.target&&evt.target.closest?evt.target.closest('[data-project-task-dialog]'):null;
+    if(!trigger)return;
+    evt.preventDefault();
+    openProjectTaskDetailsDialog(trigger.getAttribute('data-project-id')||'');
   });
 
   document.addEventListener('toggle',function(evt){

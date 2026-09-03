@@ -1025,6 +1025,13 @@
 
   function matchesCurrentFilters(task, status) {
     if (!task) return false;
+    if (task.projectId && window.DataLayer && typeof window.DataLayer.getProjects === 'function') {
+      var taskProjectId = normalizeComparableId(task.projectId);
+      var project = (window.DataLayer.getProjects() || []).find(function (item) {
+        return normalizeComparableId(item && item.id) === taskProjectId;
+      });
+      if (project && String(project.status || '').toLowerCase() === 'planning') return false;
+    }
     if (status && task.status !== status) return false;
     var taskAssigneeIds = getTaskAssigneeIds(task).map(normalizeComparableId);
     var selectedAssigneeId = normalizeComparableId(filterAssigneeId);

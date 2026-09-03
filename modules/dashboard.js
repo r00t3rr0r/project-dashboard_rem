@@ -305,6 +305,25 @@
     var teamChatMessage = teamChat ? teamChat.querySelector('[name="team-chat-message"]') : null;
     var projectDetails = {};
     var projectsContainer = document.getElementById('dashboard-projects-full');
+    var scrollAnchor = null;
+    if (mainContent && projectsContainer) {
+      var mainRect = mainContent.getBoundingClientRect();
+      var visibleDetails = Array.prototype.filter.call(
+        projectsContainer.querySelectorAll('details[data-project-state-key]'),
+        function(node) {
+          var rect = node.getBoundingClientRect();
+          return rect.bottom > mainRect.top && rect.top < mainRect.bottom;
+        }
+      );
+      var anchor = visibleDetails[0];
+      if (anchor) {
+        var anchorRect = anchor.getBoundingClientRect();
+        scrollAnchor = {
+          key: String(anchor.getAttribute('data-project-state-key') || '').trim(),
+          offset: anchorRect.top - mainRect.top
+        };
+      }
+    }
     if (projectsContainer) {
       projectsContainer.querySelectorAll('details[data-project-state-key]').forEach(function(node) {
         var key = String(node.getAttribute('data-project-state-key') || '').trim();
@@ -316,6 +335,7 @@
       focus: focusState,
       mainScrollTop: mainContent ? mainContent.scrollTop : null,
       mainScrollLeft: mainContent ? mainContent.scrollLeft : null,
+      scrollAnchor: scrollAnchor,
       projectDetails: projectDetails,
       teamChat: teamChat ? {
         expanded: teamChat.classList.contains('is-expanded'),
@@ -346,6 +366,17 @@
             node.open = !!state.projectDetails[key];
           }
         });
+      }
+    }
+
+    if (mainContent && state.scrollAnchor && state.scrollAnchor.key) {
+      var anchorSelector = 'details[data-project-state-key="' + state.scrollAnchor.key.replace(/"/g, '\\"') + '"]';
+      var dashboardProjects = document.getElementById('dashboard-projects-full');
+      var restoredAnchor = dashboardProjects ? dashboardProjects.querySelector(anchorSelector) : null;
+      if (restoredAnchor) {
+        var mainRect = mainContent.getBoundingClientRect();
+        var anchorRect = restoredAnchor.getBoundingClientRect();
+        mainContent.scrollTop += anchorRect.top - mainRect.top - Number(state.scrollAnchor.offset || 0);
       }
     }
 
@@ -426,6 +457,7 @@
 
     // Dashboard zeigt die Projekte als Uebersicht im Lesemodus.
     wrapper.querySelectorAll('input, select, textarea, button').forEach(function(node) {
+      if (node.hasAttribute('data-project-task-dialog')) return;
       node.disabled = true;
       node.removeAttribute('data-action');
       node.removeAttribute('data-id');
