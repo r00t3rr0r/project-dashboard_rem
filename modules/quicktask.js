@@ -83,6 +83,77 @@ function requestAiTaskDraft(payload){
   return window.LocalOllama.generate('/api/ai/meeting-task-draft',payload||{});
 }
 
+function translateGitHubCommitToGerman(commit){
+  var original=String(commit&&commit.fullMessage||commit&&commit.message||'').trim();
+  if(!original||!window.LocalOllama||typeof window.LocalOllama.generate!=='function')return Promise.resolve({title:original,description:''});
+  return window.LocalOllama.generate('/api/ai/meeting-task-draft',{
+    projectId:'github-commit-translation',
+    projectTitle:'GitHub-Commit-Dokumentation',
+    draftTitle:original,
+    draftDescription:'Commit-SHA: '+String(commit.sha||''),
+    promptConfig:{prompt:'Uebersetze den folgenden GitHub-Commit fuer deutschsprachige Mitarbeitende. Formuliere einen kurzen deutschen Aufgabentitel und eine sachliche deutsche Beschreibung der technischen Aenderung. Erhalte technische Begriffe, Dateinamen und Versionsnummern. Antworte ausschliesslich als JSON mit einem Objekt task, das die Felder titleDe und descriptionDe enthaelt.'}
+  }).then(function(result){
+    var task=result&&result.draft&&result.draft.task||{};
+    return {
+      title:String(task.titleDe||'').trim()||original,
+      description:String(task.descriptionDe||'').trim()
+    };
+  }).catch(function(){return {title:original,description:''};});
+}
+
+function getQuickTaskGitHubToken(){
+  var auth=getAuthManager();
+  var user=auth&&typeof auth.getCurrentUser==='function'?auth.getCurrentUser():null;
+  var token=user&&user.github?String(user.github.privateAccessToken||'').trim():'';
+  if(token)return token;
+  try{return String(window.sessionStorage.getItem('projektDashboard.githubApiToken')||'').trim();}catch(_err){return '';}
+}
+
+function fetchQuickTaskGitHubCommits(project){
+  var github=project&&project.github?project.github:{};
+  if(!github.owner||!github.repo)return Promise.reject(new Error('Das Projekt hat keinen GitHub-Link.'));
+  var since=Date.now()-(12*60*60*1000);
+  var token=getQuickTaskGitHubToken();
+
+  function requestPage(page,found){
+    var url='/api/github/commits?owner='+encodeURIComponent(github.owner)+'&repo='+encodeURIComponent(github.repo)+'&per_page=100&page='+page;
+    return fetch(url,{headers:token?{'X-GitHub-Token':token}:{}}).then(function(response){
+      return response.json().catch(function(){return {};}).then(function(body){
+        if(!response.ok)throw new Error(body&&body.message?body.message:('GitHub API HTTP '+response.status));
+        return Array.isArray(body)?body:[];
+      });
+    }).then(function(items){
+      var pageCommits=items.map(function(item){
+        var commit=item&&item.commit||{};
+        var author=commit.author||{};
+        var committer=commit.committer||{};
+        var timestamp=author.date||committer.date||'';
+        return {
+          sha:String(item&&item.sha||'').trim(),
+          message:String(commit.message||'').split('\n')[0].trim(),
+          fullMessage:String(commit.message||'').trim(),
+          author:String(author.name||(item&&item.author&&item.author.login)||'Unbekannt').trim(),
+          authorLogin:String(item&&item.author&&item.author.login||'').trim(),
+          date:timestamp,
+          url:String(item&&item.html_url||'').trim()
+        };
+      }).filter(function(commit){return commit.sha&&Date.parse(commit.date)>=since;});
+      var all=found.concat(pageCommits);
+      var oldest=items.length?Date.parse(((items[items.length-1].commit||{}).author||{}).date||''):NaN;
+      if(items.length===100&&(!isFinite(oldest)||oldest>=since)&&page<5)return requestPage(page+1,all);
+      return all;
+    });
+  }
+  return requestPage(1,[]);
+}
+
+function getGitHubCommitDocumentationTaskId(sha){
+  var target='github-commit:'+String(sha||'').trim();
+  var tasks=window.DataLayer&&typeof window.DataLayer.getTasks==='function'?window.DataLayer.getTasks():[];
+  var existing=tasks.find(function(task){return task&&String(task.externalId||'')===target;});
+  return existing?String(existing.id||''):'';
+}
+
 function setMultiSelectValues(selectEl,values){
   if(!selectEl||!selectEl.options)return;
   var map={};
@@ -303,11 +374,13 @@ function openQuickTaskModal(){
         +'<div class="task-ai-actions">'
           +'<button type="button" class="btn btn-secondary" id="qtm-ai-fill">KI-Entwurf aus Titel + Beschreibung</button>'
           +'<button type="button" class="btn btn-secondary" id="qtm-ai-assign">KI-Zuweisung</button>'
+          +'<button type="button" class="btn btn-secondary" id="qtm-github-commits">GitHub-Commits der letzten 12 Stunden</button>'
           +'<button type="button" class="btn btn-secondary hidden" id="qtm-ai-chain">Kettenvorschlag uebernehmen</button>'
         +'</div>'
         +'<label class="task-ai-check"><input type="checkbox" id="qtm-ai-autoassign" checked> Mitarbeiter automatisch vorschlagen</label>'
         +'<div class="task-ai-status" id="qtm-ai-status">Bereit fuer KI-Vervollstaendigung.</div>'
         +'<div class="task-ai-hint hidden" id="qtm-ai-hint"></div>'
+        +'<div class="task-ai-hint hidden" id="qtm-github-commit-review"></div>'
       +'</div>'
       : '';
     
@@ -396,7 +469,7 @@ function openQuickTaskModal(){
     }
 
     function toggleAiButtons(disabled){
-      ['qtm-ai-fill','qtm-ai-assign','qtm-ai-chain'].forEach(function(id){
+      ['qtm-ai-fill','qtm-ai-assign','qtm-github-commits','qtm-ai-chain'].forEach(function(id){
         var btn=document.getElementById(id);
         if(btn)btn.disabled=!!disabled;
       });
@@ -686,6 +759,79 @@ function openQuickTaskModal(){
       var aiAssignBtn=document.getElementById('qtm-ai-assign');
       if(aiAssignBtn)aiAssignBtn.addEventListener('click',function(){
         applyAssigneeRecommendation();
+      });
+
+      var githubCommitBtn=document.getElementById('qtm-github-commits');
+      if(githubCommitBtn)githubCommitBtn.addEventListener('click',function(){
+        var selection=getProjectSelection();
+        var review=document.getElementById('qtm-github-commit-review');
+        if(!selection.project){
+          updateAiStatus('Fuer den GitHub-Abruf bitte zuerst ein Projekt waehlen.',true);
+          return;
+        }
+        githubCommitBtn.disabled=true;
+        updateAiStatus('GitHub-Commits werden abgerufen ...',false);
+        fetchQuickTaskGitHubCommits(selection.project).then(function(commits){
+          if(!review)return;
+          if(!commits.length){
+            review.innerHTML='<div>Keine neuen Commits der letzten 12 Stunden gefunden.</div>';
+            review.classList.remove('hidden');
+            updateAiStatus('Keine neuen Commits im Zeitfenster.',false);
+            return;
+          }
+          review.innerHTML='<strong>Commit-Dokumentation pruefen</strong>'
+            +commits.map(function(commit){
+              var existing=getGitHubCommitDocumentationTaskId(commit.sha);
+              var checked=existing?'':' checked';
+              var disabled=existing?' disabled':'';
+              var state=existing?' (bereits dokumentiert)':'';
+              return '<label style="display:block;margin-top:0.45rem;opacity:'+(existing?'0.6':'1')+';">'
+                +'<input type="checkbox" data-github-commit-sha="'+escapeAttr(commit.sha)+'"'+checked+disabled+'>'
+                +' '+escapeHtml(commit.message||'(ohne Nachricht)')+' <small>'+escapeHtml(commit.author)+' · '+escapeHtml(new Date(commit.date).toLocaleString('de-DE'))+escapeHtml(state)+'</small>'
+                +'</label>';
+            }).join('')
+            +'<button type="button" class="btn btn-primary" id="qtm-github-create" style="margin-top:0.7rem;">Ausgewaehlte als erledigte Aufgaben dokumentieren</button>';
+          review.classList.remove('hidden');
+          review._commits=commits;
+          updateAiStatus(String(commits.length)+' Commit(s) aus den letzten 12 Stunden gefunden.',false);
+          var createBtn=document.getElementById('qtm-github-create');
+          if(createBtn)createBtn.addEventListener('click',function(){
+            var selected=[];
+            review.querySelectorAll('[data-github-commit-sha]:checked').forEach(function(input){
+              var commit=commits.find(function(item){return item.sha===input.getAttribute('data-github-commit-sha');});
+              if(commit)selected.push(commit);
+            });
+            var created=0;
+            selected.forEach(function(commit){
+              if(getGitHubCommitDocumentationTaskId(commit.sha))return;
+              var title='Commit dokumentieren: '+(commit.message||commit.sha).slice(0,140);
+              var description='Implementierung wurde bereits umgesetzt und wird nachtraeglich dokumentiert.\n\nCommit: '+commit.sha+'\nAutor: '+commit.author+(commit.fullMessage&&commit.fullMessage!==commit.message?'\n\n'+commit.fullMessage:'');
+              var task=window.DataLayer.createTask({
+                title:title,
+                description:description,
+                projectId:selection.project.id,
+                status:'done',
+                priority:'medium',
+                urgency:'normal',
+                effortHours:0,
+                createdAt:commit.date||new Date().toISOString(),
+                completedAt:commit.date||new Date().toISOString(),
+                externalId:'github-commit:'+commit.sha,
+                externalSource:'github',
+                sourceCommitSha:commit.sha,
+                sourceCommitUrl:commit.url,
+                documentationOnly:true,
+                subtasks:[{id:window.DataLayer.generateId(),title:'Implementierung aus Commit dokumentiert',completed:true,createdAt:commit.date||new Date().toISOString()}],
+                attachments:commit.url?[{id:window.DataLayer.generateId(),name:'GitHub Commit',url:commit.url,type:'link',addedAt:new Date().toISOString()}]:[]
+              });
+              if(task)created++;
+            });
+            review.classList.add('hidden');
+            updateAiStatus(created?String(created)+' erledigte Commit-Aufgabe(n) dokumentiert.':'Keine neuen Aufgaben ausgewaehlt.',false);
+          });
+        }).catch(function(error){
+          updateAiStatus('GitHub-Abruf fehlgeschlagen: '+String(error&&error.message||error),true);
+        }).finally(function(){githubCommitBtn.disabled=false;});
       });
 
       var aiChainBtn=document.getElementById('qtm-ai-chain');
