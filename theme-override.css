@@ -3163,6 +3163,27 @@ body.light-mode .kanban-day-load {
   background: rgba(94, 162, 255, 0.08);
 }
 
+body.light-mode .kanban-pill-chain {
+  color: #164e63;
+  border-color: rgba(22, 123, 152, 0.46);
+  background: linear-gradient(135deg, rgba(113, 205, 218, 0.3), rgba(94, 162, 255, 0.14));
+  box-shadow: 0 0 0 1px rgba(22, 123, 152, 0.12) inset;
+}
+
+body.light-mode .kanban-pill-chain::after {
+  background: repeating-linear-gradient(
+    110deg,
+    rgba(255, 255, 255, 0) 0,
+    rgba(255, 255, 255, 0) 14px,
+    rgba(22, 123, 152, 0.14) 14px,
+    rgba(22, 123, 152, 0.14) 18px
+  );
+}
+
+body.light-mode .kanban-pill-chain .material-symbols-rounded {
+  color: #167b98;
+}
+
 @media (max-width: 1080px) {
   .kanban-overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
