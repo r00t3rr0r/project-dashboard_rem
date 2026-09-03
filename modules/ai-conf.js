@@ -7,12 +7,13 @@ var STORAGE_KEY='pd_ai_configuration';
 var healthRequestSequence=0;
 var healthCheckPending=false;
 var lastHealthCheckAt=0;
-var assistantDraft={projectId:'',mode:'',items:[]};
+var assistantDraft={projectId:'',mode:'',ownerId:'',items:[]};
 var ASSISTANTS={
   next:{icon:'next_plan',title:'Naechste Aufgaben',description:'Leitet die naechsten konkreten Arbeitspakete aus Projektstand und Projektwissen ab.',instruction:'Ermittle die unmittelbar naechsten, noch nicht vorhandenen Aufgaben. Beruecksichtige Blocker, Abhaengigkeiten, Prioritaeten und das Projektwissen.'},
   team:{icon:'groups',title:'Team orchestrieren',description:'Plant Aufgaben und verteilt sie passend zu Rolle, Kapazitaet und aktueller Auslastung.',instruction:'Orchestriere die offene Arbeit. Erzeuge fehlende Aufgaben und weise jede Aufgabe ueber assigneeId einem geeigneten Mitarbeiter zu. Nutze ausschliesslich Mitarbeiter-IDs aus dem Kontext.'},
   development:{icon:'code_blocks',title:'Entwicklung planen',description:'Zerlegt den naechsten Entwicklungsschritt in umsetzbare technische Arbeit.',instruction:'Plane die naechste Entwicklungsiteration mit Analyse, Implementierung, Tests, Review und Dokumentation. Vermeide Aufgaben, die bereits vorhanden oder abgeschlossen sind.'},
-  progress:{icon:'monitoring',title:'Fortschritt steuern',description:'Erkennt Rueckstaende und erzeugt konkrete Massnahmen fuer Blocker und Projektfortschritt.',instruction:'Analysiere Soll und Ist des Projektfortschritts. Erzeuge nur konkrete Korrektur-, Entblockungs- oder Abschlussaufgaben, die den Fortschritt messbar verbessern.'}
+  progress:{icon:'monitoring',title:'Fortschritt steuern',description:'Erkennt Rueckstaende und erzeugt konkrete Massnahmen fuer Blocker und Projektfortschritt.',instruction:'Analysiere Soll und Ist des Projektfortschritts. Erzeuge nur konkrete Korrektur-, Entblockungs- oder Abschlussaufgaben, die den Fortschritt messbar verbessern.'},
+  finish:{icon:'route',title:'Projekt fertigstellen',description:'Plant den kuerzesten realistischen Abschluss inklusive Hosting, Infrastruktur, Tests und Go-live.',instruction:'Erstelle einen vollstaendigen, sequenziellen Abschlussplan fuer dieses Projekt. Zerlege die Restarbeit in 6 bis 12 atomare Aufgaben mit jeweils 0.5 bis 7 Aufwandstunden. Beruecksichtige zwingend: offene Fachentscheidungen, technische Umsetzung, Datenmigration falls relevant, automatisierte Tests, Security- und Datenschutzpruefung, Hosting/Infrastruktur, DNS/TLS/Umgebungsvariablen, Monitoring/Backup, Deployment, Smoke-Test, Dokumentation und Uebergabe. Nutze genau eine Arbeitskraft mit 7 Stunden pro Werktag. Ordne jede Aufgabe ueber sequenceIndex und dependsOnPrevious. Erzeuge keine Sammelaufgaben und erfinde keine Infrastrukturdetails, sondern markiere ungeklaerte Punkte als konkrete Klaerungsaufgabe. Gib pro Aufgabe einen spezifischen deutschen KI-Prompt in aiPrompt zur Umsetzung aus.'}
 };
 var DEFAULTS={
   routing:'auto',
@@ -68,8 +69,23 @@ function render(){
   var config=readConfig();
   var initialRender=!root.querySelector('.ai-conf-layout');
   if(initialRender)renderWorkspace(root,config,[],'',true);
+  else refreshProjectSelect(root,config);
   if(initialRender||Date.now()-lastHealthCheckAt>30000)refreshModels(root,config,initialRender);
   syncActivityUI(window.LocalOllama&&window.LocalOllama.getStatus?window.LocalOllama.getStatus():null);
+}
+function refreshProjectSelect(root,config){
+  var select=root.querySelector('#ai-assistant-project');
+  if(!select)return;
+  var selected=select.value||config.assistantProjectId||'';
+  select.innerHTML=projectOptions(selected);
+}
+if(window.DataLayer&&typeof window.DataLayer.on==='function'){
+  window.DataLayer.on('dataChanged',function(event){
+    var entity=event&&event.entity;
+    if(entity&&entity!=='projects'&&entity!=='all')return;
+    var root=document.getElementById('ai-conf-root');
+    if(root&&root.querySelector('.ai-conf-layout'))refreshProjectSelect(root,readConfig());
+  });
 }
 function modelOptions(models,selected){
   return '<option value="">Automatisch zuweisen</option>'+models.map(function(model){return '<option value="'+escapeHtml(model)+'"'+(model===selected?' selected':'')+'>'+escapeHtml(model)+'</option>';}).join('');
@@ -118,20 +134,49 @@ function normalizeAssistantDraft(body){
   return source.map(function(item,index){
     var title=String(item.titleDe||item.title||item.titleEn||'').trim();
     var description=String(item.descriptionDe||item.description||item.descriptionEn||'').trim();
-    return {title:title,description:description,priority:String(item.priority||'medium').toLowerCase(),effortHours:Number(item.effortHours||0)||0,assigneeId:String(item.assigneeId||'').trim(),sequenceIndex:Number(item.sequenceIndex||index+1)||index+1,dependsOnPrevious:!!item.dependsOnPrevious,subtasks:Array.isArray(item.subtasksDe)?item.subtasksDe:(Array.isArray(item.subtasks)?item.subtasks:[])};
+    return {title:title,description:description,priority:String(item.priority||'medium').toLowerCase(),effortHours:Number(item.effortHours||0)||0,assigneeId:String(item.assigneeId||'').trim(),sequenceIndex:Number(item.sequenceIndex||index+1)||index+1,dependsOnPrevious:!!item.dependsOnPrevious,subtasks:Array.isArray(item.subtasksDe)?item.subtasksDe:(Array.isArray(item.subtasks)?item.subtasks:[]),aiPrompt:String(item.aiPromptDe||item.aiPrompt||'').trim()};
   }).filter(function(item){return !!item.title;});
+}
+function dateOnly(date){return date.toISOString().slice(0,10);}
+function nextWorkday(date){var result=new Date(date.getTime());while(result.getDay()===0||result.getDay()===6)result.setDate(result.getDate()+1);return result;}
+function addWorkdays(date,count){var result=new Date(date.getTime());for(var index=0;index<count;index++){result.setDate(result.getDate()+1);result=nextWorkday(result);}return result;}
+function buildAiPrompt(item,project){return item.aiPrompt||'Arbeite ausschliesslich an dieser Aufgabe: '+item.title+'.\nProjekt: '+projectTitle(project)+'\nZiel: '+(item.description||'Erzeuge das beschriebene Ergebnis.')+'\nRegeln: Nutze den vorhandenen Projektkontext. Veraendere nur notwendige Dateien und Daten. Nenne zuerst Annahmen und Blocker. Liefere danach konkrete Umsetzungsschritte, geaenderte Artefakte, Tests mit Ergebnissen und verbleibende Risiken. Keine erfundenen Werte, keine offenen Allgemeinplaetze.';}
+function scheduleItems(items,project){
+  var today=new Date();today.setHours(9,0,0,0);
+  var projectStart=project.startDate&&/^\d{4}-\d{2}-\d{2}$/.test(project.startDate)?new Date(project.startDate+'T09:00:00'):today;
+  var start=projectStart>today?projectStart:today;
+  var dayCursor=nextWorkday(start),hour=9;
+  return items.map(function(item){
+    var remaining=Math.max(.5,Math.min(7,Number(item.effortHours)||1)),segments=[];
+    while(remaining>0){
+      dayCursor=nextWorkday(dayCursor);
+      var available=16-hour;
+      if(available<=0){dayCursor=addWorkdays(dayCursor,1);hour=9;continue;}
+      var segment=Math.min(remaining,available),end=hour+segment;
+      segments.push({date:dateOnly(dayCursor),startTime:String(Math.floor(hour)).padStart(2,'0')+':'+String(Math.round((hour%1)*60)).padStart(2,'0'),endTime:String(Math.floor(end)).padStart(2,'0')+':'+String(Math.round((end%1)*60)).padStart(2,'0')});
+      hour=end;remaining-=segment;
+      if(hour>=16){dayCursor=addWorkdays(dayCursor,1);hour=9;}
+    }
+    item.schedule=segments[0];item.scheduleEnd=segments[segments.length-1];item.aiPrompt=buildAiPrompt(item,project);return item;
+  });
 }
 function employeeName(id){
   var employees=window.DataLayer&&window.DataLayer.getEmployees?window.DataLayer.getEmployees():[];
   var employee=employees.find(function(item){return item.id===id;});
   return employee?employee.name||employee.id:'Nicht zugewiesen';
 }
+function employeeOptions(selectedId){
+  var employees=window.DataLayer&&window.DataLayer.getEmployees?window.DataLayer.getEmployees():[];
+  return '<option value="">Verantwortlichen auswaehlen</option>'+employees.slice().sort(function(a,b){return String(a.name||a.id).localeCompare(String(b.name||b.id),'de');}).map(function(employee){return '<option value="'+escapeHtml(employee.id)+'"'+(employee.id===selectedId?' selected':'')+'>'+escapeHtml(employee.name||employee.id)+'</option>';}).join('');
+}
 function renderAssistantDraft(root){
   var host=root.querySelector('#ai-assistant-result');
   if(!host)return;
   if(!assistantDraft.items.length){host.innerHTML='';host.hidden=true;return;}
   host.hidden=false;
-  host.innerHTML='<div class="ai-assistant-result-head"><div><strong>'+assistantDraft.items.length+' Aufgabenvorschlaege</strong><small>Vorschlaege pruefen und gezielt uebernehmen.</small></div><button class="btn btn-primary" type="button" id="ai-assistant-import"><span class="material-symbols-rounded" aria-hidden="true">playlist_add_check</span><span>Ausgewaehlte uebernehmen</span></button></div><div class="ai-assistant-task-list">'+assistantDraft.items.map(function(item,index){return '<label class="ai-assistant-task"><input type="checkbox" data-assistant-task="'+index+'" checked><span><strong>'+escapeHtml(item.title)+'</strong><small>'+escapeHtml(item.description||'Keine Beschreibung')+'</small><span class="ai-assistant-task-meta"><b>'+escapeHtml(item.priority)+'</b><b>'+escapeHtml(item.effortHours?item.effortHours+' Std.':'Aufwand offen')+'</b><b>'+escapeHtml(employeeName(item.assigneeId))+'</b></span></span></label>';}).join('')+'</div>';
+  var ownerField=assistantDraft.mode==='finish'?'<label class="form-group ai-assistant-owner"><span>Verantwortlich fuer die Fertigstellung</span><select id="ai-assistant-owner">'+employeeOptions(assistantDraft.ownerId)+'</select></label>':'';
+  host.innerHTML='<div class="ai-assistant-result-head"><div><strong>'+assistantDraft.items.length+' Aufgabenvorschlaege</strong><small>'+(assistantDraft.mode==='finish'?'Verantwortlichen waehlen, Vorschlaege pruefen und gezielt uebernehmen.':'Vorschlaege pruefen und gezielt uebernehmen.')+'</small></div><button class="btn btn-primary" type="button" id="ai-assistant-import"><span class="material-symbols-rounded" aria-hidden="true">playlist_add_check</span><span>'+(assistantDraft.mode==='finish'?'Aufgaben + Kalender uebernehmen':'Ausgewaehlte uebernehmen')+'</span></button></div>'+ownerField+'<div class="ai-assistant-task-list">'+assistantDraft.items.map(function(item,index){return '<label class="ai-assistant-task"><input type="checkbox" data-assistant-task="'+index+'" checked><span><strong>'+escapeHtml(item.title)+'</strong><small>'+escapeHtml(item.description||'Keine Beschreibung')+'</small><span class="ai-assistant-task-meta"><b>'+escapeHtml(item.priority)+'</b><b>'+escapeHtml(item.effortHours?item.effortHours+' Std.':'Aufwand offen')+'</b><b>'+escapeHtml(assistantDraft.ownerId&&assistantDraft.mode==='finish'?employeeName(assistantDraft.ownerId):employeeName(item.assigneeId))+'</b>'+(item.schedule?'<b>'+escapeHtml(item.schedule.date+' '+item.schedule.startTime+'-'+item.schedule.endTime)+'</b>':'')+'</span>'+(item.aiPrompt?'<details class="ai-assistant-prompt"><summary>KI-Prompt fuer diese Aufgabe</summary><textarea readonly rows="5">'+escapeHtml(item.aiPrompt)+'</textarea></details>':'')+'</span></label>';}).join('')+'</div>';
+  if(assistantDraft.mode==='finish')host.querySelector('#ai-assistant-owner').addEventListener('change',function(){assistantDraft.ownerId=this.value;renderAssistantDraft(root);});
   host.querySelector('#ai-assistant-import').addEventListener('click',function(){importAssistantTasks(root);});
 }
 function runAssistant(root,mode){
@@ -146,10 +191,11 @@ function runAssistant(root,mode){
   result.innerHTML='<div class="ai-assistant-pending"><span class="material-symbols-rounded" aria-hidden="true">progress_activity</span><span>'+escapeHtml(assistant.title)+' analysiert '+escapeHtml(projectTitle(project))+' ...</span></div>';
   fetchProjectKnowledge(project).then(function(knowledge){
     var context=projectContext(project);
-    var instruction=assistant.instruction+'\n\nProjektwissen:\n'+(knowledge||'Keine separate Wissensdatei vorhanden. Nutze den aktuellen Projektsnapshot.')+'\n\nErzeuge 3 bis 8 konkrete Aufgaben. Jede Aufgabe benoetigt einen klaren Titel, Beschreibung, Prioritaet, Aufwand, Reihenfolge und sinnvolle Teilaufgaben.';
+    var instruction=assistant.instruction+'\n\nProjektwissen:\n'+(knowledge||'Keine separate Wissensdatei vorhanden. Nutze den aktuellen Projektsnapshot.')+'\n\nAntworte ausschliesslich als JSON-Objekt mit dem Feld tasks. Jede Aufgabe benoetigt title, description, priority, effortHours, sequenceIndex, dependsOnPrevious, subtasks und bei Projekt fertigstellen zusaetzlich aiPrompt. Keine Markdown-Ausgabe.';
     return window.LocalOllama.generate('/api/ai/meeting-task-draft',{projectId:project.id,projectTitle:projectTitle(project),draftInput:instruction,options:{createSubtasks:true,splitIntoMultiple:true},existingData:context,promptConfig:{temperature:0.2,maxTokens:3200}});
   }).then(function(body){
-    assistantDraft={projectId:project.id,mode:mode,items:normalizeAssistantDraft(body)};
+      assistantDraft={projectId:project.id,mode:mode,ownerId:'',items:normalizeAssistantDraft(body)};
+    if(mode==='finish')assistantDraft.items=scheduleItems(assistantDraft.items,project);
     renderAssistantDraft(root);
     if(!assistantDraft.items.length)notify('Die KI hat keine verwertbaren Aufgaben geliefert.',true);
   }).catch(function(error){
@@ -165,12 +211,16 @@ function importAssistantTasks(root){
   var employeeIds=employees.map(function(employee){return employee.id;});
   var selected=Array.prototype.map.call(root.querySelectorAll('[data-assistant-task]:checked'),function(input){return assistantDraft.items[Number(input.getAttribute('data-assistant-task'))];}).filter(Boolean);
   if(!selected.length){notify('Bitte mindestens eine Aufgabe auswaehlen.',true);return;}
+  var ownerId=String((root.querySelector('#ai-assistant-owner')||{}).value||assistantDraft.ownerId||'');
+  if(assistantDraft.mode==='finish'&&!ownerId){notify('Bitte zuerst den Verantwortlichen fuer die Fertigstellung auswaehlen.',true);return;}
   var created=[];
   selected.forEach(function(item,index){
     var dependencyIds=item.dependsOnPrevious&&created.length?[created[created.length-1].id]:[];
-    var payload={title:item.title,description:item.description,projectId:project.id,status:'backlog',priority:['low','medium','high','blocker'].indexOf(item.priority)!==-1?item.priority:'medium',effortHours:item.effortHours,sequenceIndex:item.sequenceIndex||index+1,dependsOnPrevious:!!item.dependsOnPrevious,dependencyTaskIds:dependencyIds,assigneeId:employeeIds.indexOf(item.assigneeId)!==-1?item.assigneeId:null,subtasks:item.subtasks.map(function(subtask){return {title:String(subtask&&subtask.title||subtask),done:false};}).filter(function(subtask){return !!subtask.title;})};
+    var assignedId=assistantDraft.mode==='finish'?ownerId:(employeeIds.indexOf(item.assigneeId)!==-1?item.assigneeId:null);
+    var payload={title:item.title,description:item.description+(item.aiPrompt?'\n\nVorgefertigter KI-Prompt:\n'+item.aiPrompt:''),projectId:project.id,status:'backlog',priority:['low','medium','high','blocker'].indexOf(item.priority)!==-1?item.priority:'medium',effortHours:item.effortHours,sequenceIndex:item.sequenceIndex||index+1,dependsOnPrevious:!!item.dependsOnPrevious,dependencyTaskIds:dependencyIds,assigneeId:assignedId,subtasks:item.subtasks.map(function(subtask){return {title:String(subtask&&subtask.title||subtask),done:false};}).filter(function(subtask){return !!subtask.title;})};
     var task=window.DataLayer.createTask(payload);
     if(task)created.push(task);
+    if(item.schedule&&window.DataLayer.createCalendarEvent)window.DataLayer.createCalendarEvent({title:'KI-Plan: '+item.title,description:'Aufgabe: '+item.title+'\n\n'+(item.aiPrompt||item.description||''),date:item.schedule.date,startDate:item.schedule.date,startTime:item.schedule.startTime,endTime:item.schedule.endTime,type:'task',projectId:project.id,attendeeIds:[assignedId]});
   });
   assistantDraft={projectId:'',mode:'',items:[]};
   renderAssistantDraft(root);
