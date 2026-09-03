@@ -1460,24 +1460,26 @@
     function pushOrMerge(employeeId, role, assignedAt, memberId) {
       var id = String(employeeId || '').trim();
       if (!id) return;
-      var roleText = typeof role === 'string' ? role.trim() : '';
+      var roleParts = typeof role === 'string' ? role.split('·') : [];
+      roleBuckets[id] = roleBuckets[id] || [];
+
+      roleParts.forEach(function (rolePart) {
+        var roleText = rolePart.trim();
+        if (!roleText) return;
+        if (roleBuckets[id].indexOf(roleText) === -1) roleBuckets[id].push(roleText);
+      });
 
       if (seen[id]) {
-        if (roleText) {
-          roleBuckets[id] = roleBuckets[id] || [];
-          if (roleBuckets[id].indexOf(roleText) === -1) roleBuckets[id].push(roleText);
-          for (var i = 0; i < normalized.length; i++) {
-            if (normalized[i].employeeId === id) {
-              normalized[i].role = roleBuckets[id].join(' · ');
-              break;
-            }
+        for (var i = 0; i < normalized.length; i++) {
+          if (normalized[i].employeeId === id) {
+            normalized[i].role = roleBuckets[id].join(' · ');
+            break;
           }
         }
         return;
       }
 
       seen[id] = true;
-      roleBuckets[id] = roleText ? [roleText] : [];
       normalized.push({
         id: memberId || generateId(),
         employeeId: id,

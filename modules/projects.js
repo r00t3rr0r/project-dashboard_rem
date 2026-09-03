@@ -2786,6 +2786,45 @@ function renderProjectMetaGrid(items, emptyText){
   return '<div class="project-meta-grid">'+rows.join('')+'</div>';
 }
 
+function renderProjectTeamSummary(teamMembers){
+  var team=Array.isArray(teamMembers)?teamMembers:[];
+  if(!team.length)return '<p class="project-meta-empty">Keine Zuordnung</p>';
+
+  var responsible=[];
+  var participants=[];
+  team.forEach(function(member){
+    var roleText=String(member&&member.role||'').trim()||'ohne Rolle';
+    var roles=roleText.split('·').map(function(role){return role.trim();}).filter(Boolean);
+    var isResponsible=roles.some(function(role){
+      return /projektleiter|projektleitung|ansprechpartner|project lead|lead|owner|kontakt/i.test(role);
+    });
+    (isResponsible?responsible:participants).push({
+      name:String(member&&member.employeeName||'Unbekannt'),
+      roles:roles.length?roles:['ohne Rolle']
+    });
+  });
+
+  function renderGroup(label, members){
+    if(!members.length)return '';
+    return '<div class="project-team-group">'+
+      '<h5 class="project-team-group-label">'+escapeHtml(label)+'</h5>'+
+      '<ul class="project-team-list">'+members.map(function(member){
+        return '<li class="project-team-member">'+
+          '<strong class="project-team-member-name">'+escapeHtml(member.name)+'</strong>'+ 
+          '<span class="project-team-member-role">Rolle: '+member.roles.map(function(role){
+            return '<span class="project-team-role">'+escapeHtml(role)+'</span>';
+          }).join('')+'</span>'+ 
+          '</li>';
+      }).join('')+'</ul>'+ 
+      '</div>';
+  }
+
+  return '<div class="project-team-summary">'+
+    renderGroup('Projektverantwortung',responsible)+
+    renderGroup('Projektbeteiligte',participants)+
+    '</div>';
+}
+
 function renderOverview(){
   var container=byId('projects-overview');
   if(!container)return;
@@ -3046,11 +3085,7 @@ function renderProjectList(){
     var commitPreview=(project.githubCommits||[]).slice(0,5);
     var projectPeriod=[];
     var activityStatus=formatProjectStatusSummary(flow.statusCounts);
-    var teamSummary=flow.teamMembers.length
-      ?flow.teamMembers.map(function(member){
-        return member.employeeName+' ('+(member.role||'ohne Rolle')+')';
-      }).join(' · ')
-      :'Keine Zuordnung';
+    var teamSummary=renderProjectTeamSummary(flow.teamMembers);
     var canResolveProjectBlocker=!(window.DataLayer&&typeof window.DataLayer.canResolveBlocker==='function')||window.DataLayer.canResolveBlocker({
       targetType:'project',
       targetId:project.id
@@ -3104,7 +3139,8 @@ function renderProjectList(){
       {label:'Startvorlage', value:showQueuedPlan?(queuedTaskCount+' Aufgaben · '+queuedEventCount+' Termine · '+queuedMilestoneCount+' Meilensteine'):'Nur bei nicht gestarteten Projekten'},
       {label:'Restaufwand', value:runningSummary.hasWork?formatHoursCompact(runningSummary.totalRemainingEffortHours,'geplant'):''},
       {label:'Arbeitszeit', value:runningSummary.hasWork?formatHoursCompact(runningSummary.trackedHours,'gebucht'):''},
-      {label:'Ist-Zeitraum', value:runningSummary.hasWork?runningSummary.periodLabel:''}
+      {label:'Ist-Zeitraum', value:runningSummary.hasWork?runningSummary.periodLabel:''},
+      {label:'Projektteam', value:teamSummary, html:true, className:'project-meta-team-item'}
     ]);
     html+='</div>';
 
@@ -3146,8 +3182,7 @@ function renderProjectList(){
       {label:'Restaufwand', value:formatHoursCompact(runningSummary.totalRemainingEffortHours,'geplant')},
       {label:'Arbeitszeit', value:formatHoursCompact(runningSummary.trackedHours,'gebucht')},
       {label:'Zeitraum', value:runningSummary.periodLabel},
-      {label:'Aktive Bearbeiter', value:flow.assignees.length},
-      {label:'Projektteam', value:teamSummary}
+      {label:'Aktive Bearbeiter', value:flow.assignees.length}
     ]);
     html+=renderProjectTaskList(project);
     html+='</div>';

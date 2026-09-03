@@ -3321,6 +3321,10 @@ body.projects-modal-open {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.project-meta-team-item {
+  grid-column: 1 / -1;
+}
+
 .project-meta-label {
   display: block;
   font-size: 0.68rem;
@@ -3336,6 +3340,63 @@ body.projects-modal-open {
   font-size: 0.84rem;
   line-height: 1.35;
   word-break: break-word;
+}
+
+.project-team-summary {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.project-team-group {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.project-team-group-label {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.project-team-list {
+  display: grid;
+  gap: 0.35rem;
+  list-style: none;
+}
+
+.project-team-member {
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.42rem 0.5rem;
+  border-left: 3px solid var(--accent-cyan);
+  border-radius: 0.35rem;
+  background: rgba(99, 226, 255, 0.08);
+}
+
+.project-team-member-name {
+  color: var(--text-primary);
+  font-size: 0.82rem;
+}
+
+.project-team-member-role {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.project-team-role {
+  display: inline-block;
+  padding: 0.08rem 0.35rem;
+  border: 1px solid rgba(99, 226, 255, 0.22);
+  border-radius: 999px;
+  color: var(--text-primary);
+  background: rgba(99, 226, 255, 0.12);
 }
 
 .project-meta-value a {
