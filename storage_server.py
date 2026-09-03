@@ -1763,14 +1763,15 @@ class StorageHandler(BaseHTTPRequestHandler):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 result = json.loads(response.read().decode('utf-8') or '{}')
-            dispatch_endpoint = GITHUB_API_BASE + '/repos/' + owner + '/' + repo + '/actions/workflows/' + quote(path, safe='/') + '/dispatches'
-            dispatch_request = urllib.request.Request(dispatch_endpoint, data=json.dumps({'ref': branch}).encode('utf-8'), method='POST', headers=headers)
             dispatch_started = False
-            try:
-                with urllib.request.urlopen(dispatch_request, timeout=30) as dispatch_response:
-                    dispatch_started = dispatch_response.status in (200, 201, 204)
-            except urllib.error.HTTPError:
-                dispatch_started = False
+            if payload.get('dispatch') is True:
+                dispatch_endpoint = GITHUB_API_BASE + '/repos/' + owner + '/' + repo + '/actions/workflows/' + quote(path, safe='/') + '/dispatches'
+                dispatch_request = urllib.request.Request(dispatch_endpoint, data=json.dumps({'ref': branch}).encode('utf-8'), method='POST', headers=headers)
+                try:
+                    with urllib.request.urlopen(dispatch_request, timeout=30) as dispatch_response:
+                        dispatch_started = dispatch_response.status in (200, 201, 204)
+                except urllib.error.HTTPError:
+                    dispatch_started = False
             self._send_json({'ok': True, 'path': path, 'commit': result.get('commit', {}), 'content': result.get('content', {}), 'dispatchStarted': dispatch_started})
         except urllib.error.HTTPError as exc:
             details = exc.read().decode('utf-8', errors='ignore')

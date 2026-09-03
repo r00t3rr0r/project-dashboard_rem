@@ -2827,7 +2827,7 @@ function renderProjectTeamSummary(teamMembers){
 function renderProjectE2EWorkflows(project,canEdit){
   var workflows=Array.isArray(project.githubE2EWorkflows)?project.githubE2EWorkflows:[];
   if(!workflows.length)return '<p class="text-muted project-meta-empty">Noch kein GitHub E2E-Workflow gespeichert.</p>';
-  return '<div class="project-e2e-workflows">'+workflows.map(function(workflow){var id=escapeHtml(workflow.id||workflow.path);return '<article class="project-e2e-workflow" data-workflow-id="'+id+'"><label class="form-group"><span>Workflow-Name</span><input type="text" data-workflow-field="name" value="'+escapeHtml(workflow.name||workflow.path||'E2E Workflow')+'" '+(canEdit?'':'disabled')+'></label><label class="form-group"><span>Datei</span><input type="text" data-workflow-field="path" value="'+escapeHtml(workflow.path||'.github/workflows/e2e.yml')+'" '+(canEdit?'':'disabled')+'></label><label class="form-group"><span>YAML</span><textarea rows="10" data-workflow-field="yaml" '+(canEdit?'':'disabled')+'>'+escapeHtml(workflow.yaml||'')+'</textarea></label><small class="text-muted">Branch: '+escapeHtml(workflow.branch||'main')+(workflow.lastDispatchAt?' · Zuletzt gestartet: '+escapeHtml(formatDateTime(workflow.lastDispatchAt)):'')+'</small><div class="project-actions-inline mt-1"><button class="btn btn-secondary" data-action="save-e2e-workflow" data-id="'+escapeHtml(project.id)+'" data-workflow-id="'+id+'" '+(canEdit?'':'disabled')+'>Workflow speichern</button><button class="btn btn-primary" data-action="start-e2e-workflow" data-id="'+escapeHtml(project.id)+'" data-workflow-id="'+id+'" '+(canEdit?'':'disabled')+'>Workflow starten</button></div></article>';}).join('')+'</div>';
+  return '<div class="project-e2e-workflows">'+workflows.map(function(workflow){var id=escapeHtml(workflow.id||workflow.path);return '<article class="project-e2e-workflow" data-workflow-id="'+id+'"><label class="form-group"><span>Workflow-Name</span><input type="text" data-workflow-field="name" value="'+escapeHtml(workflow.name||workflow.path||'E2E Workflow')+'" '+(canEdit?'':'disabled')+'></label><label class="form-group"><span>Datei</span><input type="text" data-workflow-field="path" value="'+escapeHtml(workflow.path||'.github/workflows/e2e.yml')+'" '+(canEdit?'':'disabled')+'></label><label class="form-group"><span>YAML</span><textarea rows="10" data-workflow-field="yaml" '+(canEdit?'':'disabled')+'>'+escapeHtml(workflow.yaml||'')+'</textarea></label><small class="text-muted">Branch: '+escapeHtml(workflow.branch||'main')+(workflow.lastDispatchAt?' · Zuletzt gestartet: '+escapeHtml(formatDateTime(workflow.lastDispatchAt)):'')+'</small><div class="project-actions-inline mt-1"><button class="btn btn-secondary" data-action="save-project-e2e-workflow" data-id="'+escapeHtml(project.id)+'" data-workflow-id="'+id+'" '+(canEdit?'':'disabled')+'>Im Projekt speichern</button><button class="btn btn-secondary" data-action="commit-e2e-workflow" data-id="'+escapeHtml(project.id)+'" data-workflow-id="'+id+'" '+(canEdit?'':'disabled')+'>Nach GitHub committen</button><button class="btn btn-primary" data-action="start-e2e-workflow" data-id="'+escapeHtml(project.id)+'" data-workflow-id="'+id+'" '+(canEdit?'':'disabled')+'>Workflow starten</button></div></article>';}).join('')+'</div>';
 }
 
 function renderOverview(){
@@ -4908,13 +4908,24 @@ function readProjectWorkflow(projectId,workflowId){
   var workflows=Array.isArray(project.githubE2EWorkflows)?project.githubE2EWorkflows:[];
   return {project:project,workflow:workflows.find(function(item){return String(item.id||item.path)===String(workflowId);})||null};
 }
-function updateProjectWorkflow(projectId,workflowId){
+function readProjectWorkflowFields(projectId,workflowId){
   var entry=readProjectWorkflow(projectId,workflowId);if(!entry||!entry.workflow)return Promise.reject(new Error('Workflow nicht gefunden.'));
   var card=null;Array.prototype.some.call(document.querySelectorAll('.project-e2e-workflow'),function(item){if(String(item.dataset.workflowId)===String(workflowId)){card=item;return true;}return false;});if(!card)return Promise.reject(new Error('Workflowansicht nicht gefunden.'));
   var workflow=entry.workflow;workflow.name=(card.querySelector('[data-workflow-field="name"]')||{}).value.trim();workflow.path=(card.querySelector('[data-workflow-field="path"]')||{}).value.trim();workflow.yaml=(card.querySelector('[data-workflow-field="yaml"]')||{}).value||'';
   if(!workflow.name||!workflow.path||!workflow.yaml.trim())return Promise.reject(new Error('Name, Pfad und YAML sind erforderlich.'));
-  var github=entry.project.github||{};var token=getGitHubApiToken();if(!token)return Promise.reject(new Error('Bitte zuerst einen GitHub Token hinterlegen.'));
-  return fetch('/api/github/e2e-workflow',{method:'POST',headers:{'Content-Type':'application/json','X-GitHub-Token':token},body:JSON.stringify({owner:github.owner,repo:github.repo,branch:workflow.branch||github.defaultBranch||'main',path:workflow.path,content:workflow.yaml,message:'chore: update E2E workflow'})}).then(function(response){return response.json().then(function(body){if(!response.ok)throw new Error(body.error||'Workflow konnte nicht gespeichert werden.');return body;});}).then(function(result){workflow.updatedAt=new Date().toISOString();if(result.dispatchStarted)workflow.lastDispatchAt=new Date().toISOString();window.DataLayer.updateProject(entry.project);render();return result;});
+  return Promise.resolve({entry:entry,workflow:workflow});
+}
+function saveProjectWorkflow(projectId,workflowId){
+  return readProjectWorkflowFields(projectId,workflowId).then(function(result){result.workflow.updatedAt=new Date().toISOString();window.DataLayer.updateProject(result.entry.project);render();return result;});
+}
+function commitProjectWorkflow(projectId,workflowId,dispatch){
+  return readProjectWorkflowFields(projectId,workflowId).then(function(result){
+    var entry=result.entry,workflow=result.workflow,github=entry.project.github||{},token=getGitHubApiToken();if(!token)return Promise.reject(new Error('Bitte zuerst einen GitHub Token hinterlegen.'));
+    return fetch('/api/github/e2e-workflow',{method:'POST',headers:{'Content-Type':'application/json','X-GitHub-Token':token},body:JSON.stringify({owner:github.owner,repo:github.repo,branch:workflow.branch||github.defaultBranch||'main',path:workflow.path,content:workflow.yaml,dispatch:!!dispatch,message:dispatch?'chore: run E2E workflow':'chore: update E2E workflow'})}).then(function(response){return response.json().then(function(body){if(!response.ok)throw new Error(body.error||'Workflow konnte nicht nach GitHub uebertragen werden.');return body;});}).then(function(response){workflow.updatedAt=new Date().toISOString();if(response.dispatchStarted)workflow.lastDispatchAt=new Date().toISOString();window.DataLayer.updateProject(entry.project);render();return response;});
+  });
+}
+function updateProjectWorkflow(projectId,workflowId){
+  return commitProjectWorkflow(projectId,workflowId,true);
 }
 function bindListActions(){
   var list=byId('project-list');
@@ -4932,10 +4943,11 @@ function bindListActions(){
     var project=window.DataLayer.getProjectById(projectId);
     var canEdit=!auth||typeof auth.canEditProject!=='function'||auth.canEditProject(project);
 
-    if(action==='save-e2e-workflow'||action==='start-e2e-workflow'){
+    if(action==='save-project-e2e-workflow'||action==='commit-e2e-workflow'||action==='start-e2e-workflow'){
       if(!canEdit){notify('Dieses Projekt kann nicht bearbeitet werden.','error');return;}
       if(action==='start-e2e-workflow'&&!window.confirm('Workflow speichern und jetzt in GitHub Actions starten?'))return;
-      updateProjectWorkflow(projectId,target.dataset.workflowId).then(function(result){notify(result.dispatchStarted?'Workflow gespeichert und gestartet.':'Workflow gespeichert; Start konnte nicht ausgeloest werden.','info');}).catch(function(err){notify(err.message,'error');});
+      var operation=action==='save-project-e2e-workflow'?saveProjectWorkflow(projectId,target.dataset.workflowId):commitProjectWorkflow(projectId,target.dataset.workflowId,action==='start-e2e-workflow');
+      operation.then(function(result){notify(action==='save-project-e2e-workflow'?'Workflow im Projekt gespeichert.':(result.dispatchStarted?'Workflow nach GitHub committed und gestartet.':'Workflow nach GitHub committed.'),'info');}).catch(function(err){notify(err.message,'error');});
       return;
     }
 
