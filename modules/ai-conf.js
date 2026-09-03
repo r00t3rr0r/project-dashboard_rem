@@ -8,12 +8,15 @@ var healthRequestSequence=0;
 var healthCheckPending=false;
 var lastHealthCheckAt=0;
 var assistantDraft={projectId:'',mode:'',ownerId:'',items:[]};
+var routineDraft={projectId:'',name:'',description:'',target:'server',runtime:'bash',inputs:'',script:'',questions:[],status:'draft'};
 var ASSISTANTS={
   next:{icon:'next_plan',title:'Naechste Aufgaben',description:'Leitet die naechsten konkreten Arbeitspakete aus Projektstand und Projektwissen ab.',instruction:'Ermittle die unmittelbar naechsten, noch nicht vorhandenen Aufgaben. Beruecksichtige Blocker, Abhaengigkeiten, Prioritaeten und das Projektwissen.'},
   team:{icon:'groups',title:'Team orchestrieren',description:'Plant Aufgaben und verteilt sie passend zu Rolle, Kapazitaet und aktueller Auslastung.',instruction:'Orchestriere die offene Arbeit. Erzeuge fehlende Aufgaben und weise jede Aufgabe ueber assigneeId einem geeigneten Mitarbeiter zu. Nutze ausschliesslich Mitarbeiter-IDs aus dem Kontext.'},
   development:{icon:'code_blocks',title:'Entwicklung planen',description:'Zerlegt den naechsten Entwicklungsschritt in umsetzbare technische Arbeit.',instruction:'Plane die naechste Entwicklungsiteration mit Analyse, Implementierung, Tests, Review und Dokumentation. Vermeide Aufgaben, die bereits vorhanden oder abgeschlossen sind.'},
   progress:{icon:'monitoring',title:'Fortschritt steuern',description:'Erkennt Rueckstaende und erzeugt konkrete Massnahmen fuer Blocker und Projektfortschritt.',instruction:'Analysiere Soll und Ist des Projektfortschritts. Erzeuge nur konkrete Korrektur-, Entblockungs- oder Abschlussaufgaben, die den Fortschritt messbar verbessern.'},
-  finish:{icon:'route',title:'Projekt fertigstellen',description:'Plant den kuerzesten realistischen Abschluss inklusive Hosting, Infrastruktur, Tests und Go-live.',instruction:'Erstelle einen vollstaendigen, sequenziellen Abschlussplan fuer dieses Projekt. Zerlege die Restarbeit in 6 bis 12 atomare Aufgaben mit jeweils 0.5 bis 7 Aufwandstunden. Beruecksichtige zwingend: offene Fachentscheidungen, technische Umsetzung, Datenmigration falls relevant, automatisierte Tests, Security- und Datenschutzpruefung, Hosting/Infrastruktur, DNS/TLS/Umgebungsvariablen, Monitoring/Backup, Deployment, Smoke-Test, Dokumentation und Uebergabe. Nutze genau eine Arbeitskraft mit 7 Stunden pro Werktag. Ordne jede Aufgabe ueber sequenceIndex und dependsOnPrevious. Erzeuge keine Sammelaufgaben und erfinde keine Infrastrukturdetails, sondern markiere ungeklaerte Punkte als konkrete Klaerungsaufgabe. Gib pro Aufgabe einen spezifischen deutschen KI-Prompt in aiPrompt zur Umsetzung aus.'}
+  finish:{icon:'route',title:'Projekt fertigstellen',description:'Plant den kuerzesten realistischen Abschluss inklusive Hosting, Infrastruktur, Tests und Go-live.',instruction:'Erstelle einen vollstaendigen, sequenziellen Abschlussplan fuer dieses Projekt. Zerlege die Restarbeit in 6 bis 12 atomare Aufgaben mit jeweils 0.5 bis 7 Aufwandstunden. Beruecksichtige zwingend: offene Fachentscheidungen, technische Umsetzung, Datenmigration falls relevant, automatisierte Tests, Security- und Datenschutzpruefung, Hosting/Infrastruktur, DNS/TLS/Umgebungsvariablen, Monitoring/Backup, Deployment, Smoke-Test, Dokumentation und Uebergabe. Nutze genau eine Arbeitskraft mit 7 Stunden pro Werktag. Ordne jede Aufgabe ueber sequenceIndex und dependsOnPrevious. Erzeuge keine Sammelaufgaben und erfinde keine Infrastrukturdetails, sondern markiere ungeklaerte Punkte als konkrete Klaerungsaufgabe. Gib pro Aufgabe einen spezifischen deutschen KI-Prompt in aiPrompt zur Umsetzung aus.'},
+  githubE2E:{icon:'account_tree',title:'GitHub E2E-Pipeline bauen',description:'Erstellt einen pruefbaren Playwright-Workflow, legt ihn nach Bestaetigung in GitHub an und startet ihn.',instruction:'Entwirf eine vollstaendige GitHub-Actions-E2E-Pipeline mit Playwright. Ermittle aus dem Projektkontext die wichtigsten Nutzerpfade. Nutze nur bekannte Startbefehle und frage fehlende Repository-, Installations-, URL- oder Secret-Informationen ab. Gib ein JSON mit workflowName, workflowPath, workflowYaml, testPlan und questions aus. Der YAML-Workflow muss npm ci, Browserinstallation, Tests, Artefakt-Upload und einen manuellen workflow_dispatch enthalten.'},
+  routine:{icon:'rule',title:'Ablaufroutine entwickeln',description:'Erarbeitet aus belastbaren Angaben eine Routine, ein bearbeitbares Skript und sichere Ausfuehrungsschritte.',instruction:'Erstelle nur dann eine technische Ablaufroutine, wenn Ziel, Ausloeser, Eingaben, erwartetes Ergebnis, Zielumgebung, Runtime, Rechte, Pfade und Fehlerverhalten ausreichend bekannt sind. Wenn etwas fehlt, liefere ausschliesslich questions mit konkreten Rueckfragen und keine ausfuehrbare Routine. Sonst liefere JSON mit name, summary, runtime, target, requiredInputs, script, validationSteps, rollbackSteps und questions. Das Skript darf keine Secrets enthalten, muss Eingaben validieren, bei Fehlern abbrechen und einen Dry-Run ermoeglichen.'}
 };
 var DEFAULTS={
   routing:'auto',
@@ -102,6 +105,67 @@ function projectOptions(selectedId){
 }
 function assistantCards(){
   return Object.keys(ASSISTANTS).map(function(id){var assistant=ASSISTANTS[id];return '<button class="ai-assistant-card" type="button" data-assistant="'+id+'"><span class="material-symbols-rounded" aria-hidden="true">'+assistant.icon+'</span><span><strong>'+assistant.title+'</strong><small>'+assistant.description+'</small></span><span class="material-symbols-rounded ai-assistant-run" aria-hidden="true">play_arrow</span></button>';}).join('');
+}
+function renderSpecialResult(root,type,data){
+  var host=root.querySelector('#ai-special-result');if(!host)return;
+  if(type==='githubE2E'){
+    var questions=Array.isArray(data.questions)?data.questions:[];
+    host.hidden=false;host.innerHTML='<div class="ai-special-head"><strong>GitHub E2E-Workflow</strong><small>'+escapeHtml(questions.length?'Vor dem Anlegen fehlen noch Angaben.':'Workflow pruefen, Token eingeben und bewusst anlegen.')+'</small></div>'
+      +(questions.length?'<div class="ai-conf-questions">'+questions.map(function(item){return '<p><span class="material-symbols-rounded" aria-hidden="true">help</span>'+escapeHtml(item)+'</p>';}).join('')+'</div>':'')
+      +'<label class="form-group"><span>Workflow-Datei</span><input id="ai-github-workflow-path" value="'+escapeHtml(data.workflowPath||'.github/workflows/e2e.yml')+'"></label>'
+      +'<label class="form-group"><span>YAML bearbeiten</span><textarea id="ai-github-workflow-yaml" rows="14">'+escapeHtml(data.workflowYaml||'')+'</textarea></label>'
+      +'<label class="form-group"><span>GitHub Token fuer diesen Vorgang</span><input id="ai-github-token" type="password" autocomplete="off" placeholder="Wird nicht gespeichert"></label>'
+      +'<button class="btn btn-primary" type="button" id="ai-github-create"'+(questions.length?' disabled':'')+'><span class="material-symbols-rounded" aria-hidden="true">publish</span><span>Workflow nach GitHub committen</span></button>';
+    var create=host.querySelector('#ai-github-create');if(create)create.addEventListener('click',function(){createGitHubWorkflow(root,data);});
+    return;
+  }
+  var routine=data||{};var missing=Array.isArray(routine.questions)?routine.questions:[];
+  routineDraft=Object.assign({},routineDraft,{name:routine.name||routineDraft.name,script:routine.script||'',target:routine.target||routineDraft.target,runtime:routine.runtime||routineDraft.runtime,questions:missing,status:missing.length?'needs-info':'ready'});
+  host.hidden=false;host.innerHTML='<div class="ai-special-head"><strong>Ablaufroutine '+(missing.length?'braucht Angaben':'ist bereit')+'</strong><small>'+(missing.length?'Bitte Angaben ergaenzen und danach neu erzeugen.':'Skript bearbeiten, pruefen und erst dann ausfuehren.')+'</small></div>'
+    +(missing.length?'<div class="ai-conf-questions">'+missing.map(function(item){return '<p><span class="material-symbols-rounded" aria-hidden="true">help</span>'+escapeHtml(item)+'</p>';}).join('')+'</div>':'')
+    +'<label class="form-group"><span>Routine-Name</span><input id="ai-routine-name" value="'+escapeHtml(routine.name||'')+'"></label>'
+    +'<label class="form-group"><span>Script bearbeiten</span><textarea id="ai-routine-script" rows="14"'+(missing.length?' disabled':'')+'>'+escapeHtml(routine.script||'')+'</textarea></label>'
+    +'<div class="ai-routine-actions"><button class="btn btn-secondary" type="button" id="ai-routine-save"'+(missing.length?' disabled':'')+'><span class="material-symbols-rounded" aria-hidden="true">save</span><span>Routine speichern</span></button><button class="btn btn-secondary" type="button" id="ai-routine-download"'+(missing.length?' disabled':'')+'><span class="material-symbols-rounded" aria-hidden="true">download</span><span>Script herunterladen</span></button><button class="btn btn-secondary" type="button" id="ai-routine-run"'+(missing.length?' disabled':'')+'><span class="material-symbols-rounded" aria-hidden="true">play_arrow</span><span>Dry-Run starten</span></button></div>';
+  var save=host.querySelector('#ai-routine-save');if(save)save.addEventListener('click',function(){saveRoutine(root);});
+  var download=host.querySelector('#ai-routine-download');if(download)download.addEventListener('click',function(){downloadRoutine(root);});
+  var run=host.querySelector('#ai-routine-run');if(run)run.addEventListener('click',function(){saveRoutine(root);executeRoutine(root);});
+}
+function runSpecialAssistant(root,mode){
+  var projectId=String((root.querySelector('#ai-assistant-project')||{}).value||'');var project=getProjects().find(function(item){return item.id===projectId;});
+  if(!project){notify('Bitte zuerst ein Projekt auswaehlen.',true);return;}
+  var description=mode==='routine'?String((root.querySelector('#ai-routine-description')||{}).value||'').trim():'';
+  var target=mode==='routine'?String((root.querySelector('#ai-routine-target')||{}).value||'server'):'server';
+  var runtime=mode==='routine'?String((root.querySelector('#ai-routine-runtime')||{}).value||'bash'):'bash';
+  var inputs=mode==='routine'?String((root.querySelector('#ai-routine-inputs')||{}).value||'').trim():'';
+  if(mode==='routine'&&!description){notify('Bitte zuerst den gewuenschten Routineablauf beschreiben.',true);return;}
+  var host=root.querySelector('#ai-special-result');host.hidden=false;host.innerHTML='<div class="ai-assistant-pending"><span class="material-symbols-rounded">progress_activity</span><span>'+escapeHtml(ASSISTANTS[mode].title)+' wird vorbereitet ...</span></div>';
+  fetchProjectKnowledge(project).then(function(knowledge){
+    var context=projectContext(project);var instruction=ASSISTANTS[mode].instruction+'\n\nNutzerbeschreibung:\n'+description+'\nZielumgebung: '+target+'\nRuntime: '+runtime+'\nBekannte Eingaben/Parameter:\n'+(inputs||'Keine Angaben')+'\n\nProjektwissen:\n'+(knowledge||'Keine separate Wissensdatei vorhanden.')+'\n\nAntworte ausschliesslich als JSON-Objekt.';
+    return window.LocalOllama.generate('/api/ai/meeting-task-draft',{projectId:project.id,projectTitle:projectTitle(project),draftInput:instruction,existingData:context,promptConfig:{temperature:0.1,maxTokens:5000}});
+  }).then(function(body){
+    var data=body&&body.draft&&typeof body.draft==='object'?body.draft:body||{};if(mode==='routine'){data.target=target;data.runtime=runtime;data.requiredInputs=inputs;}renderSpecialResult(root,mode,data);
+  }).catch(function(error){host.innerHTML='<p class="ai-assistant-error">'+escapeHtml(error&&error.message||error)+'</p>';});
+}
+function saveRoutine(root){
+  var projectId=String((root.querySelector('#ai-assistant-project')||{}).value||'');var name=String((root.querySelector('#ai-routine-name')||{}).value||'').trim();var script=String((root.querySelector('#ai-routine-script')||{}).value||'');
+  if(!name||!script){notify('Routine-Name und Script sind erforderlich.',true);return;}
+  var routines=readConfig().routines||[];routines.push({id:'routine-'+Date.now(),projectId:projectId,name:name,script:script,target:routineDraft.target,runtime:routineDraft.runtime,updatedAt:new Date().toISOString()});var config=readConfig();config.routines=routines;saveConfig(config);routineDraft.name=name;routineDraft.script=script;notify('Routine gespeichert. Ausfuehrung bleibt bestaetigungspflichtig.',false);
+}
+function downloadRoutine(root){
+  var script=String((root.querySelector('#ai-routine-script')||{}).value||'');if(!script){notify('Kein Script zum Herunterladen vorhanden.',true);return;}
+  var name=String((root.querySelector('#ai-routine-name')||{}).value||'routine').trim().replace(/[^A-Za-z0-9_-]+/g,'-')||'routine';var blob=new Blob([script],{type:'text/plain'});var url=URL.createObjectURL(blob);var link=document.createElement('a');link.href=url;link.download=name+'.'+(routineDraft.runtime==='python'?'py':'sh');document.body.appendChild(link);link.click();link.remove();URL.revokeObjectURL(url);notify('Script heruntergeladen. Bitte lokal nach eigener Pruefung ausfuehren.',false);
+}
+function executeRoutine(root){
+  if(!window.confirm('Routine jetzt in der ausgewaehlten Zielumgebung ausfuehren?'))return;
+  if(routineDraft.target!=='server'){downloadRoutine(root);return;}
+  var script=String((root.querySelector('#ai-routine-script')||{}).value||'');
+  fetch('/api/routines/execute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({runtime:routineDraft.runtime,script:script})}).then(function(response){return response.json().then(function(body){if(!response.ok)throw new Error(body.error||'Routine konnte nicht ausgefuehrt werden.');return body;});}).then(function(body){notify('Routine beendet (Exit-Code '+body.exitCode+').',!body.ok);}).catch(function(error){notify(error.message,true);});
+}
+function createGitHubWorkflow(root,data){
+  var project=getProjects().find(function(item){return item.id===String((root.querySelector('#ai-assistant-project')||{}).value||'');});var github=project&&project.github||{};var token=String((root.querySelector('#ai-github-token')||{}).value||'').trim();
+  if(!token){notify('Bitte fuer den Commit einen GitHub Token eingeben.',true);return;}
+  if(!github.owner||!github.repo){notify('Im Projekt fehlen GitHub owner und repo.',true);return;}
+  fetch('/api/github/e2e-workflow',{method:'POST',headers:{'Content-Type':'application/json','X-GitHub-Token':token},body:JSON.stringify({owner:github.owner,repo:github.repo,branch:github.branch||'main',path:(root.querySelector('#ai-github-workflow-path')||{}).value||'.github/workflows/e2e.yml',content:(root.querySelector('#ai-github-workflow-yaml')||{}).value||'',message:'chore: add automated E2E workflow'})}).then(function(response){return response.json().then(function(body){if(!response.ok)throw new Error(body.error||'GitHub Commit fehlgeschlagen.');return body;});}).then(function(){notify('GitHub-Workflow angelegt. Ausfuehrung kann in GitHub Actions gestartet werden.',false);}).catch(function(error){notify(error.message,true);});
 }
 function projectContext(project){
   var tasks=window.DataLayer&&window.DataLayer.getTasks?window.DataLayer.getTasks():[];
@@ -309,6 +373,7 @@ function renderWorkspace(root,config,models,error,checking){
         +'<label class="form-group ai-assistant-project"><span>Projekt fuer Assistenten</span><select id="ai-assistant-project">'+projectOptions(config.assistantProjectId||'')+'</select></label>'
         +'<div class="ai-assistant-list">'+assistantCards()+'</div>'
         +'<div class="ai-assistant-result" id="ai-assistant-result" hidden></div>'
+        +'<div class="ai-routine-input"><label class="form-group"><span>Routine beschreiben</span><textarea id="ai-routine-description" rows="4" placeholder="Ziel, Ausloeser, erwartetes Ergebnis und Fehlerverhalten"></textarea></label><div class="ai-conf-fields"><label class="form-group"><span>Zielumgebung</span><select id="ai-routine-target"><option value="server">Dashboard-Server</option><option value="computer">Eigener Computer</option></select></label><label class="form-group"><span>Runtime</span><select id="ai-routine-runtime"><option value="bash">Bash</option><option value="python">Python</option></select></label></div><label class="form-group"><span>Eingaben, Pfade, Rechte und Parameter</span><textarea id="ai-routine-inputs" rows="3" placeholder="Alle bekannten Werte, niemals Secrets"></textarea></label><small>Die KI erzeugt keine Routine, solange wichtige Betriebsdaten fehlen.</small></div><div class="ai-assistant-result" id="ai-special-result" hidden></div>'
         +'<label class="ai-conf-switch"><input id="ai-auto-assign" type="checkbox"'+(config.autoAssign?' checked':'')+'><span><strong>Teamzuweisung vorschlagen</strong><small>Beruecksichtigt Kompetenz, offene Arbeit und Verfuegbarkeit.</small></span></label>'
         +'<label class="ai-conf-switch"><input id="ai-progress-review" type="checkbox"'+(config.progressReview?' checked':'')+'><span><strong>Fortschritt aktiv pruefen</strong><small>Markiert Risiken, Blocker und ueberfaellige Arbeit fruehzeitig.</small></span></label>'
         +'<div class="ai-conf-actions"><button class="btn btn-secondary" type="button" id="ai-open-quicktask"><span class="material-symbols-rounded" aria-hidden="true">add_task</span><span>Aufgabe mit KI erstellen</span></button><button class="btn btn-secondary" type="button" id="ai-open-health"><span class="material-symbols-rounded" aria-hidden="true">fact_check</span><span>Fortschritt pruefen</span></button></div>'
@@ -327,7 +392,7 @@ function bindEvents(root,config,models){
   root.querySelector('#ai-conf-refresh').addEventListener('click',function(){refreshModels(root,config,true);});
   root.querySelector('#ai-conf-stop').addEventListener('click',function(){if(window.LocalOllama&&window.LocalOllama.stopAll)window.LocalOllama.stopAll();});
   root.querySelector('#ai-assistant-project').addEventListener('change',function(){config.assistantProjectId=this.value;saveConfig(config);assistantDraft={projectId:'',mode:'',items:[]};renderAssistantDraft(root);});
-  root.querySelectorAll('[data-assistant]').forEach(function(button){button.addEventListener('click',function(){runAssistant(root,this.getAttribute('data-assistant'));});});
+  root.querySelectorAll('[data-assistant]').forEach(function(button){button.addEventListener('click',function(){var mode=this.getAttribute('data-assistant');if(mode==='githubE2E'||mode==='routine')runSpecialAssistant(root,mode);else runAssistant(root,mode);});});
   root.querySelector('#ai-temperature').addEventListener('input',function(){root.querySelector('#ai-temperature-value').value=this.value;root.querySelector('#ai-temperature-value').textContent=this.value;});
   root.querySelector('#ai-open-quicktask').addEventListener('click',function(){navigate('quicktask');});
   root.querySelector('#ai-open-health').addEventListener('click',function(){navigate('healthcheck');});

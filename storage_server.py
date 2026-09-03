@@ -1,4 +1,5 @@
 import json
+import base64
 import gzip
 import os
 import re
@@ -17,7 +18,7 @@ import time
 import urllib.request
 from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, quote
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(ROOT, 'data', 'projekt-dashboard.sqlite')
@@ -34,6 +35,7 @@ ADMIN_PIN = str(os.environ.get('PROJECT_DASHBOARD_ADMIN_PIN', '1337'))
 OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')
 OLLAMA_DEFAULT_MODEL = os.environ.get('OLLAMA_MODEL', 'hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M')
 OLLAMA_AUTOSTART = str(os.environ.get('PROJECT_DASHBOARD_OLLAMA_AUTOSTART', '1')).strip().lower() not in ('0', 'false', 'no')
+ROUTINE_EXECUTION_ENABLED = str(os.environ.get('PROJECT_DASHBOARD_ROUTINE_EXECUTION', '0')).strip().lower() in ('1', 'true', 'yes')
 GITHUB_API_BASE = 'https://api.github.com'
 TRUSTED_ORIGINS_ENV = str(os.environ.get('PROJECT_DASHBOARD_TRUSTED_ORIGINS', '') or '').strip()
 BOOTSTRAP_STATUS = {
@@ -450,6 +452,12 @@ class StorageHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == '/api/ai/project-milestones-draft':
             self._handle_project_milestones_draft_post()
+            return
+        if parsed.path == '/api/github/e2e-workflow':
+            self._handle_github_e2e_workflow_post()
+            return
+        if parsed.path == '/api/routines/execute':
+            self._handle_routine_execute_post()
             return
         self.send_response(404)
         self.end_headers()
@@ -1724,6 +1732,91 @@ class StorageHandler(BaseHTTPRequestHandler):
 
     def _read_github_token_header(self):
         return str(self.headers.get('X-GitHub-Token', '') or '').strip()
+
+    def _handle_github_e2e_workflow_post(self):
+        payload, error = self._read_json_payload()
+        if error:
+            self._send_json({'error': error}, status=400)
+            return
+        owner = str(payload.get('owner') or '').strip()
+        repo = str(payload.get('repo') or '').strip()
+        branch = str(payload.get('branch') or 'main').strip()
+        path = str(payload.get('path') or '.github/workflows/e2e.yml').strip().lstrip('/')
+        content = str(payload.get('content') or '')
+        token = self._read_github_token_header()
+        if not owner or not repo or not token:
+            self._send_json({'error': 'owner, repo und GitHub Token sind erforderlich.'}, status=400)
+            return
+        if not re.match(r'^[A-Za-z0-9_.-]+$', owner) or not re.match(r'^[A-Za-z0-9_.-]+$', repo):
+            self._send_json({'error': 'Ungueltiger GitHub-Repositoryname.'}, status=400)
+            return
+        if not path.startswith('.github/workflows/') or '..' in path or not path.endswith(('.yml', '.yaml')):
+            self._send_json({'error': 'Es duerfen nur YAML-Dateien unter .github/workflows/ angelegt werden.'}, status=400)
+            return
+        if not content.strip() or len(content.encode('utf-8')) > 256 * 1024:
+            self._send_json({'error': 'Workflow-Inhalt fehlt oder ist zu gross.'}, status=400)
+            return
+        endpoint = GITHUB_API_BASE + '/repos/' + owner + '/' + repo + '/contents/' + '/'.join(quote(part, safe='') for part in path.split('/'))
+        headers = {'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'projekt-dashboard-storage-server', 'Authorization': 'Bearer ' + token}
+        request_body = {'message': str(payload.get('message') or 'chore: add automated E2E workflow'), 'content': base64.b64encode(content.encode('utf-8')).decode('ascii'), 'branch': branch}
+        request = urllib.request.Request(endpoint, data=json.dumps(request_body).encode('utf-8'), method='PUT', headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                result = json.loads(response.read().decode('utf-8') or '{}')
+            dispatch_endpoint = GITHUB_API_BASE + '/repos/' + owner + '/' + repo + '/actions/workflows/' + quote(path, safe='') + '/dispatches'
+            dispatch_request = urllib.request.Request(dispatch_endpoint, data=json.dumps({'ref': branch}).encode('utf-8'), method='POST', headers=headers)
+            dispatch_started = False
+            try:
+                with urllib.request.urlopen(dispatch_request, timeout=30) as dispatch_response:
+                    dispatch_started = dispatch_response.status in (200, 201, 204)
+            except urllib.error.HTTPError:
+                dispatch_started = False
+            self._send_json({'ok': True, 'path': path, 'commit': result.get('commit', {}), 'content': result.get('content', {}), 'dispatchStarted': dispatch_started})
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode('utf-8', errors='ignore')
+            try:
+                details = json.loads(details).get('message') or details
+            except Exception:
+                pass
+            self._send_json({'error': 'GitHub Commit fehlgeschlagen: ' + str(details).strip()}, status=exc.code)
+        except Exception as exc:
+            self._send_json({'error': 'GitHub API nicht erreichbar: ' + str(exc)}, status=502)
+
+    def _handle_routine_execute_post(self):
+        if not ROUTINE_EXECUTION_ENABLED:
+            self._send_json({'error': 'Serverausfuehrung ist aus Sicherheitsgruenden deaktiviert. Setze PROJECT_DASHBOARD_ROUTINE_EXECUTION=1 nach eigener Pruefung.'}, status=403)
+            return
+        payload, error = self._read_json_payload()
+        if error:
+            self._send_json({'error': error}, status=400)
+            return
+        runtime = str(payload.get('runtime') or '').strip().lower()
+        script = str(payload.get('script') or '')
+        if runtime not in ('bash', 'python') or not script.strip() or len(script.encode('utf-8')) > 128 * 1024:
+            self._send_json({'error': 'Runtime muss bash oder python sein; Script fehlt oder ist zu gross.'}, status=400)
+            return
+        interpreter = '/usr/bin/python3' if runtime == 'python' else '/bin/bash'
+        if not os.path.exists(interpreter):
+            self._send_json({'error': 'Die Runtime ist auf dem Server nicht installiert.'}, status=400)
+            return
+        temporary_path = ''
+        try:
+            suffix = '.py' if runtime == 'python' else '.sh'
+            descriptor, temporary_path = tempfile.mkstemp(prefix='projekt-routine-', suffix=suffix)
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as handle:
+                handle.write(script)
+            result = subprocess.run([interpreter, temporary_path], cwd=ROOT, capture_output=True, text=True, timeout=120, check=False)
+            self._send_json({'ok': result.returncode == 0, 'exitCode': result.returncode, 'stdout': result.stdout[-12000:], 'stderr': result.stderr[-12000:]}, status=200 if result.returncode == 0 else 422)
+        except subprocess.TimeoutExpired:
+            self._send_json({'error': 'Routine nach 120 Sekunden abgebrochen.'}, status=408)
+        except Exception as exc:
+            self._send_json({'error': 'Routine konnte nicht ausgefuehrt werden: ' + str(exc)}, status=500)
+        finally:
+            if temporary_path:
+                try:
+                    os.unlink(temporary_path)
+                except OSError:
+                    pass
 
     def _proxy_github_json(self, endpoint, token=''):
         headers = {
