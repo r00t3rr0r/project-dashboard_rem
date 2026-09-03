@@ -1073,12 +1073,11 @@ textarea#retro-notes {
   margin-bottom: 0.5rem;
   cursor: grab;
   box-shadow: 0 1px 4px var(--shadow-color);
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: box-shadow 0.15s;
   border-left: 3px solid transparent;
 }
 
 .kanban-card:hover {
-  transform: translateY(-2px);
   box-shadow: 0 4px 12px var(--shadow-color);
 }
 

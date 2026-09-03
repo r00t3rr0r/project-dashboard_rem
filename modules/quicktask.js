@@ -105,7 +105,9 @@ function createGermanGitHubTaskDraft(commits,project){
   var entries=(Array.isArray(commits)?commits:[]).map(function(commit){
     return {sha:commit.sha,title:commit.germanTitle||commit.message,description:commit.germanDescription||'',author:commit.author};
   });
-  var fallbackSubtasks=entries.map(function(entry){return 'Umsetzung aus Commit '+entry.sha+' dokumentieren';});
+  var fallbackSubtasks=entries.map(function(entry){
+    return entry.title+' | '+(entry.description||'Technische Aenderung umgesetzt.')+' | Commit: '+entry.sha+' | Autor: '+entry.author;
+  });
   var fallbackTitle='Implementierungen der letzten 12 Stunden dokumentieren';
   var fallbackDescription='Nachtraegliche Dokumentation der bereits umgesetzten GitHub-Commits fuer das Projekt.';
   if(!window.LocalOllama||typeof window.LocalOllama.generate!=='function')return Promise.resolve({title:fallbackTitle,description:fallbackDescription,subtasks:fallbackSubtasks,effortHours:Math.max(0,entries.length)});
@@ -116,11 +118,10 @@ function createGermanGitHubTaskDraft(commits,project){
     promptConfig:{prompt:'Erstelle aus den deutschen Commit-Beschreibungen einen deutschen Aufgabenentwurf fuer die nachtraegliche Dokumentation bereits erledigter Implementierungen. Erzeuge einen passenden kurzen Titel, eine sachliche Beschreibung, fuer jeden Commit genau eine deutsche Teilaufgabe und schaetze den Gesamtaufwand in Stunden. Der Aufwand muss groesser als 0 sein und die Summe der Commit-Aufwaende abbilden. Antworte ausschliesslich als JSON mit task.titleDe, task.descriptionDe, task.effortHours und task.subtasksDe.'}
   }).then(function(result){
     var task=result&&result.draft&&result.draft.task||{};
-    var subtasks=Array.isArray(task.subtasksDe)?task.subtasksDe.map(function(item){return String(item||'').trim();}).filter(Boolean):[];
     return {
       title:String(task.titleDe||'').trim()||fallbackTitle,
       description:String(task.descriptionDe||'').trim()||fallbackDescription,
-      subtasks:subtasks.length?subtasks:fallbackSubtasks,
+      subtasks:fallbackSubtasks,
       effortHours:Math.max(0,parseFloat(task.effortHours)||entries.length)
     };
   }).catch(function(){return {title:fallbackTitle,description:fallbackDescription,subtasks:fallbackSubtasks,effortHours:Math.max(0,entries.length)};});

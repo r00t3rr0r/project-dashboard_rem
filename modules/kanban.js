@@ -1030,16 +1030,18 @@
       var project = (window.DataLayer.getProjects() || []).find(function (item) {
         return normalizeComparableId(item && item.id) === taskProjectId;
       });
-      if (project && String(project.status || '').toLowerCase() === 'planning') return false;
+      if (project && String(project.status || '').trim().toLowerCase() === 'planning') return false;
     }
-    if (status && task.status !== status) return false;
+    var taskStatus = String(task.status || 'backlog').trim().toLowerCase();
+    var requestedStatus = String(status || '').trim().toLowerCase();
+    if (requestedStatus && taskStatus !== requestedStatus) return false;
     var taskAssigneeIds = getTaskAssigneeIds(task).map(normalizeComparableId);
     var selectedAssigneeId = normalizeComparableId(filterAssigneeId);
     if (selectedAssigneeId === UNASSIGNED_FILTER_VALUE && taskAssigneeIds.length) return false;
     if (selectedAssigneeId && selectedAssigneeId !== UNASSIGNED_FILTER_VALUE && taskAssigneeIds.indexOf(selectedAssigneeId) === -1) return false;
     if (filterPriority && task.priority !== filterPriority) return false;
     if (filterUrgency && task.urgency !== filterUrgency) return false;
-    if (filterProjectId && task.projectId !== filterProjectId) return false;
+    if (filterProjectId && normalizeComparableId(task.projectId) !== normalizeComparableId(filterProjectId)) return false;
     return true;
   }
 
@@ -1653,6 +1655,7 @@
     var allTasks = window.DataLayer.getTasks();
     var sequenceMeta = buildTaskSequenceMeta(allTasks);
     return allTasks.filter(function(t) {
+      if (t && typeof t.status === 'string') t.status = t.status.trim().toLowerCase();
       if (!matchesCurrentFilters(t, status)) return false;
       if (status === 'done' && !wasCompletedWithinDoneWindow(t)) return false;
       var meta = sequenceMeta[t.id];
