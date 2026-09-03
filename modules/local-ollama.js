@@ -122,6 +122,7 @@ function buildPrompt(path,payload){
   var supplied=payload&&payload.promptConfig&&String(payload.promptConfig.prompt||'').trim();
   var context='\n\nEingabedaten (JSON):\n'+jsonContext(payload);
   if(supplied)return supplied+context;
+  if(payload&&String(payload.draftInput||'').trim())return String(payload.draftInput).trim()+context;
 
   if(path==='/api/ai/meeting-to-concept'){
     return 'Du bist ein Senior Projektstratege. Erstelle aus den Eingabedaten ein kompaktes Projektkonzept mit Zielbild, Scope, Stakeholdern, Risiken, Annahmen und naechsten Schritten. Antworte nur mit dem finalen Markdown.'+context;

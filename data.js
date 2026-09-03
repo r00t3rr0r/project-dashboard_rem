@@ -1653,6 +1653,8 @@
     if (!project.createdAt) project.createdAt = new Date().toISOString();
     if (!project.title && project.name) project.title = project.name;
     if (!Array.isArray(project.githubCommits)) project.githubCommits = [];
+    if (!Array.isArray(project.githubE2EWorkflows)) project.githubE2EWorkflows = [];
+    project.githubE2EWorkflows = project.githubE2EWorkflows.filter(function (workflow) { return workflow && typeof workflow === 'object' && String(workflow.path || '').indexOf('.github/workflows/') === 0; });
     compactProjectGithubCommits(project);
     normalizeProjectTeamMembers(project);
     normalizeProjectRoleAssignments(project);

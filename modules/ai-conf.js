@@ -9,6 +9,7 @@ var healthCheckPending=false;
 var lastHealthCheckAt=0;
 var assistantDraft={projectId:'',mode:'',ownerId:'',items:[]};
 var routineDraft={projectId:'',name:'',description:'',target:'server',runtime:'bash',inputs:'',script:'',questions:[],status:'draft'};
+var githubDraft={questions:[],answers:{},data:null};
 var ASSISTANTS={
   next:{icon:'next_plan',title:'Naechste Aufgaben',description:'Leitet die naechsten konkreten Arbeitspakete aus Projektstand und Projektwissen ab.',instruction:'Ermittle die unmittelbar naechsten, noch nicht vorhandenen Aufgaben. Beruecksichtige Blocker, Abhaengigkeiten, Prioritaeten und das Projektwissen.'},
   team:{icon:'groups',title:'Team orchestrieren',description:'Plant Aufgaben und verteilt sie passend zu Rolle, Kapazitaet und aktueller Auslastung.',instruction:'Orchestriere die offene Arbeit. Erzeuge fehlende Aufgaben und weise jede Aufgabe ueber assigneeId einem geeigneten Mitarbeiter zu. Nutze ausschliesslich Mitarbeiter-IDs aus dem Kontext.'},
@@ -42,6 +43,7 @@ function readConfig(){
   var saved={};
   try{
     saved=window.DataLayer&&window.DataLayer.getStoredValue?window.DataLayer.getStoredValue(STORAGE_KEY,{}) : JSON.parse(window.localStorage.getItem(STORAGE_KEY)||'{}');
+    if(typeof saved==='string')saved=JSON.parse(saved||'{}');
   }catch(_err){}
   var config=Object.assign({},clone(DEFAULTS),saved&&typeof saved==='object'?saved:{});
   config.templates=Array.isArray(saved&&saved.templates)&&saved.templates.length?saved.templates:clone(DEFAULTS.templates);
@@ -106,17 +108,36 @@ function projectOptions(selectedId){
 function assistantCards(){
   return Object.keys(ASSISTANTS).map(function(id){var assistant=ASSISTANTS[id];return '<button class="ai-assistant-card" type="button" data-assistant="'+id+'"><span class="material-symbols-rounded" aria-hidden="true">'+assistant.icon+'</span><span><strong>'+assistant.title+'</strong><small>'+assistant.description+'</small></span><span class="material-symbols-rounded ai-assistant-run" aria-hidden="true">play_arrow</span></button>';}).join('');
 }
+function defaultGithubWorkflow(){
+  return "name: E2E Tests\n\non:\n  workflow_dispatch:\n  push:\n    branches: [ main ]\n  pull_request:\n\njobs:\n  e2e:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Repository auschecken\n        uses: actions/checkout@v4\n      - name: Node.js einrichten\n        uses: actions/setup-node@v4\n        with:\n          node-version: 20\n          cache: npm\n      - name: Abhaengigkeiten installieren\n        run: npm ci\n      - name: Playwright Browser installieren\n        run: npx playwright install --with-deps chromium\n      - name: E2E Tests ausfuehren\n        run: npx playwright test\n      - name: Testergebnisse hochladen\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: playwright-report\n          path: |\n            playwright-report/\n            test-results/\n          if-no-files-found: ignore\n";
+}
+function normalizeGithubDraft(data){
+  var source=data&&data.workflow&&typeof data.workflow==='object'?data.workflow:data||{};
+  var yaml=source.workflowYaml||source.workflow_yaml||source.yaml||source.content||'';
+  var questions=(Array.isArray(source.questions)?source.questions:[]).map(function(item,index){var rawId=item&&typeof item==='object'?item.id||'question-'+index:'question-'+index;var id=String(rawId).replace(/[^A-Za-z0-9_-]/g,'-');if(item&&typeof item==='object')return {id:id,label:String(item.question||item.prompt||item.label||item.text||'Bitte Angabe ergaenzen.'),answer:String(item.answer||'')};return {id:id,label:String(item||'Bitte Angabe ergaenzen.'),answer:''};});
+  return {workflowPath:source.workflowPath||source.workflow_path||'.github/workflows/e2e.yml',workflowYaml:String(yaml||'').trim()||defaultGithubWorkflow(),questions:questions,testPlan:source.testPlan||source.test_plan||''};
+}
+function githubQuestionAnswers(root,questions){
+  var answers={};(questions||[]).forEach(function(question){var field=root.querySelector('[data-github-question="'+question.id+'"]');if(field)answers[question.id]=field.value.trim();});return answers;
+}
+function runGithubWithAnswers(root,action){
+  var answers=githubQuestionAnswers(root,githubDraft.questions);var missing=githubDraft.questions.filter(function(question){return !answers[question.id];});
+  if(missing.length){notify('Bitte alle fehlenden Angaben beantworten.',true);return;}
+  githubDraft.answers=answers;runSpecialAssistant(root,'githubE2E',action,answers);
+}
 function renderSpecialResult(root,type,data){
   var host=root.querySelector('#ai-special-result');if(!host)return;
   if(type==='githubE2E'){
-    var questions=Array.isArray(data.questions)?data.questions:[];
+    data=normalizeGithubDraft(data);githubDraft.data=data;githubDraft.questions=data.questions;var questions=Array.isArray(data.questions)?data.questions:[];
     host.hidden=false;host.innerHTML='<div class="ai-special-head"><strong>GitHub E2E-Workflow</strong><small>'+escapeHtml(questions.length?'Vor dem Anlegen fehlen noch Angaben.':'Workflow pruefen, Token eingeben und bewusst anlegen.')+'</small></div>'
-      +(questions.length?'<div class="ai-conf-questions">'+questions.map(function(item){return '<p><span class="material-symbols-rounded" aria-hidden="true">help</span>'+escapeHtml(item)+'</p>';}).join('')+'</div>':'')
+      +(questions.length?'<div class="ai-conf-questions">'+questions.map(function(item){return '<label class="ai-conf-question"><span><span class="material-symbols-rounded" aria-hidden="true">help</span>'+escapeHtml(item.label)+'</span><textarea rows="2" data-github-question="'+escapeHtml(item.id)+'" placeholder="Antwort eingeben">'+escapeHtml(githubDraft.answers[item.id]||item.answer||'')+'</textarea></label>';}).join('')+'</div><div class="ai-routine-actions"><button class="btn btn-secondary" type="button" id="ai-github-regenerate"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Mit Angaben neu generieren</span></button><button class="btn btn-secondary" type="button" id="ai-github-prepare"><span class="material-symbols-rounded" aria-hidden="true">fact_check</span><span>Für GitHub vorbereiten</span></button></div>':'')
       +'<label class="form-group"><span>Workflow-Datei</span><input id="ai-github-workflow-path" value="'+escapeHtml(data.workflowPath||'.github/workflows/e2e.yml')+'"></label>'
       +'<label class="form-group"><span>YAML bearbeiten</span><textarea id="ai-github-workflow-yaml" rows="14">'+escapeHtml(data.workflowYaml||'')+'</textarea></label>'
       +'<label class="form-group"><span>GitHub Token fuer diesen Vorgang</span><input id="ai-github-token" type="password" autocomplete="off" placeholder="Wird nicht gespeichert"></label>'
       +'<button class="btn btn-primary" type="button" id="ai-github-create"'+(questions.length?' disabled':'')+'><span class="material-symbols-rounded" aria-hidden="true">publish</span><span>Workflow nach GitHub committen</span></button>';
     var create=host.querySelector('#ai-github-create');if(create)create.addEventListener('click',function(){createGitHubWorkflow(root,data);});
+    var regenerate=host.querySelector('#ai-github-regenerate');if(regenerate)regenerate.addEventListener('click',function(){runGithubWithAnswers(root,'regenerate');});
+    var prepare=host.querySelector('#ai-github-prepare');if(prepare)prepare.addEventListener('click',function(){runGithubWithAnswers(root,'prepare');});
     return;
   }
   var routine=data||{};var missing=Array.isArray(routine.questions)?routine.questions:[];
@@ -130,7 +151,7 @@ function renderSpecialResult(root,type,data){
   var download=host.querySelector('#ai-routine-download');if(download)download.addEventListener('click',function(){downloadRoutine(root);});
   var run=host.querySelector('#ai-routine-run');if(run)run.addEventListener('click',function(){saveRoutine(root);executeRoutine(root);});
 }
-function runSpecialAssistant(root,mode){
+function runSpecialAssistant(root,mode,action,answers){
   var projectId=String((root.querySelector('#ai-assistant-project')||{}).value||'');var project=getProjects().find(function(item){return item.id===projectId;});
   if(!project){notify('Bitte zuerst ein Projekt auswaehlen.',true);return;}
   var description=mode==='routine'?String((root.querySelector('#ai-routine-description')||{}).value||'').trim():'';
@@ -140,7 +161,7 @@ function runSpecialAssistant(root,mode){
   if(mode==='routine'&&!description){notify('Bitte zuerst den gewuenschten Routineablauf beschreiben.',true);return;}
   var host=root.querySelector('#ai-special-result');host.hidden=false;host.innerHTML='<div class="ai-assistant-pending"><span class="material-symbols-rounded">progress_activity</span><span>'+escapeHtml(ASSISTANTS[mode].title)+' wird vorbereitet ...</span></div>';
   fetchProjectKnowledge(project).then(function(knowledge){
-    var context=projectContext(project);var instruction=ASSISTANTS[mode].instruction+'\n\nNutzerbeschreibung:\n'+description+'\nZielumgebung: '+target+'\nRuntime: '+runtime+'\nBekannte Eingaben/Parameter:\n'+(inputs||'Keine Angaben')+'\n\nProjektwissen:\n'+(knowledge||'Keine separate Wissensdatei vorhanden.')+'\n\nAntworte ausschliesslich als JSON-Objekt.';
+    var context=projectContext(project);var answerText=answers?Object.keys(answers).map(function(id){return id+': '+answers[id];}).join('\n'):'Keine ergaenzenden Antworten';var finalInstruction=action==='prepare'?'Alle Rueckfragen sind beantwortet. Erzeuge jetzt den finalen Workflow ohne weitere questions und fuelle workflowYaml vollstaendig aus.':'Nutze die Antworten, um den Workflow neu zu generieren. Pruefe, ob danach noch wirklich notwendige questions offen sind.';var instruction=ASSISTANTS[mode].instruction+'\n\n'+finalInstruction+'\n\nBeantwortete Rueckfragen:\n'+answerText+'\n\nNutzerbeschreibung:\n'+description+'\nZielumgebung: '+target+'\nRuntime: '+runtime+'\nBekannte Eingaben/Parameter:\n'+(inputs||'Keine Angaben')+'\n\nProjektwissen:\n'+(knowledge||'Keine separate Wissensdatei vorhanden.')+'\n\nAntworte ausschliesslich als JSON-Objekt.';
     return window.LocalOllama.generate('/api/ai/meeting-task-draft',{projectId:project.id,projectTitle:projectTitle(project),draftInput:instruction,existingData:context,promptConfig:{temperature:0.1,maxTokens:5000}});
   }).then(function(body){
     var data=body&&body.draft&&typeof body.draft==='object'?body.draft:body||{};if(mode==='routine'){data.target=target;data.runtime=runtime;data.requiredInputs=inputs;}renderSpecialResult(root,mode,data);
@@ -165,7 +186,10 @@ function createGitHubWorkflow(root,data){
   var project=getProjects().find(function(item){return item.id===String((root.querySelector('#ai-assistant-project')||{}).value||'');});var github=project&&project.github||{};var token=String((root.querySelector('#ai-github-token')||{}).value||'').trim();
   if(!token){notify('Bitte fuer den Commit einen GitHub Token eingeben.',true);return;}
   if(!github.owner||!github.repo){notify('Im Projekt fehlen GitHub owner und repo.',true);return;}
-  fetch('/api/github/e2e-workflow',{method:'POST',headers:{'Content-Type':'application/json','X-GitHub-Token':token},body:JSON.stringify({owner:github.owner,repo:github.repo,branch:github.branch||'main',path:(root.querySelector('#ai-github-workflow-path')||{}).value||'.github/workflows/e2e.yml',content:(root.querySelector('#ai-github-workflow-yaml')||{}).value||'',message:'chore: add automated E2E workflow'})}).then(function(response){return response.json().then(function(body){if(!response.ok)throw new Error(body.error||'GitHub Commit fehlgeschlagen.');return body;});}).then(function(){notify('GitHub-Workflow angelegt. Ausfuehrung kann in GitHub Actions gestartet werden.',false);}).catch(function(error){notify(error.message,true);});
+  var path=(root.querySelector('#ai-github-workflow-path')||{}).value||'.github/workflows/e2e.yml';var content=(root.querySelector('#ai-github-workflow-yaml')||{}).value||'';
+  fetch('/api/github/e2e-workflow',{method:'POST',headers:{'Content-Type':'application/json','X-GitHub-Token':token},body:JSON.stringify({owner:github.owner,repo:github.repo,branch:github.branch||'main',path:path,content:content,message:'chore: add automated E2E workflow'})}).then(function(response){return response.json().then(function(body){if(!response.ok)throw new Error(body.error||'GitHub Commit fehlgeschlagen.');return body;});}).then(function(result){
+    var workflows=Array.isArray(project.githubE2EWorkflows)?project.githubE2EWorkflows:[];var existing=workflows.find(function(item){return item.path===path;});var workflow=Object.assign(existing||{id:'e2e-'+Date.now()}, {name:data.workflowName||path.split('/').pop(),path:path,yaml:content,branch:github.branch||'main',updatedAt:new Date().toISOString(),lastDispatchAt:result.dispatchStarted?new Date().toISOString():''});if(existing)workflows=workflows.map(function(item){return item.id===existing.id?workflow:item;});else workflows.push(workflow);project.githubE2EWorkflows=workflows;window.DataLayer.updateProject(project);notify('GitHub-Workflow angelegt und im Projekt gespeichert.',false);
+  }).catch(function(error){notify(error.message,true);});
 }
 function projectContext(project){
   var tasks=window.DataLayer&&window.DataLayer.getTasks?window.DataLayer.getTasks():[];

@@ -1763,7 +1763,7 @@ class StorageHandler(BaseHTTPRequestHandler):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 result = json.loads(response.read().decode('utf-8') or '{}')
-            dispatch_endpoint = GITHUB_API_BASE + '/repos/' + owner + '/' + repo + '/actions/workflows/' + quote(path, safe='') + '/dispatches'
+            dispatch_endpoint = GITHUB_API_BASE + '/repos/' + owner + '/' + repo + '/actions/workflows/' + quote(path, safe='/') + '/dispatches'
             dispatch_request = urllib.request.Request(dispatch_endpoint, data=json.dumps({'ref': branch}).encode('utf-8'), method='POST', headers=headers)
             dispatch_started = False
             try:
