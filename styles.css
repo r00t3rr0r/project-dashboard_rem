@@ -728,7 +728,7 @@ textarea#retro-notes {
   color: var(--text-primary);
 }
 
-.modal:has(.kanban-task-detail-header) { width: min(94vw, 920px); max-height: min(90vh, 860px); padding: clamp(1rem, 3vw, 2rem); }
+.modal:has(.kanban-task-detail-header) { width: min(96vw, 1180px); max-height: min(90vh, 860px); padding: clamp(1rem, 3vw, 2rem); }
 .kanban-task-detail-header, .kanban-task-detail-status, .kanban-task-detail-columns { display: flex; gap: 1rem; }
 .kanban-task-detail-header { align-items: flex-start; justify-content: space-between; margin-bottom: 1.25rem; }
 .kanban-task-detail-header h2 { margin: 0; overflow-wrap: anywhere; }
@@ -760,12 +760,21 @@ textarea#retro-notes {
 .kanban-task-detail-list a { color: var(--accent-blue); overflow-wrap: anywhere; }
 .kanban-task-detail-labels { display: flex; flex-wrap: wrap; gap: 0.45rem; }
 .kanban-task-detail-labels span { padding: 0.3rem 0.55rem; border: 1px solid var(--border-color); border-radius: 999px; color: var(--text-secondary); font-size: 0.75rem; }
+.kanban-task-detail-section--full { width: 100%; }
+.kanban-task-detail-list--subtasks { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.kanban-task-detail-list--subtasks li { padding: 0; border: none; }
+.kanban-task-detail-subtask-toggle { display: flex; align-items: center; gap: 0.5rem; width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 7px; background: var(--bg-secondary); color: var(--text-secondary); font-size: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; transition: background 0.15s ease, border-color 0.15s ease; }
+.kanban-task-detail-subtask-toggle:hover { border-color: var(--accent-blue); }
+.kanban-task-detail-subtask-toggle .material-symbols-rounded { color: var(--accent-blue); font-size: 1.05rem; flex: 0 0 auto; }
+.kanban-task-detail-list--subtasks li.is-complete .kanban-task-detail-subtask-toggle { color: var(--text-muted); text-decoration: line-through; }
+.kanban-task-detail-list--subtasks li.is-complete .kanban-task-detail-subtask-toggle .material-symbols-rounded { color: var(--accent-green, #2ecc71); }
 
 @media (max-width: 680px) {
   .kanban-task-detail-status { align-items: flex-start; flex-wrap: wrap; }
   .kanban-task-detail-progress { flex-basis: 100%; margin-left: 0; }
   .kanban-task-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .kanban-task-detail-columns { display: block; }
+  .kanban-task-detail-list--subtasks { grid-template-columns: 1fr; }
 }
 
 .modal-actions {

@@ -2194,7 +2194,7 @@
     if (schedule.rangeStart || schedule.rangeEnd) scheduleDetails.push('Zeitraum: ' + (schedule.rangeStart || 'offen') + ' bis ' + (schedule.rangeEnd || 'offen'));
 
     var subtaskItems = subtasks.map(function (item) {
-      return '<li class="' + (item.completed ? 'is-complete' : '') + '"><span class="material-symbols-rounded" aria-hidden="true">' + (item.completed ? 'check_circle' : 'radio_button_unchecked') + '</span><span>' + escapeHtml(item.title || 'Teilaufgabe') + '</span></li>';
+      return '<li class="' + (item.completed ? 'is-complete' : '') + '"><button type="button" class="kanban-task-detail-subtask-toggle" data-detail-subtask-toggle="' + escapeHtml(item.id || '') + '" aria-pressed="' + (item.completed ? 'true' : 'false') + '"><span class="material-symbols-rounded" aria-hidden="true">' + (item.completed ? 'check_circle' : 'radio_button_unchecked') + '</span><span>' + escapeHtml(item.title || 'Teilaufgabe') + '</span></button></li>';
     });
     var noteItems = notes.map(function (note) {
       return '<li><span class="material-symbols-rounded" aria-hidden="true">sticky_note_2</span><span>' + escapeHtml(note.text || '') + (note.createdAt ? '<small>' + escapeHtml(formatDateTimeShort(note.createdAt)) + '</small>' : '') + '</span></li>';
@@ -2233,8 +2233,8 @@
       buildTaskDetailValue('Zuletzt geändert', escapeHtml(formatDateTimeShort(task.updatedAt))) +
       '</dl>' +
       '<section class="kanban-task-detail-section"><h3>Beschreibung</h3><div class="kanban-task-detail-copy">' + (description ? escapeHtml(description) : '<span class="text-muted">Keine Beschreibung hinterlegt.</span>') + '</div></section>' +
-      '<div class="kanban-task-detail-columns"><section class="kanban-task-detail-section"><h3>Teilaufgaben <span>' + subtasks.filter(function (item) { return item.completed; }).length + '/' + subtasks.length + '</span></h3>' + buildTaskDetailList(subtaskItems, 'Keine Teilaufgaben vorhanden.') + '</section><section class="kanban-task-detail-section"><h3>Notizen / Hinweise</h3>' + buildTaskDetailList(noteItems, 'Keine Hinweise vorhanden.') + '</section></div>' +
-      '<div class="kanban-task-detail-columns"><section class="kanban-task-detail-section"><h3>Dateien / Links</h3>' + buildTaskDetailList(attachmentItems, 'Keine Dateien oder Links hinterlegt.') + '</section><section class="kanban-task-detail-section"><h3>Abhängigkeiten</h3>' + buildTaskDetailList(dependencyItems, 'Keine Abhängigkeiten hinterlegt.') + '</section></div>' +
+      '<section class="kanban-task-detail-section kanban-task-detail-section--full"><h3>Teilaufgaben <span>' + subtasks.filter(function (item) { return item.completed; }).length + '/' + subtasks.length + '</span></h3>' + buildTaskDetailList(subtaskItems, 'Keine Teilaufgaben vorhanden.').replace('kanban-task-detail-list', 'kanban-task-detail-list kanban-task-detail-list--subtasks') + '</section>' +
+      '<div class="kanban-task-detail-columns"><section class="kanban-task-detail-section"><h3>Notizen / Hinweise</h3>' + buildTaskDetailList(noteItems, 'Keine Hinweise vorhanden.') + '</section><section class="kanban-task-detail-section"><h3>Dateien / Links</h3>' + buildTaskDetailList(attachmentItems, 'Keine Dateien oder Links hinterlegt.') + '</section><section class="kanban-task-detail-section"><h3>Abhängigkeiten</h3>' + buildTaskDetailList(dependencyItems, 'Keine Abhängigkeiten hinterlegt.') + '</section></div>' +
       '<section class="kanban-task-detail-section"><h3>Labels</h3><div class="kanban-task-detail-labels">' + (labels.length ? labels.map(function (label) { return '<span>' + escapeHtml(label.name || 'Label') + '</span>'; }).join('') : '<span class="text-muted">Keine Labels hinterlegt.</span>') + '</div></section>' +
       '<section class="kanban-task-detail-section"><h3>Blocker</h3><div class="kanban-task-detail-copy">' + escapeHtml(blockerSummary) + '</div>' + buildTaskDetailList(blockerItems, 'Keine Blocker-Historie vorhanden.') + '</section>' +
       '<div class="modal-actions"><button type="button" class="btn btn-secondary" id="kanban-task-detail-edit">Bearbeiten</button><button type="button" class="btn btn-primary" id="kanban-task-detail-close-bottom">Schließen</button></div>';
@@ -2245,6 +2245,19 @@
     document.getElementById('kanban-task-detail-edit').addEventListener('click', function () {
       closeTaskControlModal();
       openTaskControlModal(task.id);
+    });
+    content.querySelectorAll('[data-detail-subtask-toggle]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var subtaskId = button.dataset.detailSubtaskToggle;
+        var freshTask = window.DataLayer.getTaskById(taskId);
+        if (!freshTask || !Array.isArray(freshTask.subtasks)) return;
+        freshTask.subtasks.forEach(function (st) {
+          if (String(st.id) === String(subtaskId)) st.completed = !st.completed;
+        });
+        window.DataLayer.updateTask(freshTask);
+        renderAllColumns();
+        openTaskDetailModal(taskId);
+      });
     });
   }
 
