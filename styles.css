@@ -728,6 +728,46 @@ textarea#retro-notes {
   color: var(--text-primary);
 }
 
+.modal:has(.kanban-task-detail-header) { width: min(94vw, 920px); max-height: min(90vh, 860px); padding: clamp(1rem, 3vw, 2rem); }
+.kanban-task-detail-header, .kanban-task-detail-status, .kanban-task-detail-columns { display: flex; gap: 1rem; }
+.kanban-task-detail-header { align-items: flex-start; justify-content: space-between; margin-bottom: 1.25rem; }
+.kanban-task-detail-header h2 { margin: 0; overflow-wrap: anywhere; }
+.kanban-task-detail-eyebrow { color: var(--accent-blue); font-size: 0.75rem; font-weight: 700; margin-bottom: 0.3rem; }
+.kanban-task-detail-status { align-items: center; padding: 0.85rem; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-secondary); }
+.kanban-task-detail-status-icon { width: 2.4rem; height: 2.4rem; display: grid; place-items: center; border-radius: 8px; flex: 0 0 auto; }
+.kanban-task-detail-status strong, .kanban-task-detail-status span { display: block; }
+.kanban-task-detail-status > div:nth-child(2) span { color: var(--text-muted); font-size: 0.78rem; margin-top: 0.15rem; }
+.kanban-task-detail-progress { margin-left: auto; min-width: min(42%, 230px); }
+.kanban-task-detail-progress span, .kanban-task-detail-progress strong { display: inline; font-size: 0.75rem; }
+.kanban-task-detail-progress strong { float: right; }
+.kanban-task-detail-progress > div { clear: both; height: 6px; margin-top: 0.45rem; overflow: hidden; border-radius: 3px; background: var(--progress-bg); }
+.kanban-task-detail-progress i { display: block; height: 100%; background: var(--accent-blue); }
+.kanban-task-detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; margin: 1.25rem 0; }
+.kanban-task-detail-field { min-width: 0; padding: 0.7rem; border: 1px solid var(--border-color); border-radius: 8px; }
+.kanban-task-detail-field dt { color: var(--text-muted); font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+.kanban-task-detail-field dd { color: var(--text-primary); font-size: 0.86rem; margin-top: 0.3rem; overflow-wrap: anywhere; }
+.kanban-task-detail-field small, .kanban-task-detail-list small { display: block; color: var(--text-muted); font-size: 0.72rem; margin-top: 0.25rem; overflow-wrap: anywhere; }
+.kanban-task-detail-pill { font-weight: 700; }
+.kanban-task-detail-section { min-width: 0; margin-top: 1.15rem; }
+.kanban-task-detail-section h3 { display: flex; justify-content: space-between; gap: 0.5rem; color: var(--text-primary); font-size: 0.9rem; margin-bottom: 0.55rem; }
+.kanban-task-detail-section h3 span { color: var(--text-muted); font-size: 0.75rem; font-weight: 600; }
+.kanban-task-detail-copy { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-secondary); line-height: 1.55; }
+.kanban-task-detail-columns > .kanban-task-detail-section { flex: 1; }
+.kanban-task-detail-list { display: grid; gap: 0.45rem; list-style: none; }
+.kanban-task-detail-list li { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 7px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.kanban-task-detail-list li.is-complete { color: var(--text-muted); text-decoration: line-through; }
+.kanban-task-detail-list .material-symbols-rounded { color: var(--accent-blue); font-size: 1.05rem; flex: 0 0 auto; }
+.kanban-task-detail-list a { color: var(--accent-blue); overflow-wrap: anywhere; }
+.kanban-task-detail-labels { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.kanban-task-detail-labels span { padding: 0.3rem 0.55rem; border: 1px solid var(--border-color); border-radius: 999px; color: var(--text-secondary); font-size: 0.75rem; }
+
+@media (max-width: 680px) {
+  .kanban-task-detail-status { align-items: flex-start; flex-wrap: wrap; }
+  .kanban-task-detail-progress { flex-basis: 100%; margin-left: 0; }
+  .kanban-task-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kanban-task-detail-columns { display: block; }
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;

@@ -2159,6 +2159,95 @@
     currentTaskChainDraft = null;
   }
 
+  function buildTaskDetailValue(label, value) {
+    return '<div class="kanban-task-detail-field"><dt>' + escapeHtml(label) + '</dt><dd>' + (value || '<span class="text-muted">Nicht hinterlegt</span>') + '</dd></div>';
+  }
+
+  function buildTaskDetailList(items, emptyLabel) {
+    if (!items || !items.length) return '<p class="text-muted">' + escapeHtml(emptyLabel || 'Keine Einträge vorhanden.') + '</p>';
+    return '<ul class="kanban-task-detail-list">' + items.join('') + '</ul>';
+  }
+
+  function openTaskDetailModal(taskId) {
+    var task = window.DataLayer.getTaskById(taskId);
+    var overlay = document.getElementById('modal-overlay');
+    var content = document.getElementById('modal-content');
+    if (!task || !overlay || !content) return;
+
+    var projectTitle = getProjectTitle(task.projectId);
+    var assignees = getTaskAssignees(task);
+    var labels = (window.DataLayer.getLabels() || []).filter(function (label) {
+      return Array.isArray(task.labels) && task.labels.indexOf(label.id) !== -1;
+    });
+    var schedule = task.schedule || {};
+    var effortSnapshot = buildTaskEffortSnapshot(task);
+    var tracking = getTaskTimeTracking(task);
+    var subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
+    var notes = Array.isArray(task.notes) ? task.notes : [];
+    var attachments = Array.isArray(task.attachments) ? task.attachments : [];
+    var dependencies = Array.isArray(task.dependencyTaskIds) ? task.dependencyTaskIds : [];
+    var description = String(task.description || '').trim();
+    var progress = normalizeTaskProgress(task.progress, 0);
+    var scheduleDetails = [];
+    if (schedule.deadline) scheduleDetails.push('Deadline: ' + formatDateTimeShort(schedule.deadline));
+    if (schedule.fixedAt) scheduleDetails.push('Fester Termin: ' + formatDateTimeShort(schedule.fixedAt));
+    if (schedule.rangeStart || schedule.rangeEnd) scheduleDetails.push('Zeitraum: ' + (schedule.rangeStart || 'offen') + ' bis ' + (schedule.rangeEnd || 'offen'));
+
+    var subtaskItems = subtasks.map(function (item) {
+      return '<li class="' + (item.completed ? 'is-complete' : '') + '"><span class="material-symbols-rounded" aria-hidden="true">' + (item.completed ? 'check_circle' : 'radio_button_unchecked') + '</span><span>' + escapeHtml(item.title || 'Teilaufgabe') + '</span></li>';
+    });
+    var noteItems = notes.map(function (note) {
+      return '<li><span class="material-symbols-rounded" aria-hidden="true">sticky_note_2</span><span>' + escapeHtml(note.text || '') + (note.createdAt ? '<small>' + escapeHtml(formatDateTimeShort(note.createdAt)) + '</small>' : '') + '</span></li>';
+    });
+    var attachmentItems = attachments.map(function (attachment) {
+      var href = attachment.dataUrl || attachment.url || '';
+      var name = attachment.name || attachment.url || 'Anhang';
+      var link = href ? '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener" download="' + escapeHtml(name) + '">' + escapeHtml(name) + '</a>' : escapeHtml(name);
+      var meta = [attachment.type, attachment.size ? formatBytes(attachment.size) : ''].filter(Boolean).join(' · ');
+      return '<li><span class="material-symbols-rounded" aria-hidden="true">attach_file</span><span>' + link + (meta ? '<small>' + escapeHtml(meta) + '</small>' : '') + '</span></li>';
+    });
+    var dependencyItems = dependencies.map(function (id) {
+      var dependency = window.DataLayer.getTaskById(id);
+      return '<li><span class="material-symbols-rounded" aria-hidden="true">account_tree</span><span>' + escapeHtml(dependency && dependency.title ? dependency.title : id) + '<small>' + escapeHtml(id) + '</small></span></li>';
+    });
+    var blockerHistory = Array.isArray(task.blockerHistory) ? task.blockerHistory : [];
+    var blockerItems = blockerHistory.map(function (entry) {
+      var period = formatDateTimeShort(entry.from) + ' bis ' + (entry.until ? formatDateTimeShort(entry.until) : 'offen');
+      var reason = entry.reason || 'Kein Grund hinterlegt';
+      if (entry.resolution) reason += ' · Auflösung: ' + entry.resolution;
+      return '<li><span class="material-symbols-rounded" aria-hidden="true">block</span><span>' + escapeHtml(period) + '<small>' + escapeHtml(reason) + '</small></span></li>';
+    });
+    var blockerSummary = task.blocked ? 'Blockiert: ' + (task.blockedReason || 'Kein Grund hinterlegt') : (task.dependencyBlocked ? 'Wartet auf eine Abhängigkeit.' : 'Aktuell kein Blocker aktiv.');
+
+    content.innerHTML = '' +
+      '<div class="kanban-task-detail-header"><div><p class="kanban-task-detail-eyebrow">' + escapeHtml(projectTitle) + '</p><h2>' + escapeHtml(task.title || 'Ohne Titel') + '</h2></div><button type="button" class="kanban-icon-btn" id="kanban-task-detail-close" title="Detailansicht schliessen" aria-label="Detailansicht schliessen"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>' +
+      '<div class="kanban-task-detail-status"><span class="kanban-task-detail-status-icon" style="background:' + hexToRgba(getStatusColor(task.status), 0.16) + ';color:' + getStatusColor(task.status) + '"><span class="material-symbols-rounded" aria-hidden="true">' + getStatusIcon(task.status) + '</span></span><div><strong>' + escapeHtml(getStatusLabel(task.status || 'backlog')) + '</strong><span>' + escapeHtml(getStatusSummary(task.status)) + '</span></div><div class="kanban-task-detail-progress"><span>Fortschritt</span><strong>' + progress + '%</strong><div><i style="width:' + progress + '%"></i></div></div></div>' +
+      '<dl class="kanban-task-detail-grid">' +
+      buildTaskDetailValue('Priorität', '<span class="kanban-task-detail-pill" style="color:' + getPriorityColor(task.priority) + '">' + escapeHtml(getPriorityLabel(task.priority)) + '</span>') +
+      buildTaskDetailValue('Dringlichkeit', '<span class="kanban-task-detail-pill" style="color:' + getUrgencyColor(task.urgency || 'normal') + '">' + escapeHtml(getUrgencyLabel(task.urgency || 'normal')) + '</span>') +
+      buildTaskDetailValue('Zuweisung', escapeHtml(assignees.length ? assignees.map(function (item) { return item.name || 'Mitarbeiter'; }).join(', ') : 'Nicht zugewiesen')) +
+      buildTaskDetailValue('Termin', escapeHtml(getScheduleLabel(task)) + (scheduleDetails.length ? '<small>' + escapeHtml(scheduleDetails.join(' · ')) + '</small>' : '')) +
+      buildTaskDetailValue('Aufwand', escapeHtml(formatHours(task.effortHours)) + '<small>Verbleibend: ' + escapeHtml(effortSnapshot.remainingLabel) + '</small>') +
+      buildTaskDetailValue('Zeit erfasst', escapeHtml(formatDurationMinutes(tracking.totalMinutes)) + '<small>Heute: ' + escapeHtml(formatDurationMinutes(getTaskTrackedMinutesToday(task))) + '</small>') +
+      buildTaskDetailValue('Erstellt', escapeHtml(formatDateTimeShort(task.createdAt))) +
+      buildTaskDetailValue('Zuletzt geändert', escapeHtml(formatDateTimeShort(task.updatedAt))) +
+      '</dl>' +
+      '<section class="kanban-task-detail-section"><h3>Beschreibung</h3><div class="kanban-task-detail-copy">' + (description ? escapeHtml(description) : '<span class="text-muted">Keine Beschreibung hinterlegt.</span>') + '</div></section>' +
+      '<div class="kanban-task-detail-columns"><section class="kanban-task-detail-section"><h3>Teilaufgaben <span>' + subtasks.filter(function (item) { return item.completed; }).length + '/' + subtasks.length + '</span></h3>' + buildTaskDetailList(subtaskItems, 'Keine Teilaufgaben vorhanden.') + '</section><section class="kanban-task-detail-section"><h3>Notizen / Hinweise</h3>' + buildTaskDetailList(noteItems, 'Keine Hinweise vorhanden.') + '</section></div>' +
+      '<div class="kanban-task-detail-columns"><section class="kanban-task-detail-section"><h3>Dateien / Links</h3>' + buildTaskDetailList(attachmentItems, 'Keine Dateien oder Links hinterlegt.') + '</section><section class="kanban-task-detail-section"><h3>Abhängigkeiten</h3>' + buildTaskDetailList(dependencyItems, 'Keine Abhängigkeiten hinterlegt.') + '</section></div>' +
+      '<section class="kanban-task-detail-section"><h3>Labels</h3><div class="kanban-task-detail-labels">' + (labels.length ? labels.map(function (label) { return '<span>' + escapeHtml(label.name || 'Label') + '</span>'; }).join('') : '<span class="text-muted">Keine Labels hinterlegt.</span>') + '</div></section>' +
+      '<section class="kanban-task-detail-section"><h3>Blocker</h3><div class="kanban-task-detail-copy">' + escapeHtml(blockerSummary) + '</div>' + buildTaskDetailList(blockerItems, 'Keine Blocker-Historie vorhanden.') + '</section>' +
+      '<div class="modal-actions"><button type="button" class="btn btn-secondary" id="kanban-task-detail-edit">Bearbeiten</button><button type="button" class="btn btn-primary" id="kanban-task-detail-close-bottom">Schließen</button></div>';
+
+    overlay.classList.remove('hidden');
+    document.getElementById('kanban-task-detail-close').addEventListener('click', closeTaskControlModal);
+    document.getElementById('kanban-task-detail-close-bottom').addEventListener('click', closeTaskControlModal);
+    document.getElementById('kanban-task-detail-edit').addEventListener('click', function () {
+      closeTaskControlModal();
+      openTaskControlModal(task.id);
+    });
+  }
+
   function buildSubtaskListHtml(task) {
     var items = Array.isArray(task.subtasks) ? task.subtasks : [];
     if (items.length === 0) return '<p class="text-muted">Noch keine Teilaufgaben.</p>';
@@ -3198,7 +3287,7 @@
       var card = e.target.closest('.kanban-card');
       if (!card) return;
       if (e.target.closest('.kanban-subtask-item') || e.target.closest('.kanban-status-step') || e.target.closest('.kanban-icon-btn') || e.target.closest('[data-task-progress-input]')) return;
-      openTaskControlModal(card.dataset.taskId);
+      openTaskDetailModal(card.dataset.taskId);
     });
   }
 
