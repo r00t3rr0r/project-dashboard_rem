@@ -33,6 +33,11 @@ HOST = os.environ.get('PROJECT_DASHBOARD_STORAGE_HOST', '0.0.0.0')
 PORT = int(os.environ.get('PROJECT_DASHBOARD_STORAGE_PORT', '8766'))
 ADMIN_PIN = str(os.environ.get('PROJECT_DASHBOARD_ADMIN_PIN', '1337'))
 OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')
+OLLAMA_BASE_URLS = tuple(
+    url.strip().rstrip('/')
+    for url in str(os.environ.get('OLLAMA_BASE_URLS', OLLAMA_BASE_URL) or '').split(',')
+    if url.strip()
+) or (OLLAMA_BASE_URL,)
 OLLAMA_DEFAULT_MODEL = os.environ.get('OLLAMA_MODEL', 'hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M')
 OLLAMA_AUTOSTART = str(os.environ.get('PROJECT_DASHBOARD_OLLAMA_AUTOSTART', '1')).strip().lower() not in ('0', 'false', 'no')
 ROUTINE_EXECUTION_ENABLED = str(os.environ.get('PROJECT_DASHBOARD_ROUTINE_EXECUTION', '0')).strip().lower() in ('1', 'true', 'yes')
@@ -201,15 +206,16 @@ def restore_db_if_empty():
 
 
 def _is_ollama_ready():
-    endpoint = OLLAMA_BASE_URL + '/api/tags'
-    request = urllib.request.Request(endpoint, method='GET')
-    try:
-        with urllib.request.urlopen(request, timeout=3) as response:
-            if response.status < 200 or response.status >= 300:
-                return False
-        return True
-    except Exception:
-        return False
+    for base_url in OLLAMA_BASE_URLS:
+        endpoint = base_url + '/api/tags'
+        request = urllib.request.Request(endpoint, method='GET')
+        try:
+            with urllib.request.urlopen(request, timeout=3) as response:
+                if response.status >= 200 and response.status < 300:
+                    return True
+        except Exception:
+            continue
+    return False
 
 
 def ensure_ollama_runtime():
@@ -1902,7 +1908,6 @@ class StorageHandler(BaseHTTPRequestHandler):
         return '\\n'.join(header) + '\\n' + text.strip() + '\\n'
 
     def _call_ollama(self, model, prompt, temperature=0.2, max_tokens=1400, response_format=None):
-        endpoint = OLLAMA_BASE_URL + '/api/generate'
         payload = {
             'model': model,
             'prompt': prompt,
@@ -1915,60 +1920,65 @@ class StorageHandler(BaseHTTPRequestHandler):
         if response_format:
             payload['format'] = response_format
         data = json.dumps(payload).encode('utf-8')
-        request = urllib.request.Request(
-            endpoint,
-            data=data,
-            method='POST',
-            headers={'Content-Type': 'application/json'}
-        )
-
-        try:
-            with urllib.request.urlopen(request, timeout=180) as response:
-                chunks = []
-                collected = []
-                for raw_line in response:
-                    line = raw_line.decode('utf-8', errors='ignore').strip()
-                    if not line:
-                        continue
-                    try:
-                        piece = json.loads(line)
-                    except Exception:
-                        continue
-                    text = str(piece.get('response') or '')
+        errors = []
+        for base_url in OLLAMA_BASE_URLS:
+            endpoint = base_url + '/api/generate'
+            request = urllib.request.Request(
+                endpoint,
+                data=data,
+                method='POST',
+                headers={'Content-Type': 'application/json'}
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=180) as response:
+                    chunks = []
+                    collected = []
+                    for raw_line in response:
+                        line = raw_line.decode('utf-8', errors='ignore').strip()
+                        if not line:
+                            continue
+                        try:
+                            piece = json.loads(line)
+                        except Exception:
+                            continue
+                        text = str(piece.get('response') or '')
+                        if text:
+                            chunks.append(text)
+                            collected.append(text)
+                        if piece.get('done'):
+                            break
+                    text = ''.join(collected).strip()
                     if text:
-                        chunks.append(text)
-                        collected.append(text)
-                    if piece.get('done'):
-                        break
-                body = {'response': ''.join(collected)}
-        except urllib.error.HTTPError as exc:
-            details = exc.read().decode('utf-8', errors='ignore')
-            raise RuntimeError('Ollama HTTP Fehler ' + str(exc.code) + ': ' + details)
-        except Exception as exc:
-            raise RuntimeError('Ollama nicht erreichbar unter ' + OLLAMA_BASE_URL + ': ' + str(exc))
-
-        text = str(body.get('response') or '').strip()
-        if not text:
-            raise RuntimeError('Ollama lieferte keine Antwort. Bitte Modell und Runtime pruefen.')
-        return text, chunks
+                        return text, chunks
+                    errors.append(base_url + ': keine Antwort')
+            except urllib.error.HTTPError as exc:
+                details = exc.read().decode('utf-8', errors='ignore')
+                errors.append(base_url + ': HTTP ' + str(exc.code) + ' ' + details)
+            except Exception as exc:
+                errors.append(base_url + ': ' + str(exc))
+        raise RuntimeError('Ollama nicht erreichbar. Gepruefte Instanzen: ' + '; '.join(errors))
 
     def _check_ai_health(self):
-        endpoint = OLLAMA_BASE_URL + '/api/tags'
-        request = urllib.request.Request(endpoint, method='GET')
-        try:
-            with urllib.request.urlopen(request, timeout=8) as response:
-                body = json.loads(response.read().decode('utf-8'))
-            return {
-                'status': 'ok',
-                'ollamaBaseUrl': OLLAMA_BASE_URL,
-                'models': body.get('models', [])
-            }
-        except Exception as exc:
-            return {
-                'status': 'error',
-                'ollamaBaseUrl': OLLAMA_BASE_URL,
-                'error': str(exc)
-            }
+        errors = []
+        for base_url in OLLAMA_BASE_URLS:
+            endpoint = base_url + '/api/tags'
+            request = urllib.request.Request(endpoint, method='GET')
+            try:
+                with urllib.request.urlopen(request, timeout=8) as response:
+                    body = json.loads(response.read().decode('utf-8'))
+                return {
+                    'status': 'ok',
+                    'ollamaBaseUrl': base_url,
+                    'ollamaBaseUrls': list(OLLAMA_BASE_URLS),
+                    'models': body.get('models', [])
+                }
+            except Exception as exc:
+                errors.append(base_url + ': ' + str(exc))
+        return {
+            'status': 'error',
+            'ollamaBaseUrls': list(OLLAMA_BASE_URLS),
+            'error': '; '.join(errors)
+        }
 
     def _safe_file_name(self, value):
         safe = re.sub(r'[^A-Za-z0-9._-]+', '-', value or '').strip('-')
