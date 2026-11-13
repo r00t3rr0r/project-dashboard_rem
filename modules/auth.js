@@ -75,6 +75,7 @@
   var SESSION_TOUCH_INTERVAL_MS = 30 * 1000;
   var AUTH_REFRESH_INTERVAL_MS = 15000;
   var DASHBOARD_PRESENCE_TOUCH_INTERVAL_MS = 45000;
+  var DASHBOARD_PRESENCE_TIMEOUT_MS = 120000;
   var wrapped = false;
   var originalMethods = {};
   var authRefreshTimer = null;
@@ -165,13 +166,17 @@
   }
 
   function touchDashboardPresence() {
-    if (document.visibilityState !== 'visible') return;
-    var dashboardPage = document.getElementById('dashboard');
-    if (!dashboardPage || !dashboardPage.classList.contains('active')) return;
-    if ((Date.now() - dashboardPresenceLastTouchedAt) < DASHBOARD_PRESENCE_TOUCH_INTERVAL_MS) return;
-
+    var hadSession = !!readSession().employeeId;
     var user = getCurrentUser();
-    if (!user || !window.DataLayer || typeof window.DataLayer.updateEmployee !== 'function') return;
+    if (!user) {
+      if (hadSession) {
+        emitAuthChanged();
+        refreshUi();
+      }
+      return;
+    }
+    if ((Date.now() - dashboardPresenceLastTouchedAt) < DASHBOARD_PRESENCE_TOUCH_INTERVAL_MS) return;
+    if (!window.DataLayer || typeof window.DataLayer.updateEmployee !== 'function') return;
 
     var next = clone(user);
     next.dashboardPresenceAt = new Date().toISOString();
@@ -181,7 +186,12 @@
 
   function isEmployeeDashboardOnline(employee) {
     var lastPresenceAt = Date.parse(String(employee && employee.dashboardPresenceAt || ''));
-    return !isNaN(lastPresenceAt) && (Date.now() - lastPresenceAt) <= 100000;
+    return !isNaN(lastPresenceAt) && (Date.now() - lastPresenceAt) <= DASHBOARD_PRESENCE_TIMEOUT_MS;
+  }
+
+  function recordSessionActivity() {
+    if (!getCurrentUser()) return;
+    touchSessionIfNeeded(readSession());
   }
 
   function readSession() {
@@ -391,8 +401,6 @@
       writeSession(null);
       return null;
     }
-
-    touchSessionIfNeeded(session);
 
     return employee;
   }
@@ -1521,10 +1529,14 @@
     window.addEventListener('authChanged', refreshUi);
     window.addEventListener('hashchange', touchDashboardPresence);
     window.setInterval(touchDashboardPresence, DASHBOARD_PRESENCE_TOUCH_INTERVAL_MS);
+    ['pointerdown', 'keydown', 'touchstart'].forEach(function (eventName) {
+      document.addEventListener(eventName, recordSessionActivity, { passive: true });
+    });
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'visible') {
         syncAuthStateFromServer().then(function () {
           refreshUi();
+          recordSessionActivity();
           touchDashboardPresence();
         });
       }
