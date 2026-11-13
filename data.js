@@ -2935,10 +2935,30 @@
   function createTeamChatMessage(message) {
     if (!message.id) message.id = generateId();
     if (!message.createdAt) message.createdAt = new Date().toISOString();
+    if (!Array.isArray(message.readByEmployeeIds)) message.readByEmployeeIds = [];
     teamChatMessages.push(message);
     saveTeamChatMessages();
     emitDataChanged('create', 'teamChatMessages');
     return message;
+  }
+
+  function markTeamChatMessagesRead(messageIds, employeeId) {
+    var readerId = String(employeeId || '');
+    if (!readerId || !Array.isArray(messageIds) || !messageIds.length) return false;
+    var ids = Object.create(null);
+    messageIds.forEach(function(id) { ids[String(id || '')] = true; });
+    var changed = false;
+    teamChatMessages.forEach(function(message) {
+      if (!message || !ids[String(message.id || '')]) return;
+      if (!Array.isArray(message.readByEmployeeIds)) message.readByEmployeeIds = [];
+      if (message.readByEmployeeIds.indexOf(readerId) !== -1) return;
+      message.readByEmployeeIds.push(readerId);
+      changed = true;
+    });
+    if (!changed) return false;
+    saveTeamChatMessages();
+    emitDataChanged('update', 'teamChatMessages');
+    return true;
   }
 
   /* ---------- Import / Export ---------- */
@@ -3145,6 +3165,7 @@
     // Team Chat CRUD
     getTeamChatMessages:    getTeamChatMessages,
     createTeamChatMessage:  createTeamChatMessage,
+    markTeamChatMessagesRead: markTeamChatMessagesRead,
 
     // Blocker orchestration
     linkBlockerToTarget: linkBlockerToTarget,

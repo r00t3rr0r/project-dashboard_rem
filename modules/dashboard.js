@@ -11,6 +11,8 @@
   var teamChatReplyToId = '';
   var teamChatScrollToBottom = false;
   var teamChatPlaceholder = null;
+  var teamChatHistoryDate = '';
+  var teamChatReadObserver = null;
 
   function readSavedBlockerFilterState() {
     try {
@@ -527,6 +529,7 @@
     return '<div class="dashboard-projects-layout">' + rows.join('') + '</div>';
   }
 
+  var dashboardProjectOverviewHtml = null;
   function renderDashboardProjectOverview() {
     var container = document.getElementById('dashboard-projects-full');
     if (!container) return;
@@ -540,12 +543,12 @@
     }
 
     var mirrorHtml = buildDashboardProjectMirrorHtml();
-    if (!mirrorHtml.trim()) {
-      setHtmlIfChanged(container, '<h3>Projekte</h3><p class="chart-empty">Keine freigegebenen Projekte vorhanden.</p>');
-      return;
-    }
-
-    setHtmlIfChanged(container, '<h3>Projekte</h3>' + buildDashboardProjectOverviewLayout(mirrorHtml));
+    var html = !mirrorHtml.trim()
+      ? '<h3>Projekte</h3><p class="chart-empty">Keine freigegebenen Projekte vorhanden.</p>'
+      : '<h3>Projekte</h3>' + buildDashboardProjectOverviewLayout(mirrorHtml);
+    if (dashboardProjectOverviewHtml === html) return;
+    setHtmlIfChanged(container, html);
+    dashboardProjectOverviewHtml = html;
   }
 
   function askResolutionText(message, defaultValue) {
@@ -1004,9 +1007,18 @@
     }
   }
 
+  function getProjectProgressDateKey(value) {
+    if (!value) return '';
+    var parsed = new Date(value);
+    if (!isFinite(parsed.getTime())) return '';
+    return parsed.toISOString().slice(0, 10);
+  }
+
   // --- Projekt-Fortschrittsbalken rendern ---
   function renderProjectProgress() {
     var projects = getDashboardProjects();
+    var allTasks = window.DataLayer && typeof window.DataLayer.getTasks === 'function' ? window.DataLayer.getTasks() : [];
+    var todayKey = new Date().toISOString().slice(0, 10);
     var container = document.getElementById('chart-progress-bar');
     if (!container) return;
 
@@ -1026,8 +1038,33 @@
 
     var isCollapsed = container.dataset.progressCollapsed === 'true';
 
-    if (projects.length === 0) {
-      setHtmlIfChanged(container, '<h3>Projekt-Fortschritt</h3><p class="chart-empty">Keine Projekte vorhanden.</p>');
+    var projectEntries = projects.map(function(project) {
+      var tasks = allTasks.filter(function(task) {
+        return task && String(task.projectId || '') === String(project.id || '');
+      });
+      var relevantTasks = tasks.filter(function(task) {
+        var status = normalizeTaskStatus(task);
+        var isActive = status === 'in-progress';
+        var tracking = task.timeTracking && typeof task.timeTracking === 'object' ? task.timeTracking : {};
+        var minutesToday = Math.max(0, Math.round(Number(tracking.minutesByDate && tracking.minutesByDate[todayKey]) || 0));
+        var history = Array.isArray(task.history) ? task.history : [];
+        var changedToday = history.some(function(entry) {
+          return entry && entry.type !== 'created' && getProjectProgressDateKey(entry.at) === todayKey;
+        });
+        var completedToday = getProjectProgressDateKey(task.completedAt) === todayKey;
+        var legacyUpdatedToday = !history.length && task.updatedAt && getProjectProgressDateKey(task.updatedAt) === todayKey &&
+          getProjectProgressDateKey(task.createdAt) !== todayKey;
+
+        return isActive || minutesToday > 0 || changedToday || completedToday || legacyUpdatedToday;
+      });
+
+      return { project: project, tasks: relevantTasks };
+    }).filter(function(entry) {
+      return entry.tasks.length > 0;
+    });
+
+    if (projectEntries.length === 0) {
+      setHtmlIfChanged(container, '<h3>Projekt-Fortschritt</h3><p class="chart-empty">Heute keine Projektaufgaben in Bearbeitung.</p>');
       return;
     }
 
@@ -1037,14 +1074,11 @@
     var html = '<h3>Projekt-Fortschritt</h3>';
     html += '<button type="button" class="project-progress-toggle" data-progress-toggle="true" aria-expanded="' + (isCollapsed ? 'false' : 'true') + '">' + (isCollapsed ? 'Volle Ansicht' : 'Kompakt') + '</button>';
     html += '<div class="project-progress-list">';
-    projects.forEach(function(project) {
-      var tasks = (window.DataLayer && typeof window.DataLayer.getTasks === 'function' ? window.DataLayer.getTasks() : []).filter(function(task) {
-        return task && task.projectId === project.id;
-      });
+    projectEntries.forEach(function(entry) {
+      var project = entry.project;
+      var tasks = entry.tasks;
       var percent = getProjectProgressPercent(project);
-      var activeTask = tasks.some(function(task) {
-        return String(task.status || '').toLowerCase() === 'in-progress';
-      });
+      var activeTask = tasks.some(function(task) { return normalizeTaskStatus(task) === 'in-progress'; });
       var toneClass = percent >= 75 ? 'is-strong' : (percent >= 40 ? 'is-mid' : 'is-low');
       var stateClass = activeTask ? 'is-running' : 'is-idle';
 
@@ -1065,6 +1099,24 @@
         html += '<span class="project-head-progress-live-dot" aria-label="Aktive Bearbeitung"></span><span class="project-head-progress-live-text">In Arbeit</span>';
       }
       html += '</div>';
+      html += '</div>';
+      html += '<div class="project-progress-tasks">';
+      tasks.forEach(function(task) {
+        var taskStatus = normalizeTaskStatus(task);
+        var tracking = task.timeTracking && typeof task.timeTracking === 'object' ? task.timeTracking : {};
+        var minutesToday = Math.max(0, Math.round(Number(tracking.minutesByDate && tracking.minutesByDate[todayKey]) || 0));
+        var taskProgress = getTaskProgressValue(task);
+        var taskToneClass = taskProgress >= 75 ? 'is-strong' : (taskProgress >= 40 ? 'is-mid' : 'is-low');
+        var activityLabel = taskStatus === 'in-progress' ? 'In Arbeit' : (minutesToday ? 'Heute · ' + minutesToday + ' min' : 'Heute bearbeitet');
+
+        if (taskStatus === 'in-progress' && minutesToday) activityLabel += ' · ' + minutesToday + ' min heute';
+        html += '<div class="project-progress-task">';
+        html += '<div class="project-progress-task-head"><span class="project-progress-task-title" title="' + escapeHtml(task.title || 'Aufgabe') + '">' + escapeHtml(task.title || 'Aufgabe') + '</span>';
+        html += '<span class="project-progress-task-activity">' + escapeHtml(activityLabel) + '</span></div>';
+        html += '<div class="project-progress-task-track" role="img" aria-label="Aufgabenfortschritt ' + taskProgress + '%"><span class="project-progress-task-fill ' + taskToneClass + '" style="--task-progress:' + taskProgress + '%"></span></div>';
+        html += '<span class="project-progress-task-value">' + taskProgress + '%</span>';
+        html += '</div>';
+      });
       html += '</div>';
       html += '</article>';
     });
@@ -1354,6 +1406,25 @@
     return auth && typeof auth.getCurrentUser === 'function' ? auth.getCurrentUser() : null;
   }
 
+  function getTeamChatDateKey(value) {
+    var date = value ? new Date(value) : new Date();
+    if (isNaN(date.getTime())) return '';
+    return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+  }
+
+  function formatTeamChatDateKey(dateKey) {
+    var parts = String(dateKey || '').split('-');
+    if (parts.length !== 3) return dateKey;
+    return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])).toLocaleDateString('de-DE');
+  }
+
+  function formatTeamChatBytes(bytes) {
+    var value = Number(bytes) || 0;
+    if (value < 1024) return value + ' B';
+    if (value < 1024 * 1024) return Math.round(value / 1024) + ' KB';
+    return (Math.round(value / (1024 * 1024) * 10) / 10) + ' MB';
+  }
+
   function getTeamChatReplyState(message, messages) {
     var requiredIds = Array.isArray(message.requiredEmployeeIds) ? message.requiredEmployeeIds.map(String) : [];
     if (!message.replyRequired || !requiredIds.length) return null;
@@ -1377,6 +1448,20 @@
     var messages = dataLayer && typeof dataLayer.getTeamChatMessages === 'function' ? dataLayer.getTeamChatMessages().slice() : [];
     var currentUser = getTeamChatCurrentUser();
     var currentUserId = currentUser ? String(currentUser.id || '') : '';
+    var todayKey = getTeamChatDateKey();
+    var selectedDate = teamChatHistoryDate || todayKey;
+    var dates = Object.create(null);
+    messages.forEach(function(message) {
+      var dateKey = getTeamChatDateKey(message.createdAt);
+      if (dateKey && dateKey !== todayKey) dates[dateKey] = true;
+    });
+    var historyDates = Object.keys(dates).sort().reverse();
+    if (selectedDate !== todayKey && historyDates.indexOf(selectedDate) === -1) {
+      teamChatHistoryDate = '';
+      selectedDate = todayKey;
+    }
+    var allMessages = messages;
+    messages = messages.filter(function(message) { return getTeamChatDateKey(message.createdAt) === selectedDate; });
     var employeeById = {};
     employees.forEach(function(employee) {
       if (employee && employee.id) employeeById[String(employee.id)] = employee;
@@ -1406,8 +1491,12 @@
       var isAddressed = message.targetType === 'all' || (!!currentUserId && targetId === currentUserId);
       var isOwn = !!currentUserId && String(message.authorId || '') === currentUserId;
       var replyParent = message.replyToId ? messageById[String(message.replyToId)] : null;
-      var replyState = getTeamChatReplyState(message, messages);
+      var replyState = getTeamChatReplyState(message, allMessages);
       var currentUserMustReply = !!(replyState && currentUserId && replyState.openIds.indexOf(currentUserId) !== -1);
+      var readIds = Array.isArray(message.readByEmployeeIds) ? message.readByEmployeeIds.map(String) : [];
+      var unread = !!(currentUserId && !isOwn && readIds.indexOf(currentUserId) === -1);
+      var readers = readIds.map(function(id) { return employeeById[id] ? employeeById[id].name : 'Ehemaliger Mitarbeiter'; });
+      var attachments = Array.isArray(message.attachments) ? message.attachments : [];
       var avatarUrl = getEmployeeAvatarUrl(author || { id: message.authorId, name: authorName });
       var authorOnline = isEmployeeDashboardOnline(author);
       var requirementHtml = '';
@@ -1419,37 +1508,55 @@
       var parentHtml = replyParent
         ? '<div class="team-chat-parent">Antwort auf <strong>' + escapeHtml(replyParent.authorName || 'Mitarbeiter') + '</strong>: ' + escapeHtml(String(replyParent.body || '').slice(0, 90)) + '</div>'
         : '';
-      return '<article class="team-chat-message' + (isAddressed ? ' is-addressed' : '') + (isOwn ? ' is-own' : '') + (currentUserMustReply ? ' needs-reply' : '') + '">' +
+      var attachmentsHtml = attachments.map(function(attachment) {
+        if (!attachment || typeof attachment.dataUrl !== 'string' || !/^data:[^,]*;base64,/i.test(attachment.dataUrl)) return '';
+        return '<a class="team-chat-attachment" href="' + escapeHtml(attachment.dataUrl) + '" download="' + escapeHtml(attachment.name || 'Anhang') + '"><span aria-hidden="true">&#128206;</span><span>' + escapeHtml(attachment.name || 'Datei') + '</span><small>' + formatTeamChatBytes(attachment.size) + '</small></a>';
+      }).join('');
+      var readHtml = readers.length ? '<div class="team-chat-readers" title="Gelesen von: ' + escapeHtml(readers.join(', ')) + '">Gelesen von ' + escapeHtml(readers.join(', ')) + '</div>' : '<div class="team-chat-readers' + (unread ? ' is-unread' : '') + '">' + (unread ? 'Neu · Von dir noch nicht gelesen' : 'Noch keine Lesebestätigung') + '</div>';
+      return '<article class="team-chat-message' + (isAddressed ? ' is-addressed' : '') + (isOwn ? ' is-own' : '') + (currentUserMustReply ? ' needs-reply' : '') + (unread ? ' is-unread' : '') + '">' +
         '<span class="team-chat-avatar-presence' + (authorOnline ? ' is-online' : '') + '"><img class="team-chat-avatar" src="' + escapeHtml(avatarUrl) + '" alt="">' + (authorOnline ? '<span class="profile-presence-dot" aria-hidden="true"></span>' : '') + '</span>' +
         '<div class="team-chat-message-main">' +
           '<div class="team-chat-message-head"><strong>' + escapeHtml(authorName) + (authorOnline ? '<span class="employee-presence" title="Online im Dashboard"><span class="profile-presence-dot" aria-hidden="true"></span><span>Online</span></span>' : '') + '</strong><time datetime="' + escapeHtml(message.createdAt || '') + '">' + escapeHtml(formatDateTime(message.createdAt)) + '</time></div>' +
           parentHtml +
           '<div class="team-chat-target' + (isAddressed ? ' is-addressed' : '') + '">An ' + escapeHtml(targetName) + '</div>' +
           '<div class="team-chat-body">' + escapeHtml(message.body || '') + '</div>' +
+          (attachmentsHtml ? '<div class="team-chat-attachments">' + attachmentsHtml + '</div>' : '') + readHtml +
           '<div class="team-chat-message-actions">' + requirementHtml + (currentUser ? '<button type="button" class="team-chat-reply" data-team-chat-reply="' + escapeHtml(String(message.id || '')) + '">Antworten</button>' : '') + '</div>' +
         '</div>' +
       '</article>';
     }).join('');
 
-    var composerHtml = currentUser
+    var unreadCount = messages.filter(function(message) {
+      return currentUserId && String(message.authorId || '') !== currentUserId && (!Array.isArray(message.readByEmployeeIds) || message.readByEmployeeIds.map(String).indexOf(currentUserId) === -1);
+    }).length;
+    var historyOptions = '<option value="' + todayKey + '"' + (selectedDate === todayKey ? ' selected' : '') + '>Heute · ' + formatTeamChatDateKey(todayKey) + '</option>' + historyDates.map(function(dateKey) {
+      return '<option value="' + dateKey + '"' + (selectedDate === dateKey ? ' selected' : '') + '>' + formatTeamChatDateKey(dateKey) + ' · ' + allMessages.filter(function(message) { return getTeamChatDateKey(message.createdAt) === dateKey; }).length + '</option>';
+    }).join('');
+
+    var composerHtml = currentUser && selectedDate === todayKey
       ? '<form class="team-chat-composer" data-team-chat-form>' +
           (replyTarget ? '<div class="team-chat-replying">Antwort an <strong>' + escapeHtml(replyTarget.authorName || 'Mitarbeiter') + '</strong><button type="button" data-team-chat-cancel-reply aria-label="Antwort abbrechen" title="Antwort abbrechen">×</button></div>' : '') +
-          '<textarea id="team-chat-message-input" name="team-chat-message" rows="3" maxlength="2000" required placeholder="Nachricht an das Team schreiben..."></textarea>' +
+          '<textarea id="team-chat-message-input" name="team-chat-message" rows="3" maxlength="2000" placeholder="Nachricht an das Team schreiben..."></textarea>' +
+          '<div class="team-chat-upload-row"><label class="team-chat-upload" for="team-chat-file-input">&#128206; Dateien anhängen</label><input id="team-chat-file-input" name="team-chat-files" type="file" multiple><span data-team-chat-file-names>Max. 10 MB je Datei</span></div>' +
           '<div class="team-chat-compose-row">' +
             '<label>An <select name="team-chat-target"><option value="all">Alle</option>' + employeeOptions + '</select></label>' +
             '<label class="team-chat-require"><input type="checkbox" name="team-chat-require-reply"> Antwort erforderlich</label>' +
             '<button type="submit" class="btn btn-primary">Senden</button>' +
           '</div>' +
         '</form>'
-      : '<div class="team-chat-login-note">Zum Schreiben bitte als Mitarbeiter anmelden.</div>';
+      : '<div class="team-chat-login-note">' + (currentUser ? 'Der Verlauf ist schreibgeschützt. Für neue Nachrichten zu Heute wechseln.' : 'Zum Schreiben bitte als Mitarbeiter anmelden.') + '</div>';
 
     var isExpanded = container.classList.contains('is-expanded');
     var changed = setHtmlIfChanged(container,
-      '<div class="team-chat-titlebar"><div><h3>Team-Gruppenchat</h3><span>' + String(employees.length) + ' Mitarbeitende · öffentlich für das gesamte Team</span></div>' +
+      '<div class="team-chat-titlebar"><div><h3>Team-Gruppenchat' + (unreadCount ? '<span class="team-chat-unread-badge">' + unreadCount + ' neu</span>' : '') + '</h3><span>' + String(employees.length) + ' Mitarbeitende · ' + (selectedDate === todayKey ? 'Tageschat' : 'Verlauf vom ' + formatTeamChatDateKey(selectedDate)) + '</span></div><label class="team-chat-history-label">Verlauf<select data-team-chat-history>' + historyOptions + '</select></label>' +
       '<button type="button" class="team-chat-expand" data-team-chat-expand aria-label="' + (isExpanded ? 'Chat verkleinern' : 'Chat vergrößern') + '" title="' + (isExpanded ? 'Chat verkleinern' : 'Chat vergrößern') + '">' + (isExpanded ? '×' : '↗') + '</button></div>' +
-      '<div class="team-chat-messages" data-team-chat-messages>' + (messagesHtml || '<div class="team-chat-empty">Noch keine Nachrichten. Starte die Unterhaltung.</div>') + '</div>' +
+      '<div class="team-chat-messages" data-team-chat-messages>' + (messagesHtml || '<div class="team-chat-empty">' + (selectedDate === todayKey ? 'Heute ist noch alles ruhig. Schreib die erste Nachricht.' : 'An diesem Tag wurden keine Nachrichten gespeichert.') + '</div>') + '</div>' +
       composerHtml
     );
+
+    var messageList = container.querySelector('[data-team-chat-messages]');
+    if (messageList && teamChatReadObserver) teamChatReadObserver.observe(messageList);
+    markVisibleTeamChatMessagesRead();
 
     if (changed && teamChatScrollToBottom) {
       teamChatScrollToBottom = false;
@@ -1458,6 +1565,33 @@
         if (list) list.scrollTop = list.scrollHeight;
       });
     }
+  }
+
+  function markVisibleTeamChatMessagesRead() {
+    var dataLayer = window.DataLayer || null;
+    var currentUser = getTeamChatCurrentUser();
+    var dashboard = document.getElementById('dashboard');
+    var container = document.getElementById('chart-task-distribution');
+    var list = container && container.querySelector('[data-team-chat-messages]');
+    if (!currentUser || !dashboard || !dashboard.classList.contains('active') || document.visibilityState === 'hidden' || !list || typeof dataLayer.markTeamChatMessagesRead !== 'function') return;
+    var rect = list.getBoundingClientRect();
+    if (rect.bottom <= 0 || rect.top >= window.innerHeight || rect.width <= 0 || rect.height <= 0) return;
+    var currentUserId = String(currentUser.id || '');
+    if (teamChatHistoryDate) return;
+    var todayKey = getTeamChatDateKey();
+    var unreadIds = (dataLayer.getTeamChatMessages() || []).filter(function(message) {
+      return getTeamChatDateKey(message.createdAt) === todayKey && String(message.authorId || '') !== currentUserId && (!Array.isArray(message.readByEmployeeIds) || message.readByEmployeeIds.map(String).indexOf(currentUserId) === -1);
+    }).map(function(message) { return message.id; });
+    if (unreadIds.length) dataLayer.markTeamChatMessagesRead(unreadIds, currentUserId);
+  }
+
+  function scheduleTeamChatDayRefresh() {
+    var now = new Date();
+    var nextDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+    window.setTimeout(function() {
+      if (!teamChatHistoryDate) renderTaskDistribution();
+      scheduleTeamChatDayRefresh();
+    }, Math.max(1000, nextDay.getTime() - now.getTime()));
   }
 
   function isTeamChatInteractionActive() {
@@ -1479,10 +1613,20 @@
     var currentUser = getTeamChatCurrentUser();
     if (!currentUser || !dataLayer || typeof dataLayer.createTeamChatMessage !== 'function') return;
     var input = form.querySelector('[name="team-chat-message"]');
+    var fileInput = form.querySelector('[name="team-chat-files"]');
     var targetSelect = form.querySelector('[name="team-chat-target"]');
     var requireInput = form.querySelector('[name="team-chat-require-reply"]');
     var body = String(input && input.value || '').trim();
-    if (!body) return;
+    var files = fileInput && fileInput.files ? Array.prototype.slice.call(fileInput.files) : [];
+    if (!body && !files.length) return;
+    if (files.some(function(file) { return file.size > 10 * 1024 * 1024; })) {
+      window.alert('Dateien dürfen jeweils höchstens 10 MB groß sein.');
+      return;
+    }
+    if (files.reduce(function(total, file) { return total + file.size; }, 0) > 20 * 1024 * 1024) {
+      window.alert('Anhänge dürfen zusammen höchstens 20 MB groß sein.');
+      return;
+    }
 
     var targetValue = String(targetSelect && targetSelect.value || 'all');
     var employees = dataLayer.getEmployees ? dataLayer.getEmployees() || [] : [];
@@ -1495,6 +1639,14 @@
         : (targetEmployee ? [String(targetEmployee.id || '')] : []);
     }
 
+    Promise.all(files.map(function(file) {
+      return new Promise(function(resolve, reject) {
+        var reader = new FileReader();
+        reader.onload = function(event) { resolve({ name: file.name, type: file.type || 'application/octet-stream', size: file.size, dataUrl: event.target.result }); };
+        reader.onerror = function() { reject(new Error('Datei konnte nicht gelesen werden: ' + file.name)); };
+        reader.readAsDataURL(file);
+      });
+    })).then(function(attachments) {
     dataLayer.createTeamChatMessage({
       authorId: String(currentUser.id || ''),
       authorName: String(currentUser.name || 'Mitarbeiter'),
@@ -1502,6 +1654,7 @@
       targetEmployeeId: targetEmployee ? String(targetEmployee.id || '') : '',
       targetEmployeeName: targetEmployee ? String(targetEmployee.name || 'Mitarbeiter') : '',
       body: body,
+      attachments: attachments,
       replyToId: teamChatReplyToId,
       replyRequired: replyRequired,
       requiredEmployeeIds: requiredEmployeeIds
@@ -1509,8 +1662,12 @@
     input.value = '';
     if (targetSelect) targetSelect.value = 'all';
     if (requireInput) requireInput.checked = false;
+    if (fileInput) fileInput.value = '';
     teamChatReplyToId = '';
     teamChatScrollToBottom = true;
+    }).catch(function(error) {
+      window.alert(error && error.message ? error.message : 'Dateien konnten nicht gelesen werden.');
+    });
   }
 
   function setTeamChatExpanded(container, expanded) {
@@ -1558,6 +1715,22 @@
     if (cancelReplyBtn) {
       teamChatReplyToId = '';
       renderTaskDistribution();
+    }
+  }
+
+  function handleTeamChatChange(event) {
+    var historySelect = event.target && event.target.closest ? event.target.closest('[data-team-chat-history]') : null;
+    if (historySelect) {
+      var todayKey = getTeamChatDateKey();
+      teamChatHistoryDate = historySelect.value === todayKey ? '' : historySelect.value;
+      renderTaskDistribution();
+      return;
+    }
+    var fileInput = event.target && event.target.closest ? event.target.closest('[name="team-chat-files"]') : null;
+    if (fileInput) {
+      var names = fileInput.files ? Array.prototype.map.call(fileInput.files, function(file) { return file.name; }) : [];
+      var nameLabel = fileInput.parentNode.querySelector('[data-team-chat-file-names]');
+      if (nameLabel) nameLabel.textContent = names.length ? names.join(', ') : 'Max. 10 MB je Datei';
     }
   }
 
@@ -1984,11 +2157,18 @@
 
     var dashboardPage = document.getElementById('dashboard');
     var teamChatContainer = document.getElementById('chart-task-distribution');
+    scheduleTeamChatDayRefresh();
     if (teamChatContainer) {
+      if (typeof window.IntersectionObserver === 'function') {
+        teamChatReadObserver = new window.IntersectionObserver(function(entries) {
+          if (entries.some(function(entry) { return entry.isIntersecting; })) markVisibleTeamChatMessagesRead();
+        }, { threshold: 0.25 });
+      }
       teamChatContainer.addEventListener('click', function(event) {
         event.stopPropagation();
         handleTeamChatClick(event);
       });
+      teamChatContainer.addEventListener('change', handleTeamChatChange);
       teamChatContainer.addEventListener('submit', function(event) {
         var form = event.target && event.target.closest ? event.target.closest('[data-team-chat-form]') : null;
         if (!form) return;

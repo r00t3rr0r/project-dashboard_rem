@@ -1381,7 +1381,7 @@ function renderProjectTaskList(project){
       +'</article>';
   }).join('');
 
-  return '<details class="project-task-list-details">'
+  return '<details class="project-task-list-details" data-project-state-key="project-task-list-'+escapeHtml(project.id)+'">'
     +'<summary class="project-task-list-summary">'
     +'<span class="project-task-list-summary-head"><span>Aufgaben anzeigen</span><span class="project-task-list-open-label">Details oeffnen</span><span class="project-task-list-total">'
     +tasks.length+' · '+formatHoursCompact(totalPlannedHours,'Gesamtaufwand')

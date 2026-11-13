@@ -55,6 +55,8 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `replyRequired` | `boolean` | Kennzeichnet eine verpflichtende Antwort |
 | `requiredEmployeeIds` | `string[]` | Mitarbeiter, deren direkte Antwort noch ausgewertet wird |
 | `createdAt` | `string` | ISO-8601 Timestamp |
+| `attachments` | `object[]` | Dateianhänge mit `name`, `type`, `size` und `dataUrl` |
+| `readByEmployeeIds` | `string[]` | Mitarbeiter-IDs, die die Nachricht gelesen haben |
 
 ### Project
 
