@@ -1627,6 +1627,42 @@
     });
   }
 
+  function getLocalDateKey(date) {
+    return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+  }
+
+  function getTaskCompletionDetails(task) {
+    var history = Array.isArray(task && task.history) ? task.history : [];
+    var completion = null;
+    for (var index = history.length - 1; index >= 0; index--) {
+      if (history[index] && history[index].type === 'completed') {
+        completion = history[index];
+        break;
+      }
+    }
+
+    return {
+      at: task && task.completedAt || completion && completion.at || '',
+      assigneeId: completion && completion.assigneeId || task && (task.assigneeId || task.employeeId) || ''
+    };
+  }
+
+  function getEmployeeCompletedTodayTasks(employee, tasks, todayKey) {
+    var employeeId = String(employee && employee.id || '');
+    var employeeName = String(employee && employee.name || '').trim().toLowerCase();
+
+    return (tasks || []).filter(function(task) {
+      if (!task || normalizeTaskStatus(task) !== 'done') return false;
+      var completion = getTaskCompletionDetails(task);
+      var completedAt = Date.parse(completion.at);
+      if (!isFinite(completedAt) || getLocalDateKey(new Date(completedAt)) !== todayKey) return false;
+      if (employeeId && String(completion.assigneeId) === employeeId) return true;
+      return String(task.employeeName || task.assigneeName || '').trim().toLowerCase() === employeeName;
+    }).sort(function(a, b) {
+      return Date.parse(getTaskCompletionDetails(b).at) - Date.parse(getTaskCompletionDetails(a).at);
+    });
+  }
+
   function getTaskProjectLabel(task, projectsById) {
     var project = task && task.projectId ? projectsById[String(task.projectId)] : null;
     if (project) return String(project.title || project.name || '').trim();
@@ -1660,7 +1696,8 @@
       seen[key] = true;
       rows.push({
         employee: employee,
-        activeTasks: getEmployeeTeamLoadTasks(employee, tasks)
+        activeTasks: getEmployeeTeamLoadTasks(employee, tasks),
+        completedTodayTasks: getEmployeeCompletedTodayTasks(employee, tasks, getLocalDateKey(new Date()))
       });
     });
 
@@ -1702,6 +1739,25 @@
     return !!(window.AuthManager && typeof window.AuthManager.isEmployeeDashboardOnline === 'function' && window.AuthManager.isEmployeeDashboardOnline(employee));
   }
 
+  function getEmployeeDashboardPresenceTimestamp(employee) {
+    var timestamp = Date.parse(String(employee && employee.dashboardPresenceAt || ''));
+    return isFinite(timestamp) ? timestamp : 0;
+  }
+
+  function hasEmployeeDashboardPresenceToday(employee, todayKey) {
+    var timestamp = getEmployeeDashboardPresenceTimestamp(employee);
+    return timestamp > 0 && getLocalDateKey(new Date(timestamp)) === todayKey;
+  }
+
+  function formatDashboardPresenceElapsed(timestamp) {
+    var elapsedMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+    if (elapsedMinutes < 1) return 'gerade eben';
+    if (elapsedMinutes < 60) return 'vor ' + elapsedMinutes + ' Min.';
+    var hours = Math.floor(elapsedMinutes / 60);
+    var minutes = elapsedMinutes % 60;
+    return 'vor ' + hours + ' Std.' + (minutes ? ' ' + minutes + ' Min.' : '');
+  }
+
   function renderTeamLoad() {
     var employees = getDashboardEmployeesSnapshot();
     var tasks = window.DataLayer.getTasks() || [];
@@ -1720,13 +1776,21 @@
       projectsById[String(project.id)] = project;
     });
 
-    var employeeRows = getTeamLoadEmployeeRows(employees, tasks).sort(function(a, b) {
+    var todayKey = getLocalDateKey(new Date());
+    var employeeRows = getTeamLoadEmployeeRows(employees, tasks).filter(function(row) {
+      return row.activeTasks.length > 0 || hasEmployeeDashboardPresenceToday(row.employee, todayKey);
+    }).sort(function(a, b) {
       if (b.activeTasks.length !== a.activeTasks.length) return b.activeTasks.length - a.activeTasks.length;
+      var onlineDifference = Number(isEmployeeDashboardOnline(b.employee)) - Number(isEmployeeDashboardOnline(a.employee));
+      if (onlineDifference) return onlineDifference;
+      if (b.completedTodayTasks.length !== a.completedTodayTasks.length) return b.completedTodayTasks.length - a.completedTodayTasks.length;
+      var presenceDifference = getEmployeeDashboardPresenceTimestamp(b.employee) - getEmployeeDashboardPresenceTimestamp(a.employee);
+      if (presenceDifference) return presenceDifference;
       return String(a.employee.name || '').localeCompare(String(b.employee.name || ''), 'de');
     });
 
     if (employeeRows.length === 0) {
-      setHtmlIfChanged(container, '<h3>Aufgabenverteilung</h3><p class="chart-empty">Nicht genügend Daten für Chart.</p>');
+      setHtmlIfChanged(container, '<h3>Aufgabenverteilung</h3><p class="chart-empty">Heute war noch niemand im Dashboard aktiv.</p>');
       return;
     }
 
@@ -1736,14 +1800,14 @@
     employeeRows.forEach(function(row) {
       var employee = row.employee || {};
       var activeTasks = row.activeTasks || [];
+      var completedTodayTasks = row.completedTodayTasks || [];
       var avatarUrl = getEmployeeAvatarUrl(employee);
       var profileUrl = employee.github && employee.github.profileUrl ? String(employee.github.profileUrl).trim() : '';
       var githubLabel = employee.github && employee.github.username ? '@' + String(employee.github.username).replace(/^@+/, '') : '';
       var currentActivity = String(employee.currentActivity || '').trim();
       var workplace = String(employee.workplace || '').trim();
       var dailyStatus = employee.dailyWorkStatus && typeof employee.dailyWorkStatus === 'object' ? employee.dailyWorkStatus : null;
-      var now = new Date();
-      var todayKey = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
+      var todayKey = getLocalDateKey(new Date());
       if (dailyStatus && String(dailyStatus.date || '') !== todayKey) dailyStatus = null;
       var dailyStatusDate = dailyStatus ? String(dailyStatus.date || '') : '';
       var dailyNote = dailyStatus ? String(dailyStatus.note || '').trim() : '';
@@ -1751,6 +1815,8 @@
       var dailyWorkplace = dailyStatus && dailyStatus.workplace ? String(dailyStatus.workplace).trim() : workplace;
       var activeLabel = activeTasks.length === 1 ? '1 aktiv' : activeTasks.length + ' aktiv';
       var isOnline = isEmployeeDashboardOnline(employee);
+      var presenceTimestamp = getEmployeeDashboardPresenceTimestamp(employee);
+      var wasOnlineToday = hasEmployeeDashboardPresenceToday(employee, todayKey);
 
       html += '<article class="team-load-card' + (isOnline ? ' is-online' : '') + '">';
       if (avatarUrl && profileUrl) {
@@ -1771,6 +1837,9 @@
       html += '<div class="team-load-name">' + escapeHtml(employee.name || 'Mitarbeiter');
       if (isOnline) {
         html += '<span class="team-load-presence" title="Online im Dashboard"><span class="team-load-presence-dot" aria-hidden="true"></span><span>Online</span></span>';
+      } else if (wasOnlineToday) {
+        var lastOnlineTime = new Date(presenceTimestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+        html += '<span class="team-load-presence is-offline" title="Zuletzt online um ' + escapeHtml(lastOnlineTime) + '"><span class="team-load-presence-dot" aria-hidden="true"></span><span>Zuletzt online ' + escapeHtml(formatDashboardPresenceElapsed(presenceTimestamp)) + '</span></span>';
       }
       html += '</div>';
       html += '<div class="team-load-meta">';
@@ -1804,21 +1873,23 @@
         html += '</div>';
       }
 
+      html += '<section class="team-load-work-section' + (activeTasks.length ? ' is-working' : ' is-idle') + '" aria-label="Aktuelle Arbeit">';
+      html += '<div class="team-load-section-heading"><span>' + (activeTasks.length ? 'Arbeitet gerade' : 'Aktueller Status') + '</span>';
+      if (activeTasks.length) html += '<span class="team-load-section-count">' + activeTasks.length + '</span>';
+      html += '</div>';
       if (activeTasks.length) {
         html += '<div class="team-load-tasks">';
-        activeTasks.forEach(function(task) {
+        activeTasks.slice(0, 2).forEach(function(task) {
           var progress = getTaskProgressValue(task);
           var accent = getTeamLoadProgressAccent(progress);
           var projectLabel = getTaskProjectLabel(task, projectsById);
           var taskLabel = String(task.title || 'Aufgabe').trim();
           var title = projectLabel ? taskLabel + ' · ' + projectLabel : taskLabel;
 
-          html += '<div class="team-load-task-progress" style="--team-progress:' + progress + '%;--team-progress-accent:' + accent + ';">';
-          html += '<div class="team-load-task-topline">';
-          html += '<span class="team-load-task-label" title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</span>';
-          html += '<span class="team-load-task-value">' + progress + '%</span>';
-          html += '</div>';
-          html += '<span class="team-load-task-track" aria-hidden="true"><span class="team-load-task-fill"></span></span>';
+          html += '<div class="team-load-task-item" style="--team-progress:' + progress + '%;--team-progress-accent:' + accent + ';">';
+          html += '<span class="team-load-task-label" title="' + escapeHtml(title) + '">' + escapeHtml(taskLabel) + '</span>';
+          if (projectLabel) html += '<span class="team-load-task-project" title="Projekt: ' + escapeHtml(projectLabel) + '">' + escapeHtml(projectLabel) + '</span>';
+          html += '<div class="team-load-task-progress"><span class="team-load-task-track" aria-hidden="true"><span class="team-load-task-fill"></span></span><span class="team-load-task-value">' + progress + '%</span></div>';
           html += '</div>';
         });
 
@@ -1828,14 +1899,32 @@
 
         html += '</div>';
       } else {
-        html += '<div class="team-load-empty">' + escapeHtml(currentActivity || 'Derzeit keine Aufgabe in Arbeit') + '</div>';
+        html += '<div class="team-load-empty">' + escapeHtml(currentActivity || 'Keine aktive Aufgabe') + '</div>';
       }
+      html += '</section>';
+
+      html += '<section class="team-load-done-section" aria-label="Heute erledigte Aufgaben">';
+      html += '<div class="team-load-section-heading"><span>Heute erledigt</span><span class="team-load-section-count' + (completedTodayTasks.length ? ' is-done' : '') + '">' + completedTodayTasks.length + '</span></div>';
+      if (completedTodayTasks.length) {
+        html += '<ul class="team-load-done-list">';
+        completedTodayTasks.slice(0, 3).forEach(function(task) {
+          var projectLabel = getTaskProjectLabel(task, projectsById);
+          html += '<li class="team-load-done-item"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span><span class="team-load-done-copy"><span class="team-load-done-title" title="' + escapeHtml(task.title || 'Aufgabe') + '">' + escapeHtml(task.title || 'Aufgabe') + '</span>';
+          if (projectLabel) html += '<span class="team-load-done-project">' + escapeHtml(projectLabel) + '</span>';
+          html += '</span></li>';
+        });
+        if (completedTodayTasks.length > 3) html += '<li class="team-load-more">+' + (completedTodayTasks.length - 3) + ' weitere erledigt</li>';
+        html += '</ul>';
+      } else {
+        html += '<div class="team-load-empty">Noch keine Aufgabe erledigt</div>';
+      }
+      html += '</section>';
 
       html += '</div></article>';
     });
 
     if (!employeeRows.some(function(row) { return row.activeTasks.length > 0; })) {
-      html += '<p class="team-load-empty team-load-empty-global">Keine aktiven Aufgaben vorhanden.</p>';
+      html += '<p class="team-load-empty team-load-empty-global">Aktuell arbeitet niemand an einer Aufgabe.</p>';
     }
 
     html += '</div>';
@@ -1932,6 +2021,9 @@
     }
 
     renderDashboard();
+    window.setInterval(function() {
+      if (dashboardPage && dashboardPage.classList.contains('active')) renderTeamLoad();
+    }, 60000);
     if (window.DataLayer && typeof window.DataLayer.on === 'function') {
       window.DataLayer.on('dataChanged', function(event) {
         scheduleDashboardRender(event || null);

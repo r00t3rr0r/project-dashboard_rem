@@ -139,8 +139,8 @@ function navigateTo(page){
     if(mobileMenuBtn)mobileMenuBtn.setAttribute('aria-expanded','false');
   }
 
-  if(typeof refreshAllModules==='function'){
-    refreshAllModules();
+  if(typeof refreshActivePageModule==='function'){
+    refreshActivePageModule();
   }
 }
 

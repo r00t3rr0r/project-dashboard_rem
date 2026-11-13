@@ -444,6 +444,9 @@ class StorageHandler(BaseHTTPRequestHandler):
         if parsed.path == '/api/ai/project-knowledge':
             self._handle_project_knowledge_post()
             return
+        if parsed.path == '/api/ai/project-context':
+            self._handle_project_context_post()
+            return
         if parsed.path == '/api/ai/meeting-to-concept':
             self._handle_meeting_to_concept_post()
             return
@@ -591,6 +594,125 @@ class StorageHandler(BaseHTTPRequestHandler):
             'model': model,
             'generatedAt': generated_at,
             'filePath': '/' + relative_path,
+            'bytes': len(document.encode('utf-8'))
+        })
+
+    def _handle_project_context_post(self):
+        payload, error = self._read_json_payload()
+        if error:
+            self._send_json({'error': error}, status=400)
+            return
+
+        projects = payload.get('projects') if isinstance(payload.get('projects'), list) else []
+        if not projects:
+            self._send_json({'error': 'projects must contain at least one project.'}, status=400)
+            return
+
+        generated_at = utc_now_iso_z()
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
+        file_name = 'ki-projektkontext-' + stamp + '.md'
+        relative_path = os.path.join('data', 'project-knowledge', file_name).replace('\\', '/')
+        full_path = os.path.join(ROOT, relative_path)
+
+        lines = [
+            '# KI-Projektkontext',
+            '',
+            '- Generiert am: ' + generated_at,
+            '- Projekte: ' + str(len(projects)),
+            '- Zweck: Kompakte Übergabe des Projektportfolios an eine KI',
+            '',
+            '> Keine Aufgaben oder Secret-Werte enthalten.',
+            ''
+        ]
+
+        def value(data, key, fallback='Nicht angegeben'):
+            current = data.get(key)
+            if current is None or current == '':
+                return fallback
+            return str(current)
+
+        def compact(text, limit=320):
+            clean = ' '.join(str(text or '').split())
+            if len(clean) <= limit:
+                return clean
+            return clean[:limit - 1].rstrip() + '…'
+
+        def bullet_list(items, formatter):
+            result = []
+            for item in items if isinstance(items, list) else []:
+                text = formatter(item)
+                if text:
+                    result.append('- ' + text)
+            return result or ['- Keine Angaben']
+
+        for index, project in enumerate(projects, start=1):
+            if not isinstance(project, dict):
+                continue
+            project_data = project.get('project') if isinstance(project.get('project'), dict) else {}
+            title = str(project_data.get('title') or project_data.get('id') or 'Unbenanntes Projekt')
+            github = project.get('github') if isinstance(project.get('github'), dict) else {}
+            team = project.get('team') if isinstance(project.get('team'), dict) else {}
+            roles = team.get('projectRoles') if isinstance(team.get('projectRoles'), list) else []
+            knowledge = project.get('knowledge') if isinstance(project.get('knowledge'), dict) else {}
+            links = knowledge.get('links') if isinstance(knowledge.get('links'), list) else []
+            notes = knowledge.get('notes') if isinstance(knowledge.get('notes'), list) else []
+            attachments = knowledge.get('attachmentNames') if isinstance(knowledge.get('attachmentNames'), list) else []
+            releases = project.get('releases') if isinstance(project.get('releases'), list) else []
+            events = project.get('events') if isinstance(project.get('events'), list) else []
+
+            team_lines = bullet_list(roles, lambda item: (
+                compact(value(item, 'employeeName', value(item, 'employeeId', 'Unbekannt')), 80)
+                + (' | Rolle: ' + compact(item.get('role'), 100) if item.get('role') else '')
+            ) if isinstance(item, dict) else str(item))
+            note_lines = bullet_list(notes, lambda item: (
+                compact((str(item.get('title')) + ': ' if item.get('title') else '') + str(item.get('text') or ''), 240)
+            ) if isinstance(item, dict) else str(item))
+            link_lines = bullet_list(links, lambda item: (
+                (str(item.get('label') or item.get('kind') or 'Link') + ': ' if isinstance(item, dict) else '')
+                + str(item.get('url') if isinstance(item, dict) else item)
+            ) if (item.get('url') if isinstance(item, dict) else item) else '')
+            attachment_lines = bullet_list(attachments, lambda item: (
+                str(item.get('name') or 'Datei') + (' (' + str(item.get('type')) + ')' if item.get('type') else '')
+            ) if isinstance(item, dict) else str(item))
+
+            lines.extend([
+                '## ' + str(index) + '. ' + title,
+                '',
+                '**Kurzprofil**',
+                compact(value(project_data, 'description'), 400),
+                '',
+                '**Status und Zeitraum**',
+                value(project_data, 'status') + ' | ' + value(project_data, 'startDate', 'Start offen') + ' bis ' + value(project_data, 'endDate', 'Ende offen'),
+                '',
+                '**GitHub**',
+                value(github, 'url', 'Nicht verknüpft'),
+                '',
+                '**Team**',
+                *team_lines,
+                '',
+                '**Projektwissen**',
+                'Notizen:',
+                *note_lines,
+                'Links:',
+                *link_lines,
+                'Anhänge:',
+                *attachment_lines,
+                'Umgebungsvariablen: ' + value(knowledge.get('envSummary') if isinstance(knowledge.get('envSummary'), dict) else {}, 'keyCount', '0') + ' Schlüssel',
+                '',
+                '**Releases und Termine**',
+                'Releases: ' + (', '.join(str(item.get('title') or item.get('name')) for item in releases if isinstance(item, dict) and (item.get('title') or item.get('name'))) or 'Keine Angaben'),
+                'Termine: ' + (', '.join(str(item.get('title') or item.get('date')) for item in events if isinstance(item, dict) and (item.get('title') or item.get('date'))) or 'Keine Angaben'),
+                ''
+            ])
+
+        document = '\n'.join(lines)
+        _atomic_write_text(full_path, document)
+        self._send_json({
+            'ok': True,
+            'generatedAt': generated_at,
+            'filePath': '/' + relative_path,
+            'projectCount': len(projects),
+            'markdown': document,
             'bytes': len(document.encode('utf-8'))
         })
 

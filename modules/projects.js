@@ -28,6 +28,7 @@ var AI_HEALTH_STATE={
   loading:false
 };
 var AI_HEALTH_PROMISE=null;
+var PROJECT_CONTEXT_FILE_PATH='';
 
 function byId(id){return document.getElementById(id);}
 
@@ -918,6 +919,10 @@ function getAiBackendCandidates(){
     if('http://127.0.0.1:8766'!==AI_BACKEND_URL)bases.push('http://127.0.0.1:8766');
     if('http://127.0.0.1:8765'!==AI_BACKEND_URL)bases.push('http://127.0.0.1:8765');
   }
+  if(!/^https?:/i.test(origin||'')){
+    bases.push('http://127.0.0.1:8766');
+    bases.push('http://127.0.0.1:8765');
+  }
   return bases.filter(function(item,idx){return item&&bases.indexOf(item)===idx;});
 }
 
@@ -991,6 +996,31 @@ function postJsonWithFallback(path,payload){
     }).catch(function(err){
       if(index+1<bases.length)return tryBase(index+1,err);
       throw err;
+    });
+  }
+
+  return tryBase(0,null);
+}
+
+function postBackendJson(path,payload){
+  var bases=getAiBackendCandidates();
+  if(bases.length===0)bases.push(AI_BACKEND_URL);
+
+  function tryBase(index,lastError){
+    if(index>=bases.length)return Promise.reject(lastError||new Error('Kein Backend erreichbar.'));
+    var endpoint=bases[index]+path;
+    return fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})}).then(function(res){
+      return res.json().catch(function(){return {};}).then(function(body){
+        if(!res.ok){
+          var error=new Error(body&&body.error?body.error:'HTTP '+res.status+' an '+endpoint);
+          error.retryable=isFallbackableStatus(res.status);
+          throw error;
+        }
+        return body;
+      });
+    }).catch(function(error){
+      if(error&&error.retryable&&index+1<bases.length)return tryBase(index+1,error);
+      throw error;
     });
   }
 
@@ -1272,6 +1302,34 @@ function getProjectTasksSorted(projectId){
   });
 }
 
+function getProjectTaskUrgency(task){
+  var dueValue=String(task&&task.dueDate||'').trim();
+  var dueLabel=dueValue?'Faellig '+formatDate(dueValue):'';
+  if(dueValue){
+    var dueDate=new Date(dueValue);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(dueValue)){
+      var parts=dueValue.split('-');
+      dueDate=new Date(Number(parts[0]),Number(parts[1])-1,Number(parts[2]));
+    }
+    if(!isNaN(dueDate.getTime())){
+      dueDate.setHours(0,0,0,0);
+      var today=new Date();
+      today.setHours(0,0,0,0);
+      var daysUntilDue=Math.round((dueDate.getTime()-today.getTime())/86400000);
+      if(daysUntilDue<0)return {level:'overdue',label:'Ueberfaellig',dateLabel:dueLabel};
+      if(daysUntilDue===0)return {level:'due-today',label:'Heute faellig',dateLabel:dueLabel};
+      if(daysUntilDue<=2)return {level:'due-soon',label:daysUntilDue===1?'Morgen faellig':'In 2 Tagen faellig',dateLabel:dueLabel};
+    }
+  }
+
+  var urgency=String(task&&task.urgency||'normal').toLowerCase();
+  var priority=String(task&&task.priority||'').toLowerCase();
+  if(urgency==='critical'||priority==='blocker')return {level:'critical',label:priority==='blocker'?'Blocker':'Kritisch',dateLabel:dueLabel};
+  if(urgency==='high'||priority==='high')return {level:'high',label:'Dringend',dateLabel:dueLabel};
+  if(urgency==='low'&&priority!=='medium')return {level:'low',label:'Niedrig',dateLabel:dueLabel};
+  return {level:'normal',label:'Normal',dateLabel:dueLabel};
+}
+
 function renderProjectTaskList(project){
   var tasks=getProjectTasksSorted(project.id).filter(function(task){
     return String(task&&task.status||'').toLowerCase()!=='done';
@@ -1284,34 +1342,50 @@ function renderProjectTaskList(project){
   var totalTrackedHours=Math.round((tasks.reduce(function(sum,task){
     return sum+getTaskTrackedMinutes(task)/60;
   },0))*10)/10;
-  var compactTaskHtml=tasks.map(function(task){
-    return '<span class="project-task-compact-row"><span>'+escapeHtml(task.title||'Unbenannte Aufgabe')+'</span><span>'+escapeHtml(formatHoursCompact(getTaskPlannedEffortHours(task),'Aufwand'))+'</span></span>';
-  }).join('');
   var detailTaskHtml=tasks.map(function(task){
     var trackedHours=Math.round((getTaskTrackedMinutes(task)/60)*10)/10;
     var remainingHours=Math.round(getTaskRemainingEffortHours(task)*10)/10;
-    var assigneeName=getEmployeeNameById(task.assigneeId)||'Nicht zugewiesen';
-    var meta=[
+    var progress=Math.max(0,Math.min(100,Math.round(Number(task.progress)||0)));
+    var tracking=task&&task.timeTracking&&typeof task.timeTracking==='object'?task.timeTracking:{};
+    var isActivelyTracked=String(task.status||'').toLowerCase()==='in-progress'&&!!tracking.activeStartedAt&&!tracking.isPaused;
+    var history=Array.isArray(task.history)?task.history:[];
+    var latestActorId='';
+    for(var historyIndex=history.length-1;historyIndex>=0;historyIndex--){
+      if(history[historyIndex]&&history[historyIndex].actorId){
+        latestActorId=String(history[historyIndex].actorId);
+        break;
+      }
+    }
+    var assigneeIds=Array.isArray(task.assigneeIds)?task.assigneeIds.slice():[];
+    if(task.assigneeId&&assigneeIds.indexOf(task.assigneeId)===-1)assigneeIds.unshift(task.assigneeId);
+    var workerIds=latestActorId?[latestActorId]:assigneeIds;
+    var workerNames=workerIds.map(function(id){return getEmployeeNameById(id);}).filter(Boolean);
+    var workerLabel=isActivelyTracked?'Aktuell bearbeitet von':latestActorId?'Zuletzt bearbeitet von':workerNames.length?'Zugewiesen an':'Noch nicht zugewiesen';
+    var workerName=workerNames.length?workerNames.join(', '):'Nicht erfasst';
+    var urgency=getProjectTaskUrgency(task);
+    var taskMeta=[
       getProjectTaskStatusLabel(task.status),
-      assigneeName,
       formatHoursCompact(getTaskPlannedEffortHours(task),'Aufwand'),
       formatHoursCompact(trackedHours,'Arbeitszeit'),
       formatHoursCompact(remainingHours,'Rest')
     ];
-    if(task.dueDate)meta.push('Faellig '+formatDate(task.dueDate));
-    return '<article class="project-task-list-item">'
-      +'<button type="button" class="project-task-link" data-action="open-task" data-id="'+escapeHtml(project.id)+'" data-task-id="'+escapeHtml(task.id)+'">'+escapeHtml(task.title||'Unbenannte Aufgabe')+'</button>'
+    if(urgency.dateLabel)taskMeta.push(urgency.dateLabel);
+    return '<article class="project-task-list-item is-'+escapeHtml(urgency.level)+'">'
+      +'<div class="project-task-list-item-head"><button type="button" class="project-task-link" data-action="open-task" data-id="'+escapeHtml(project.id)+'" data-task-id="'+escapeHtml(task.id)+'">'+escapeHtml(task.title||'Unbenannte Aufgabe')+'</button>'
+      +'<span class="project-task-urgency is-'+escapeHtml(urgency.level)+'">'+escapeHtml(urgency.label)+'</span></div>'
       +'<p>'+escapeHtml(String(task.description||'Keine Beschreibung hinterlegt.'))+'</p>'
-      +'<div class="project-task-meta">'+meta.map(function(item){return '<span>'+escapeHtml(item)+'</span>';}).join('')+'</div>'
+      +'<div class="project-task-progress"><div class="project-task-progress-head"><span>Fortschritt</span><strong>'+progress+'%</strong></div>'
+      +'<div class="project-task-progress-track" role="progressbar" aria-label="Fortschritt fuer '+escapeHtml(task.title||'Aufgabe')+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+progress+'"><span style="width:'+progress+'%"></span></div></div>'
+      +'<div class="project-task-worker"><span class="material-symbols-rounded" aria-hidden="true">person</span><span>'+escapeHtml(workerLabel)+': <strong>'+escapeHtml(workerName)+'</strong></span></div>'
+      +'<div class="project-task-meta">'+taskMeta.map(function(item){return '<span>'+escapeHtml(item)+'</span>';}).join('')+'</div>'
       +'</article>';
   }).join('');
 
   return '<details class="project-task-list-details">'
     +'<summary class="project-task-list-summary">'
-    +'<span class="project-task-list-summary-head"><span>Aufgaben anzeigen</span><span class="project-task-list-total">'
+    +'<span class="project-task-list-summary-head"><span>Aufgaben anzeigen</span><span class="project-task-list-open-label">Details oeffnen</span><span class="project-task-list-total">'
     +tasks.length+' · '+formatHoursCompact(totalPlannedHours,'Gesamtaufwand')
-    +'</span></span><span class="project-task-compact-list">'+compactTaskHtml+'</span>'
-    +'<span class="project-task-list-footer"><span>Gesamtaufwand '+escapeHtml(formatHoursCompact(totalPlannedHours,''))+'</span><span>Arbeitszeit '+escapeHtml(formatHoursCompact(totalTrackedHours,''))+'</span><span class="project-task-list-open-label">Details oeffnen</span></span>'
+    +'</span></span><span class="project-task-list-footer"><span>Arbeitszeit '+escapeHtml(formatHoursCompact(totalTrackedHours,''))+'</span></span>'
     +'</summary>'
     +'<div class="project-task-list">'+detailTaskHtml+'</div>'
     +'</details>';
@@ -2632,6 +2706,7 @@ function buildProjectKnowledgeSnapshot(project){
   var tasks=getTasksForProject(project.id);
   var events=getEventsForProject(project.id);
   var releases=window.DataLayer.getReleases().filter(function(item){return item.projectId===project.id;});
+  var employees=window.DataLayer.getEmployees();
   var assignees=getEmployeesForTasks(tasks);
   var projectTeam=normalizeProjectTeamMembers(project);
   var assigneeMap={};
@@ -2643,6 +2718,20 @@ function buildProjectKnowledgeSnapshot(project){
       id:member.employeeId,
       name:member.employeeName||'unknown',
       role:member.role||''
+    };
+  });
+
+  var projectEmployeeIds=Object.keys(assigneeMap);
+  var employeeProfiles=employees.filter(function(employee){
+    return projectEmployeeIds.indexOf(String(employee&&employee.id||''))!==-1;
+  }).map(function(employee){
+    return {
+      id:employee.id,
+      name:employee.name||'',
+      role:employee.role||'',
+      department:employee.department||'',
+      email:employee.email||'',
+      skills:Array.isArray(employee.skills)?employee.skills:[]
     };
   });
 
@@ -2684,7 +2773,8 @@ function buildProjectKnowledgeSnapshot(project){
     flow:flow,
     team:{
       assignees:assigneeMap,
-      projectRoles:projectTeam
+      projectRoles:projectTeam,
+      employeeProfiles:employeeProfiles
     },
     tasks:tasksForAi,
     releases:releases.map(function(item){
@@ -2709,7 +2799,10 @@ function buildProjectKnowledgeSnapshot(project){
       notes:hub.notes,
       envSummary:parseEnvSummary(hub.envText),
       attachmentNames:hub.attachments.map(function(item){return {name:item.name,size:item.size||0,type:item.type||''};}),
-      scratchpad:hub.scratchpad||''
+      scratchpad:hub.scratchpad||'',
+      secretMetadata:hub.secrets.map(function(item){
+        return {category:item.category||'secret',label:item.label||'Eintrag'};
+      })
     }
   };
 }
@@ -2924,6 +3017,69 @@ function renderOverview(){
     +'</div>';
 }
 
+function closeProjectContextDialog(){
+  var dialog=byId('project-context-dialog');
+  if(dialog&&dialog.parentNode)dialog.parentNode.removeChild(dialog);
+}
+
+function showProjectContextDialog(filePath,markdown,generatedAt){
+  closeProjectContextDialog();
+  var dialog=document.createElement('dialog');
+  dialog.id='project-context-dialog';
+  dialog.className='project-context-dialog';
+  dialog.innerHTML='<form method="dialog" class="project-context-panel">'
+    +'<div class="projects-modal-header"><div><p class="section-kicker">Gebündelte Wissensdatei</p><h2>KI-Projektkontext</h2></div>'
+    +'<button type="submit" class="btn btn-secondary" aria-label="Dialog schliessen"><span class="material-symbols-rounded" aria-hidden="true">close</span><span>Schliessen</span></button></div>'
+    +'<p class="text-muted">Generiert am '+escapeHtml(formatDateTime(generatedAt||new Date().toISOString()))+' · Alle sichtbaren Projekte</p>'
+    +'<textarea class="project-context-preview" readonly aria-label="Gebündelter KI-Projektkontext">'+escapeHtml(markdown||'')+'</textarea>'
+    +'<div class="project-actions-inline"><a class="btn btn-secondary" href="'+escapeHtml(filePath)+'" target="_blank" rel="noopener noreferrer">Datei öffnen</a></div>'
+    +'</form>';
+  document.body.appendChild(dialog);
+  dialog.addEventListener('click',function(event){if(event.target===dialog)dialog.close();});
+  dialog.addEventListener('close',function(){if(dialog.parentNode)dialog.parentNode.removeChild(dialog);});
+  dialog.showModal();
+}
+
+function buildProjectContextSnapshot(project){
+  var snapshot=buildProjectKnowledgeSnapshot(project);
+  delete snapshot.tasks;
+  if(snapshot.flow){
+    delete snapshot.flow.tasksTotal;
+    delete snapshot.flow.statusCounts;
+    delete snapshot.flow.dueSoon;
+    delete snapshot.flow.overdue;
+    delete snapshot.flow.assignees;
+  }
+  if(snapshot.team)delete snapshot.team.assignees;
+  if(snapshot.github){
+    delete snapshot.github.metrics;
+    delete snapshot.github.recentCommits;
+    delete snapshot.github.repoMeta;
+  }
+  if(snapshot.flow){
+    delete snapshot.flow.rhythmScore;
+    delete snapshot.flow.deliveryScore;
+  }
+  return snapshot;
+}
+
+function generateProjectContextFile(){
+  var projects=getVisibleProjects();
+  if(!projects.length){notify('Keine sichtbaren Projekte fuer den KI-Kontext vorhanden.','error');return Promise.resolve();}
+  var payload={
+    projects:projects.map(function(project){return buildProjectContextSnapshot(project);}),
+    generatedAt:new Date().toISOString()
+  };
+  notify('Gebündelte KI-Projektkontext-Datei wird erstellt ...','info');
+  return postBackendJson('/api/ai/project-context',payload).then(function(body){
+    PROJECT_CONTEXT_FILE_PATH=body.filePath||'';
+    showProjectContextDialog(PROJECT_CONTEXT_FILE_PATH,body.markdown||'',body.generatedAt);
+    notify('Gebündelte KI-Projektkontext-Datei erstellt.','info');
+  }).catch(function(err){
+    notify('KI-Projektkontext fehlgeschlagen: '+(err&&err.message?err.message:String(err)),'error');
+  });
+}
+
 function renderLinks(links,projectId){
   if(!links.length)return '<p class="text-muted">Keine Links hinterlegt.</p>';
   var html='<ul class="hub-list">';
@@ -2989,6 +3145,31 @@ function renderNotes(notes,projectId){
   return html;
 }
 
+function renderAiProjectContext(project,flow){
+  var team=Array.isArray(flow.teamMembers)?flow.teamMembers:[];
+  var github=project.github||{};
+  var aiState=ensureProjectAiKnowledge(project);
+  var contextItems=[
+    {icon:'info',label:'Projektinformationen',value:(project.description||'Beschreibung fehlt')},
+    {icon:'hub',label:'Projektdetails',value:(project.status||'planning')+' · '+flow.tasksTotal+' Aufgaben · '+team.length+' Mitarbeiter'},
+    {icon:'code',label:'GitHub Verknuepfung',value:github.url?(github.owner+'/'+github.repo):'Nicht verknuepft'},
+    {icon:'folder_open',label:'Projektwissen',value:flow.noteCount+' Notizen · '+flow.linkCount+' Links · '+flow.attachmentCount+' Anhaenge'},
+    {icon:'groups',label:'Mitarbeiter',value:team.length?team.map(function(member){return member.employeeName||'Unbekannt';}).join(', '):'Keine Zuordnung'}
+  ];
+
+  return '<section class="infohub-card infohub-context-card">'
+    +'<div class="infohub-context-header">'
+    +'<div><p class="section-kicker">Gemeinsamer Kontext</p><h4>KI-Projektkontext</h4></div>'
+    +'<span class="ai-health-pill '+(aiState.lastGeneratedAt?'ok':'unknown')+'">'+(aiState.lastGeneratedAt?'Bereit':'Noch nicht erzeugt')+'</span>'
+    +'</div>'
+    +'<p class="text-muted">Diese Quellen werden gemeinsam an die lokale KI uebergeben. Secret-Werte bleiben geschuetzt; es werden nur Bezeichnungen und Kategorien beruecksichtigt.</p>'
+    +'<div class="infohub-context-list">'+contextItems.map(function(item){
+      return '<div class="infohub-context-item"><span class="material-symbols-rounded" aria-hidden="true">'+item.icon+'</span><div><strong>'+escapeHtml(item.label)+'</strong><span>'+escapeHtml(item.value)+'</span></div></div>';
+    }).join('')+'</div>'
+    +'<p class="text-muted mt-1">Enthalten: '+flow.secretCount+' Secret-Metadaten · '+flow.envSummary.keyCount+' .env-Keys · '+flow.releases+' Releases · '+flow.events+' Termine</p>'
+    +'</section>';
+}
+
 function renderInfoHub(project,flow){
   var hub=ensureProjectInfoHub(project);
   var aiState=ensureProjectAiKnowledge(project);
@@ -3002,6 +3183,8 @@ function renderInfoHub(project,flow){
     +'<details class="project-infohub" data-project-state-key="project-infohub-'+escapeHtml(project.id)+'">'
     +'<summary>Projektwissen verwalten (Anhange, Secrets, Notizen, Links)</summary>'
     +'<div class="infohub-grid">'
+
+    +renderAiProjectContext(project,flow)
 
     +'<section class="infohub-card">'
     +'<h4>Dateianhaenge</h4>'
@@ -5255,6 +5438,8 @@ function init(){
 
     bindForm();
     bindListActions();
+    var contextButton=byId('project-context-btn');
+    if(contextButton)contextButton.addEventListener('click',generateProjectContextFile);
     render();
 
     refreshAiHealthStatus(false).then(function(){
