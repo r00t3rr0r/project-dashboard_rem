@@ -183,9 +183,11 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `id`          | `string` | UUID                                  |
 | `title`       | `string` | Event-Titel                           |
 | `date` / `startDate` | `string` | Datum (ISO-8601)               |
+| `endDate`     | `string` | Optionales inklusives Enddatum (`YYYY-MM-DD`); mehrtaegige Eintraege sind ganztags |
 | `startTime` / `endTime` | `string` | Uhrzeit (`HH:MM`), optional |
 | `allDay`      | `boolean`| Ganztagstermin                        |
-| `type`        | `string` | `meeting`, `deadline`, `release`, `training`, `holiday`, `task` oder `other` |
+| `type`        | `string` | `meeting`, `deadline`, `release`, `training`, `holiday`, `sick`, `home-office`, `task` oder `other` |
+| `employeeStatus` | `boolean` | Mitarbeiterstatus statt Termineinladung; neue Urlaubseintraege verwenden dieses Flag, bestehende Urlaubstermine ohne Flag behalten ihr RSVP-Verhalten |
 | `location`    | `string` | Ort, optional                         |
 | `description` | `string` | Beschreibung, optional                |
 | `projectId`   | `string\|null` | Verknüpftes Projekt             |

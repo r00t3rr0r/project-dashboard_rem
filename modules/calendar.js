@@ -14,7 +14,7 @@
   var expandAllOverflowDays = false;
   var disabledTypeSet = new Set();
 
-  var EVENT_TYPE_ORDER = ['meeting', 'deadline', 'release', 'training', 'holiday', 'task', 'other'];
+  var EVENT_TYPE_ORDER = ['meeting', 'deadline', 'release', 'training', 'holiday', 'sick', 'home-office', 'task', 'other'];
 
   var RSVP_META = {
     accepted: { label: 'Zugesagt', color: 'var(--accent-green)', icon: 'check_circle' },
@@ -86,6 +86,8 @@
       deadline: { label: 'Deadline', color: 'var(--accent-red)', icon: 'flag' },
       release: { label: 'Release', color: 'var(--accent-green)', icon: 'rocket_launch' },
       holiday: { label: 'Urlaub', color: 'var(--accent-purple)', icon: 'beach_access' },
+      sick: { label: 'Krankmeldung', color: 'var(--accent-red)', icon: 'sick' },
+      'home-office': { label: 'Homeoffice', color: 'var(--accent-cyan, #22b8cf)', icon: 'home_work' },
       task: { label: 'Task', color: 'var(--accent-yellow)', icon: 'task_alt' },
       training: { label: 'Schulung', color: 'var(--accent-cyan, #22b8cf)', icon: 'school' },
       other: { label: 'Sonstiges', color: 'var(--text-muted)', icon: 'event_note' }
@@ -202,7 +204,7 @@
       return false;
     }
     var event = getCalendarEvents().find(function (evt) { return evt.id === eventId; });
-    if (!event) return false;
+    if (!event || isEmployeeStatus(event)) return false;
     if (getEventParticipants(event).indexOf(String(user.id)) === -1) return false;
 
     if (!event.responses || typeof event.responses !== 'object') event.responses = {};
@@ -275,6 +277,28 @@
 
   function isDateInMonth(dateKey, viewDate) {
     return !!dateKey && dateKey.indexOf(viewDate.getFullYear() + '-' + String(viewDate.getMonth() + 1).padStart(2, '0')) === 0;
+  }
+
+  function isEmployeeStatus(event) {
+    return !!event && (event.type === 'sick' || event.type === 'home-office' || (event.type === 'holiday' && event.employeeStatus === true));
+  }
+
+  function eventOverlaps(event, start, end) {
+    var eventStart = String(event.date || event.startDate || '');
+    var eventEnd = String(event.endDate || eventStart);
+    return !!eventStart && eventStart <= end && eventEnd >= start;
+  }
+
+  function monthBounds(date) {
+    return {
+      start: getISODate(new Date(date.getFullYear(), date.getMonth(), 1)),
+      end: getISODate(new Date(date.getFullYear(), date.getMonth() + 1, 0))
+    };
+  }
+
+  function eventDateLabel(event) {
+    var start = event.date || event.startDate;
+    return getDisplayDate(start) + (event.endDate && event.endDate !== start ? ' – ' + getDisplayDate(event.endDate) : '');
   }
 
   function eventMatchesEmployeeFilter(event, employeeId) {
@@ -401,6 +425,7 @@
 
     var todayKey = getISODate(new Date());
     var pendingEvents = getCalendarEvents().filter(function (evt) {
+      if (isEmployeeStatus(evt)) return false;
       var dateKey = String(evt.date || evt.startDate || '');
       if (!dateKey || dateKey < todayKey) return false;
       if (getEventParticipants(evt).indexOf(String(user.id)) === -1) return false;
@@ -667,13 +692,14 @@
 
     var metaEl = document.createElement('span');
     metaEl.className = 'calendar-event-chip-meta';
-    metaEl.textContent = evt.allDay ? 'Ganztag' : ((evt.startTime ? evt.startTime : '') + (evt.endTime ? (' - ' + evt.endTime) : ''));
+    var statusNames = isEmployeeStatus(evt) ? getEventParticipants(evt).map(getEmployeeName).join(', ') : '';
+    metaEl.textContent = statusNames || (evt.allDay ? 'Ganztag' : ((evt.startTime ? evt.startTime : '') + (evt.endTime ? (' - ' + evt.endTime) : '')));
 
     chip.appendChild(headEl);
     chip.appendChild(metaEl);
 
     var summary = getRsvpSummary(evt);
-    if (summary.total > 0) {
+    if (summary.total > 0 && !isEmployeeStatus(evt)) {
       var rsvpEl = document.createElement('span');
       rsvpEl.className = 'calendar-event-chip-rsvp';
       if (summary.accepted === summary.total) rsvpEl.classList.add('all-accepted');
@@ -958,7 +984,7 @@
     var organizerName = evt.createdByEmployeeId ? getEmployeeName(evt.createdByEmployeeId) : '';
 
     var rows = [];
-    rows.push('<div class="calendar-detail-item"><span class="calendar-detail-label">Datum</span><span class="calendar-detail-value">' + escapeHtml(getDisplayDate(evt.date || evt.startDate)) + '</span></div>');
+    rows.push('<div class="calendar-detail-item"><span class="calendar-detail-label">Datum</span><span class="calendar-detail-value">' + escapeHtml(eventDateLabel(evt)) + '</span></div>');
     rows.push('<div class="calendar-detail-item"><span class="calendar-detail-label">Zeit</span><span class="calendar-detail-value">' + escapeHtml(evt.allDay ? 'Ganztag' : ((evt.startTime || '') + (evt.endTime ? (' - ' + evt.endTime) : '') || 'Ganztag')) + '</span></div>');
     rows.push('<div class="calendar-detail-item"><span class="calendar-detail-label">Typ</span><span class="calendar-detail-value">' + escapeHtml(meta.label) + '</span></div>');
     rows.push('<div class="calendar-detail-item"><span class="calendar-detail-label">Ort</span><span class="calendar-detail-value">' + escapeHtml(evt.location || 'Nicht angegeben') + '</span></div>');
@@ -970,7 +996,9 @@
 
     var participantIds = getEventParticipants(evt);
     var participantsBlock;
-    if (participantIds.length) {
+    if (isEmployeeStatus(evt)) {
+      participantsBlock = '<div class="calendar-detail-participants"><h3>Mitarbeiter</h3><p>' + escapeHtml(participantIds.map(getEmployeeName).join(', ') || 'Nicht zugewiesen') + '</p></div>';
+    } else if (participantIds.length) {
       var participantItems = participantIds.map(function (id) {
         var response = responses[id];
         var rsvpMeta = getRsvpMeta(response.status);
@@ -1009,7 +1037,7 @@
     }
 
     var rsvpActionsBlock = '';
-    if (userIsParticipant) {
+    if (userIsParticipant && !isEmployeeStatus(evt)) {
       var currentStatus = userResponse ? userResponse.status : 'pending';
       rsvpActionsBlock = '' +
         '<div class="calendar-detail-rsvp-actions">' +
@@ -1022,7 +1050,7 @@
         '</div>';
     }
 
-    var reminderButton = (participantIds.length && summary.pending > 0 && canManageEventRsvp(evt))
+    var reminderButton = (!isEmployeeStatus(evt) && participantIds.length && summary.pending > 0 && canManageEventRsvp(evt))
       ? '<button type="button" class="btn btn-secondary" id="calendar-modal-remind"><span class="material-symbols-rounded" aria-hidden="true">notifications_active</span><span>Erinnerung senden</span></button>'
       : '';
 
@@ -1085,8 +1113,9 @@
       '<input type="hidden" id="evt-created-at" value="' + escapeHtml((event && event.createdAt) || '') + '">' +
       '<div class="calendar-modal-grid">' +
       '<div class="form-group"><label for="evt-title">Titel *</label><input type="text" id="evt-title" value="' + escapeHtml((event && event.title) || '') + '" required></div>' +
-      '<div class="form-group"><label for="evt-date">Datum</label><input type="date" id="evt-date" value="' + escapeHtml((event && (event.date || event.startDate)) || defaultDate || '') + '"></div>' +
+      '<div class="form-group"><label for="evt-date">Beginn *</label><input type="date" id="evt-date" required value="' + escapeHtml((event && (event.date || event.startDate)) || defaultDate || '') + '"></div>' +
       '</div>' +
+      '<div class="form-group"><label for="evt-end-date">Enddatum (einschliesslich, optional)</label><input type="date" id="evt-end-date" value="' + escapeHtml((event && event.endDate) || '') + '"><small class="text-muted">Mehrtägige Einträge sind ganztägig.</small></div>' +
       '<div class="calendar-modal-grid">' +
       '<div class="form-group"><label for="evt-start-time">Start</label><input type="time" id="evt-start-time" value="' + escapeHtml((event && event.startTime) || '') + '"></div>' +
       '<div class="form-group"><label for="evt-end-time">Ende</label><input type="time" id="evt-end-time" value="' + escapeHtml((event && event.endTime) || '') + '"></div>' +
@@ -1094,11 +1123,11 @@
       '<div class="calendar-modal-grid">' +
       '<div class="form-group"><label for="evt-type">Typ</label>' +
       '<select id="evt-type">' + typeOptions + '</select></div>' +
-      '<div class="form-group"><label for="evt-project">Projekt</label><select id="evt-project"><option value="">-- Kein Projekt --</option>' + projectOptions + '</select></div>' +
+      '<div class="form-group" id="evt-project-group"><label for="evt-project">Projekt</label><select id="evt-project"><option value="">-- Kein Projekt --</option>' + projectOptions + '</select></div>' +
       '</div>' +
-      '<div class="form-group"><label for="evt-location">Ort</label><input type="text" id="evt-location" value="' + escapeHtml((event && event.location) || '') + '"></div>' +
+      '<div class="form-group" id="evt-location-group"><label for="evt-location">Ort</label><input type="text" id="evt-location" value="' + escapeHtml((event && event.location) || '') + '"></div>' +
       '<div class="form-group">' +
-      '<label>Teilnehmer</label>' +
+      '<label id="evt-attendee-label">Teilnehmer</label>' +
       '<div class="calendar-attendee-toolbar">' +
       '<button type="button" class="btn btn-secondary btn-compact" id="evt-attendees-project-team" title="Teammitglieder des gewaehlten Projekts auswaehlen"><span class="material-symbols-rounded" aria-hidden="true">diversity_3</span><span>Projektteam</span></button>' +
       '<button type="button" class="btn btn-secondary btn-compact" id="evt-attendees-all">Alle auswaehlen</button>' +
@@ -1106,9 +1135,10 @@
       '<span class="calendar-attendee-selected-count" id="evt-attendee-count"></span>' +
       '</div>' +
       '<div class="calendar-attendee-list" id="evt-attendee-list">' + (attendeeCheckboxes || '<p class="text-muted">Keine Mitarbeiter angelegt.</p>') + '</div>' +
-      '<small class="text-muted">Neue Teilnehmer erhalten den Status "Ausstehend" und koennen den Termin zu- oder absagen.</small>' +
+      '<small class="text-muted" id="evt-attendee-hint">Neue Teilnehmer erhalten den Status "Ausstehend" und koennen den Termin zu- oder absagen.</small>' +
       '</div>' +
-      '<div class="form-group"><label for="evt-description">Beschreibung</label><textarea id="evt-description" rows="3">' + escapeHtml((event && event.description) || '') + '</textarea></div>' +
+      '<div class="form-group" id="evt-description-group"><label for="evt-description">Beschreibung</label><textarea id="evt-description" rows="3">' + escapeHtml((event && event.description) || '') + '</textarea></div>' +
+      '<p class="text-muted hidden" id="evt-sick-notice">Krankmeldungen sind im gemeinsamen Kalender und dessen Daten für alle angemeldeten Nutzer sichtbar. Keine Diagnosen oder medizinischen Details eintragen.</p>' +
       '<div class="form-group"><label><input type="checkbox" id="evt-all-day"' + ((event && event.allDay) ? ' checked' : '') + '> Ganztagstermin</label></div>' +
       '<div class="modal-actions">' +
       (editing ? '<button type="button" class="btn btn-danger" id="calendar-delete-btn">Loeschen</button>' : '') +
@@ -1191,9 +1221,65 @@
     if (deleteBtn) deleteBtn.addEventListener('click', window.deleteCalendarEvent);
 
     setupAttendeePicker();
+    setupEventEditor(event);
 
     var titleField = document.getElementById('evt-title');
     if (titleField && titleField.focus) titleField.focus();
+  }
+
+  function setupEventEditor(event) {
+    var typeEl = document.getElementById('evt-type');
+    var allDayEl = document.getElementById('evt-all-day');
+    var titleEl = document.getElementById('evt-title');
+    var label = document.getElementById('evt-attendee-label');
+    var hint = document.getElementById('evt-attendee-hint');
+    var notice = document.getElementById('evt-sick-notice');
+    var descriptionGroup = document.getElementById('evt-description-group');
+    var locationGroup = document.getElementById('evt-location-group');
+    var projectGroup = document.getElementById('evt-project-group');
+    var projectTeamButton = document.getElementById('evt-attendees-project-team');
+    var startTime = document.getElementById('evt-start-time');
+    var endTime = document.getElementById('evt-end-time');
+
+    function updateTimeFields() {
+      startTime.disabled = allDayEl.checked;
+      endTime.disabled = allDayEl.checked;
+    }
+
+    function updateType() {
+      var type = typeEl.value;
+      var status = type === 'sick' || type === 'home-office' || (type === 'holiday' && (!event || event.type !== 'holiday' || event.employeeStatus === true));
+      var sick = type === 'sick';
+      label.textContent = status ? 'Betroffene Mitarbeiter *' : 'Teilnehmer';
+      hint.textContent = status ? 'Mitarbeiter werden ohne Einladung oder Teilnahmebestaetigung eingetragen.' : 'Neue Teilnehmer erhalten den Status "Ausstehend" und koennen den Termin zu- oder absagen.';
+      notice.classList.toggle('hidden', !sick);
+      descriptionGroup.classList.toggle('hidden', sick);
+      locationGroup.classList.toggle('hidden', sick);
+      projectGroup.classList.toggle('hidden', sick);
+      projectTeamButton.classList.toggle('hidden', sick);
+      titleEl.readOnly = sick;
+      if (sick) titleEl.value = 'Krankmeldung';
+    }
+
+    typeEl.addEventListener('change', function () {
+      if (typeEl.value === 'sick' || typeEl.value === 'holiday' || typeEl.value === 'home-office') {
+        allDayEl.checked = true;
+        if (!titleEl.value || titleEl.value === 'Krankmeldung') titleEl.value = getEventTypeMeta(typeEl.value).label;
+        if (!event && !getAttendeeCheckboxes().some(function (cb) { return cb.checked; })) {
+          var currentUser = getCurrentUser();
+          var defaultId = selectedEmployeeId && selectedEmployeeId !== UNASSIGNED_FILTER_VALUE ? selectedEmployeeId : (currentUser && String(currentUser.id));
+          getAttendeeCheckboxes().forEach(function (cb) { if (cb.value === defaultId) cb.checked = true; });
+          updateAttendeeSelectedCount();
+        }
+      } else if (titleEl.value === 'Krankmeldung') {
+        titleEl.value = '';
+      }
+      updateType();
+      updateTimeFields();
+    });
+    allDayEl.addEventListener('change', updateTimeFields);
+    updateType();
+    updateTimeFields();
   }
 
   function getAttendeeCheckboxes() {
@@ -1307,6 +1393,13 @@
       if (eventToMove) {
         var auth = getAuthManager();
         if (auth && typeof auth.canEditCalendarEvent === 'function' && !auth.canEditCalendarEvent(eventToMove)) return;
+        if (eventToMove.endDate) {
+          var oldStart = new Date((eventToMove.date || eventToMove.startDate) + 'T12:00:00');
+          var oldEnd = new Date(eventToMove.endDate + 'T12:00:00');
+          var movedEnd = new Date(dateStr + 'T12:00:00');
+          movedEnd.setDate(movedEnd.getDate() + Math.round((Date.UTC(oldEnd.getFullYear(), oldEnd.getMonth(), oldEnd.getDate()) - Date.UTC(oldStart.getFullYear(), oldStart.getMonth(), oldStart.getDate())) / 86400000));
+          eventToMove.endDate = getISODate(movedEnd);
+        }
         eventToMove.date = dateStr;
         eventToMove.startDate = dateStr;
         window.DataLayer.updateCalendarEvent(eventToMove);
@@ -1395,8 +1488,9 @@
       var allEvents = getCalendarEvents();
       var appointmentEvents = filterAppointmentEvents(allEvents);
       var visibleEvents = filterEventsByType(filterEventsByEmployee(appointmentEvents.slice().sort(sortEvents)));
+      var bounds = monthBounds(currentViewDate);
       var legendEvents = filterEventsByEmployee(appointmentEvents).filter(function (evt) {
-        return isDateInMonth(String(evt.date || evt.startDate || ''), currentViewDate);
+        return eventOverlaps(evt, bounds.start, bounds.end);
       });
       renderTypeLegend(legendEvents);
       renderPendingInvites();
@@ -1420,7 +1514,7 @@
       for (var day = 1; day <= daysInMonth; day++) {
         var dateStr = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
         var dayItems = isActivityMode ? (workflowDays[dateStr] ? workflowDays[dateStr].items : []) : visibleEvents.filter(function (item) {
-          return String(item.date || item.startDate || '') === dateStr;
+          return eventOverlaps(item, dateStr, dateStr);
         });
 
         var hasOverflow = dayItems.length > 3;
@@ -1477,12 +1571,8 @@
     if (!listEl) return;
     listEl.innerHTML = '';
 
-    var monthEvents = events.filter(function (evt) {
-      if (!evt.date && !evt.startDate) return false;
-      var dateValue = evt.date || evt.startDate;
-      var eventDate = new Date(dateValue + 'T12:00:00');
-      return eventDate.getFullYear() === viewDate.getFullYear() && eventDate.getMonth() === viewDate.getMonth();
-    });
+    var bounds = monthBounds(viewDate);
+    var monthEvents = events.filter(function (evt) { return eventOverlaps(evt, bounds.start, bounds.end); });
 
     var heading = document.createElement('div');
     heading.className = 'calendar-events-list-heading';
@@ -1516,7 +1606,7 @@
       if (participants.length) details.push('<div><strong>Mitarbeiter:</strong> ' + escapeHtml(participants.join(', ')) + '</div>');
       if (evt.description) details.push('<div><strong>Hinweis:</strong> ' + escapeHtml(evt.description) + '</div>');
 
-      var rsvpBlock = summary.total > 0
+      var rsvpBlock = summary.total > 0 && !isEmployeeStatus(evt)
         ? '<div class="calendar-event-card-rsvp">' +
           '<span class="calendar-rsvp-pill calendar-rsvp-pill-accepted" title="Zusagen"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>' + summary.accepted + '</span>' +
           '<span class="calendar-rsvp-pill calendar-rsvp-pill-tentative" title="Vielleicht"><span class="material-symbols-rounded" aria-hidden="true">help</span>' + summary.tentative + '</span>' +
@@ -1528,7 +1618,7 @@
       card.innerHTML = '' +
         '<div class="calendar-event-card-head">' +
         '<span class="calendar-event-tag" style="border-color:' + meta.color + ';color:' + meta.color + '"><span class="material-symbols-rounded" aria-hidden="true">' + meta.icon + '</span>' + escapeHtml(meta.label) + '</span>' +
-        '<span class="calendar-event-date">' + escapeHtml(getDisplayDate(evt.date || evt.startDate)) + '</span>' +
+        '<span class="calendar-event-date">' + escapeHtml(eventDateLabel(evt)) + '</span>' +
         '</div>' +
         '<h3>' + escapeHtml(evt.title || 'Termin') + '</h3>' +
         '<div class="calendar-event-meta">' + escapeHtml(evt.allDay ? 'Ganztag' : ((evt.startTime ? evt.startTime : '') + (evt.endTime ? (' - ' + evt.endTime) : ''))) + '</div>' +
@@ -1669,6 +1759,7 @@
       var auth = getAuthManager();
       var titleEl = document.getElementById('evt-title');
       var dateEl = document.getElementById('evt-date');
+      var endDateEl = document.getElementById('evt-end-date');
       var startEl = document.getElementById('evt-start-time');
       var endEl = document.getElementById('evt-end-time');
       var typeEl = document.getElementById('evt-type');
@@ -1690,25 +1781,58 @@
         if (cb.checked) attendeeIds.push(cb.value);
       });
 
+      var existingId = idEl ? idEl.value : '';
+      var existingEvent = existingId ? window.DataLayer.getCalendarEventById(existingId) : null;
+      if (existingId && !existingEvent) {
+        alert('Der Termin wurde nicht gefunden.');
+        return;
+      }
+      var type = typeEl ? typeEl.value : 'meeting';
+      var status = type === 'sick' || type === 'home-office' || (type === 'holiday' && (!existingEvent || existingEvent.type !== 'holiday' || existingEvent.employeeStatus === true));
+      var date = dateEl ? dateEl.value : '';
+      var endDate = endDateEl ? endDateEl.value : '';
+      var allDay = allDayEl && allDayEl.checked;
+      if (!date) {
+        alert('Bitte ein Beginn-Datum auswaehlen.');
+        return;
+      }
+      if (endDate && endDate < date) {
+        alert('Das Enddatum darf nicht vor dem Beginn liegen.');
+        return;
+      }
+      if (endDate && endDate > date && !allDay) {
+        alert('Mehrtägige Einträge muessen ganztägig sein.');
+        return;
+      }
+      if (!allDay && startEl.value && endEl.value && endEl.value <= startEl.value) {
+        alert('Die Endzeit muss nach der Startzeit liegen.');
+        return;
+      }
+      if (status && !attendeeIds.length) {
+        alert('Bitte mindestens einen Mitarbeiter auswaehlen.');
+        return;
+      }
+
       var payload = {
-        title: title,
-        date: dateEl ? dateEl.value : '',
-        startDate: dateEl ? dateEl.value : '',
-        type: typeEl ? typeEl.value : 'meeting',
-        projectId: projectEl && projectEl.value ? projectEl.value : null,
-        location: locationEl ? locationEl.value.trim() : '',
-        description: descriptionEl ? descriptionEl.value.trim() : '',
-        startTime: startEl ? startEl.value : '',
-        endTime: endEl ? endEl.value : '',
-        allDay: allDayEl ? !!allDayEl.checked : false,
+        title: type === 'sick' ? 'Krankmeldung' : title,
+        date: date,
+        startDate: date,
+        endDate: endDate || '',
+        type: type,
+        employeeStatus: status,
+        projectId: type !== 'sick' && projectEl && projectEl.value ? projectEl.value : null,
+        location: type !== 'sick' && locationEl ? locationEl.value.trim() : '',
+        description: type !== 'sick' && descriptionEl ? descriptionEl.value.trim() : '',
+        startTime: !allDay && startEl ? startEl.value : '',
+        endTime: !allDay && endEl ? endEl.value : '',
+        allDay: !!allDay,
         attendeeIds: attendeeIds,
         createdAt: createdAtEl && createdAtEl.value ? createdAtEl.value : new Date().toISOString()
       };
 
-      var existingId = idEl ? idEl.value : '';
       if (existingId) {
+        payload = Object.assign({}, existingEvent, payload);
         payload.id = existingId;
-        var existingEvent = window.DataLayer.getCalendarEventById(existingId);
         if (auth && typeof auth.canEditCalendarEvent === 'function') {
           if (!auth.canEditCalendarEvent(existingEvent)) {
             alert('Dieser Termin kann nur gelesen werden.');
@@ -1719,16 +1843,21 @@
         payload.createdByEmployeeId = existingEvent && existingEvent.createdByEmployeeId || '';
         var previousResponses = existingEvent && existingEvent.responses && typeof existingEvent.responses === 'object' ? existingEvent.responses : {};
         var nextResponses = {};
-        attendeeIds.forEach(function (id) {
-          if (previousResponses[id]) nextResponses[id] = previousResponses[id];
-        });
+        if (!status && !isEmployeeStatus(existingEvent)) {
+          attendeeIds.forEach(function (id) {
+            if (previousResponses[id]) nextResponses[id] = previousResponses[id];
+          });
+        }
         payload.responses = nextResponses;
-        window.DataLayer.updateCalendarEvent(payload);
+        if (!window.DataLayer.updateCalendarEvent(payload)) {
+          alert('Der Termin konnte nicht gespeichert werden.');
+          return;
+        }
 
         var newAttendees = attendeeIds.filter(function (id) {
-          return !existingEvent || getEventParticipants(existingEvent).indexOf(String(id)) === -1;
+          return isEmployeeStatus(existingEvent) || getEventParticipants(existingEvent).indexOf(String(id)) === -1;
         });
-        if (newAttendees.length) {
+        if (newAttendees.length && !status) {
           pushNotification('calendar', 'Termineinladung "' + title + '" am ' + getDisplayDate(payload.date) + ' an: ' + newAttendees.map(getEmployeeName).join(', '));
         }
       } else {
@@ -1739,8 +1868,11 @@
         var currentUser = getCurrentUser();
         if (currentUser) payload.createdByEmployeeId = String(currentUser.id);
         payload.responses = {};
-        window.DataLayer.createCalendarEvent(payload);
-        if (attendeeIds.length) {
+        if (!window.DataLayer.createCalendarEvent(payload)) {
+          alert('Der Termin konnte nicht gespeichert werden.');
+          return;
+        }
+        if (attendeeIds.length && !status) {
           pushNotification('calendar', 'Neuer Termin "' + title + '" am ' + getDisplayDate(payload.date) + ' - Einladung an: ' + attendeeIds.map(getEmployeeName).join(', '));
         }
       }
@@ -1749,6 +1881,7 @@
       renderCalendar(currentViewDate);
     } catch (err) {
       console.error('[Save Event]', err);
+      alert('Der Termin konnte nicht gespeichert werden.');
     }
   };
 
@@ -1765,12 +1898,16 @@
             return;
           }
         }
-        window.DataLayer.deleteCalendarEvent(existingId);
+        if (!window.DataLayer.deleteCalendarEvent(existingId)) {
+          alert('Der Termin konnte nicht geloescht werden.');
+          return;
+        }
       }
       closeModal();
       renderCalendar(currentViewDate);
     } catch (err) {
       console.error('[Delete Event]', err);
+      alert('Der Termin konnte nicht geloescht werden.');
     }
   };
 
@@ -1830,12 +1967,21 @@
           if (evt.endTime) lines.push('DTEND:' + formatICSDateTime(dateStr, evt.endTime));
         } else {
           lines.push('DTSTART;VALUE=DATE:' + formatICSDateTime(dateStr));
+          if (evt.endDate && evt.endDate >= dateStr) {
+            var exclusiveEnd = new Date(evt.endDate + 'T12:00:00');
+            exclusiveEnd.setDate(exclusiveEnd.getDate() + 1);
+            lines.push('DTEND;VALUE=DATE:' + formatICSDateTime(getISODate(exclusiveEnd)));
+          }
         }
         lines.push('SUMMARY:' + escapeICSText(evt.title || 'Termin'));
         if (evt.location) lines.push('LOCATION:' + escapeICSText(evt.location));
-        if (evt.description) lines.push('DESCRIPTION:' + escapeICSText(evt.description));
+        var exportDescription = evt.description || '';
+        if (isEmployeeStatus(evt)) {
+          exportDescription = 'Mitarbeiter: ' + getEventParticipants(evt).map(getEmployeeName).join(', ') + (exportDescription ? '\n' + exportDescription : '');
+        }
+        if (exportDescription) lines.push('DESCRIPTION:' + escapeICSText(exportDescription));
         if (evt.type) lines.push('CATEGORIES:' + escapeICSText(getEventTypeMeta(normalizeEventType(evt.type)).label.toUpperCase()));
-        getEventParticipants(evt).forEach(function (id) {
+        if (!isEmployeeStatus(evt)) getEventParticipants(evt).forEach(function (id) {
           lines.push('ATTENDEE;CN=' + escapeICSText(getEmployeeName(id)) + ':MAILTO:noreply@projekt-dashboard.local');
         });
         lines.push('END:VEVENT');

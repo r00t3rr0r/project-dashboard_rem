@@ -1870,6 +1870,8 @@ textarea#retro-notes {
 .calendar-event-chip[data-type="deadline"] { border-left-color: var(--accent-red); }
 .calendar-event-chip[data-type="release"] { border-left-color: var(--accent-green); }
 .calendar-event-chip[data-type="holiday"] { border-left-color: var(--accent-purple); }
+.calendar-event-chip[data-type="sick"] { border-left-color: var(--accent-red); }
+.calendar-event-chip[data-type="home-office"] { border-left-color: var(--accent-cyan, #22b8cf); }
 .calendar-event-chip[data-type="task"] { border-left-color: var(--accent-yellow); }
 .calendar-event-chip[data-type="training"] { border-left-color: var(--accent-cyan, #22b8cf); }
 .calendar-event-chip[data-type="other"] { border-left-color: var(--text-muted); }

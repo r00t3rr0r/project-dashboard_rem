@@ -92,11 +92,27 @@ test('appointment view and export hide commit documentation but retain scheduled
   assert.equal(day2.children.filter(child=>child.className==='calendar-commit-group calendar-commit-group--compact').length,0);
   assert(day2.children.some(child=>child.className==='calendar-event-chip'));
   assert.equal(day3.children.length,0);
-  assert.match(legend.children[5].innerHTML,/<span class="calendar-legend-count">6<\/span>/);
+  assert.match(legend.children.find(child=>child.innerHTML.includes('<span>Task</span>')).innerHTML,/<span class="calendar-legend-count">6<\/span>/);
   window.CalendarModule.exportICS();
   assert.equal((downloads[0].match(/BEGIN:VEVENT/g)||[]).length,7);
   assert.doesNotMatch(downloads[0],/github-commit/);
   assert.match(downloads[0],/SUMMARY:Termin deadline/);
+});
+
+test('multi-day employee status appears on each day and in the next month with employee filtering',()=>{
+  const event={id:'leave',type:'holiday',employeeStatus:true,date:'2020-01-30',endDate:'2020-02-02',allDay:true,title:'Urlaub',attendeeIds:['alice']};
+  const {api,grid,list,legend}=harness([event],[]);
+  api.setEmployee('alice');
+  api.renderCalendar(new Date(2020,1,1));
+  const days=grid.children.filter(child=>child.children.some(item=>item.className==='calendar-event-list'));
+  assert.equal(days[0].children.find(child=>child.className==='calendar-event-list').children.length,1);
+  assert.equal(days[1].children.find(child=>child.className==='calendar-event-list').children.length,1);
+  assert.equal(days[2].children.find(child=>child.className==='calendar-event-list').children.length,0);
+  assert.equal(list.children.filter(child=>child.className==='calendar-event-card').length,1);
+  assert.match(legend.children.find(child=>child.innerHTML.includes('<span>Urlaub</span>')).innerHTML,/<span class="calendar-legend-count">1<\/span>/);
+  api.setEmployee('bob');
+  api.renderCalendar(new Date(2020,1,1));
+  assert.equal(list.children.filter(child=>child.className==='calendar-event-card').length,0);
 });
 
 test('group counts follow the employee filter and keep missing projects separate',()=>{

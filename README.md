@@ -231,6 +231,12 @@ Datei [app.html](app.html) kann direkt geoeffnet werden, aber bei manchen Browse
 
 Unter `#page=tasks` wechselt der Ansichtsumschalter zwischen allen Aufgaben, der Review-Warteschlange und erledigten Aufgaben. Die Karten zeigen Projekt, Zuweisung und Abschluss auf einen Blick. Über den Pfeil lassen sich Details und Verlauf öffnen; Review, Nacharbeit und Wiedereröffnung werden direkt in der Karte bestätigt.
 
+### Team-Kalender
+
+Über „Eintrag anlegen“ oder einen Doppelklick auf einen Kalendertag lassen sich Termine sowie Urlaub, Krankmeldungen und Homeoffice für ausgewählte Mitarbeiter erfassen. Ein optionales Enddatum ist einschließlich; mehrtägige Einträge sind ganztägig. Mitarbeiterstatus benötigen keine Teilnahmebestätigung und erscheinen an jedem Tag des Zeitraums sowie im iCal-Export. Bestehende Urlaubstermine ohne Statuskennzeichnung behalten ihre Einladungen.
+
+Krankmeldungen sind für alle angemeldeten Nutzer in den gemeinsamen Kalenderdaten sichtbar; eine serverseitige Einschränkung auf einzelne Personen besteht nicht. Keine Diagnosen oder medizinischen Details erfassen. Der Kalender ersetzt keinen vertraulichen Melde- oder Genehmigungsprozess.
+
 ## Feature-Uebersicht (18 Bereiche)
 
 1. Dashboard
