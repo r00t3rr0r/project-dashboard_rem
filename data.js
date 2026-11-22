@@ -1734,6 +1734,11 @@
     if (typeof subtask.title !== 'string') subtask.title = '';
     subtask.title = subtask.title.trim();
     subtask.completed = !!subtask.completed;
+    if (!subtask.completed) {
+      subtask.completedAt = '';
+    } else if (typeof subtask.completedAt !== 'string') {
+      subtask.completedAt = '';
+    }
     if (!subtask.createdAt) subtask.createdAt = new Date().toISOString();
     return subtask;
   }

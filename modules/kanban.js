@@ -2217,6 +2217,15 @@
   }
 
   // --- Subtask-Checkbox Interaktion ---
+  function setSubtaskCompletion(subtask, completed) {
+    subtask.completed = !!completed;
+    if (subtask.completed) {
+      if (!subtask.completedAt) subtask.completedAt = new Date().toISOString();
+    } else {
+      subtask.completedAt = '';
+    }
+  }
+
   function setupSubtaskCheckboxes() {
     document.addEventListener('click', function(e) {
       var toggle = e.target.closest('[data-kanban-subtask-toggle]');
@@ -2228,7 +2237,7 @@
 
         task.subtasks.forEach(function(st) {
           if (String(st.id) === String(subtaskId)) {
-            st.completed = !st.completed;
+            setSubtaskCompletion(st, !st.completed);
           }
         });
 
@@ -2340,7 +2349,7 @@
         var freshTask = window.DataLayer.getTaskById(taskId);
         if (!freshTask || !Array.isArray(freshTask.subtasks)) return;
         freshTask.subtasks.forEach(function (st) {
-          if (String(st.id) === String(subtaskId)) st.completed = !st.completed;
+          if (String(st.id) === String(subtaskId)) setSubtaskCompletion(st, !st.completed);
         });
         window.DataLayer.updateTask(freshTask);
         renderAllColumns();
@@ -3092,7 +3101,7 @@
         if (!toggle) return;
         var subtaskId = toggle.getAttribute('data-subtask-toggle');
         currentTaskDraft.subtasks.forEach(function (st) {
-          if (st.id === subtaskId) st.completed = !!toggle.checked;
+          if (st.id === subtaskId) setSubtaskCompletion(st, !!toggle.checked);
         });
       });
     }

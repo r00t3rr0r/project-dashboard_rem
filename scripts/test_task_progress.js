@@ -174,6 +174,28 @@ test('team load shows the current and next subtask and lets users expand the rem
   assert.match(teamLoadContainer.innerHTML,/<details class="dashboard-subtasks-more" data-task-id="active" open>/);
 });
 
+test('team load lists subtasks completed today under "Heute erledigt"',()=>{
+  const data = makeDataLayer();
+  data.getEmployees = ()=>[{id:'employee',name:'Alex'}];
+  data.createTask({
+    id:'active',title:'Aktive Aufgabe',status:'in-progress',assigneeId:'employee',employeeName:'Alex',
+    subtasks:[
+      {title:'Heute fertig',completed:true,completedAt:new Date().toISOString()},
+      {title:'Gestern fertig',completed:true,completedAt:new Date(Date.now()-86400000).toISOString()},
+      {title:'Offen'}
+    ]
+  });
+  const {dashboard,teamLoadContainer} = makeDashboard(data);
+  dashboard.renderTeamLoad();
+
+  const html = teamLoadContainer.innerHTML;
+  assert.match(html,/Heute erledigt<\/span><span class="team-load-section-count is-done">1</);
+  assert.match(html,/team-load-done-item is-subtask/);
+  assert.match(html,/team-load-done-title" title="Heute fertig"/);
+  assert.match(html,/Teilaufgabe · Aktive Aufgabe/);
+  assert.doesNotMatch(html,/Gestern fertig/);
+});
+
 test('project progress shows only tasks in progress, regardless of subtasks or recent activity',()=>{
   const data = makeDataLayer();
   data.createProject({id:'project',title:'Projekt'});

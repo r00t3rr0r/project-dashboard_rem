@@ -3683,6 +3683,11 @@ body.projects-modal-open {
   font-size: 0.95rem;
 }
 
+.team-load-done-item.is-subtask > .material-symbols-rounded {
+  color: color-mix(in srgb, #16845d 65%, var(--text-secondary, #8a93a6));
+  font-size: 0.85rem;
+}
+
 .team-load-done-copy {
   display: grid;
   min-width: 0;

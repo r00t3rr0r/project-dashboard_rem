@@ -1839,6 +1839,33 @@
     });
   }
 
+  function getEmployeeCompletedTodaySubtasks(employee, tasks, todayKey) {
+    var employeeId = String(employee && employee.id || '');
+    var employeeName = String(employee && employee.name || '').trim().toLowerCase();
+    var entries = [];
+
+    (tasks || []).forEach(function(task) {
+      if (!task || normalizeTaskStatus(task) === 'done') return;
+      var subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
+      if (!subtasks.length) return;
+
+      var taskMatches = (employeeId && String(task.assigneeId || task.employeeId || '') === employeeId) ||
+        (!!employeeName && String(task.employeeName || task.assigneeName || '').trim().toLowerCase() === employeeName);
+
+      subtasks.forEach(function(subtask) {
+        if (!subtask || !subtask.completed) return;
+        var completedAt = Date.parse(subtask.completedAt || '');
+        if (!isFinite(completedAt) || getLocalDateKey(new Date(completedAt)) !== todayKey) return;
+        var subtaskAssigneeId = String(subtask.assigneeId || '');
+        var matches = subtaskAssigneeId ? (!!employeeId && subtaskAssigneeId === employeeId) : taskMatches;
+        if (!matches) return;
+        entries.push({ task: task, subtask: subtask, completedAt: completedAt });
+      });
+    });
+
+    return entries.sort(function(a, b) { return b.completedAt - a.completedAt; });
+  }
+
   function getTaskProjectLabel(task, projectsById) {
     var project = task && task.projectId ? projectsById[String(task.projectId)] : null;
     if (project) return String(project.title || project.name || '').trim();
@@ -1873,7 +1900,8 @@
       rows.push({
         employee: employee,
         activeTasks: getEmployeeTeamLoadTasks(employee, tasks),
-        completedTodayTasks: getEmployeeCompletedTodayTasks(employee, tasks, getLocalDateKey(new Date()))
+        completedTodayTasks: getEmployeeCompletedTodayTasks(employee, tasks, getLocalDateKey(new Date())),
+        completedTodaySubtasks: getEmployeeCompletedTodaySubtasks(employee, tasks, getLocalDateKey(new Date()))
       });
     });
 
@@ -1888,13 +1916,14 @@
       if (!key || seen[key]) return;
 
       seen[key] = true;
+      var fallbackEmployee = {
+        id: assigneeId,
+        name: assigneeName || 'Mitarbeiter',
+        github: null,
+        currentActivity: ''
+      };
       rows.push({
-        employee: {
-          id: assigneeId,
-          name: assigneeName || 'Mitarbeiter',
-          github: null,
-          currentActivity: ''
-        },
+        employee: fallbackEmployee,
         activeTasks: (tasks || []).filter(function(candidate) {
           if (!candidate || normalizeTaskStatus(candidate) !== 'in-progress') return false;
           if (assigneeId && String(candidate.assigneeId || candidate.employeeId || '').trim() === assigneeId) return true;
@@ -1903,7 +1932,9 @@
           var diff = getTaskProgressValue(b) - getTaskProgressValue(a);
           if (diff !== 0) return diff;
           return String(a.title || '').localeCompare(String(b.title || ''), 'de');
-        })
+        }),
+        completedTodayTasks: getEmployeeCompletedTodayTasks(fallbackEmployee, tasks, getLocalDateKey(new Date())),
+        completedTodaySubtasks: getEmployeeCompletedTodaySubtasks(fallbackEmployee, tasks, getLocalDateKey(new Date()))
       });
     });
 
@@ -2030,7 +2061,9 @@
       if (b.activeTasks.length !== a.activeTasks.length) return b.activeTasks.length - a.activeTasks.length;
       var onlineDifference = Number(isEmployeeDashboardOnline(b.employee)) - Number(isEmployeeDashboardOnline(a.employee));
       if (onlineDifference) return onlineDifference;
-      if (b.completedTodayTasks.length !== a.completedTodayTasks.length) return b.completedTodayTasks.length - a.completedTodayTasks.length;
+      var aDoneToday = a.completedTodayTasks.length + (a.completedTodaySubtasks || []).length;
+      var bDoneToday = b.completedTodayTasks.length + (b.completedTodaySubtasks || []).length;
+      if (bDoneToday !== aDoneToday) return bDoneToday - aDoneToday;
       var presenceDifference = getEmployeeDashboardPresenceTimestamp(b.employee) - getEmployeeDashboardPresenceTimestamp(a.employee);
       if (presenceDifference) return presenceDifference;
       return String(a.employee.name || '').localeCompare(String(b.employee.name || ''), 'de');
@@ -2048,6 +2081,7 @@
       var employee = row.employee || {};
       var activeTasks = row.activeTasks || [];
       var completedTodayTasks = row.completedTodayTasks || [];
+      var completedTodaySubtasks = row.completedTodaySubtasks || [];
       var avatarUrl = getEmployeeAvatarUrl(employee);
       var profileUrl = employee.github && employee.github.profileUrl ? String(employee.github.profileUrl).trim() : '';
       var githubLabel = employee.github && employee.github.username ? '@' + String(employee.github.username).replace(/^@+/, '') : '';
@@ -2151,17 +2185,33 @@
       }
       html += '</section>';
 
+      var completedTodayEntries = completedTodayTasks.map(function(task) {
+        return { type: 'task', task: task };
+      }).concat(completedTodaySubtasks.map(function(entry) {
+        return { type: 'subtask', task: entry.task, subtask: entry.subtask };
+      }));
+
       html += '<section class="team-load-done-section" aria-label="Heute erledigte Aufgaben">';
-      html += '<div class="team-load-section-heading"><span>Heute erledigt</span><span class="team-load-section-count' + (completedTodayTasks.length ? ' is-done' : '') + '">' + completedTodayTasks.length + '</span></div>';
-      if (completedTodayTasks.length) {
+      html += '<div class="team-load-section-heading"><span>Heute erledigt</span><span class="team-load-section-count' + (completedTodayEntries.length ? ' is-done' : '') + '">' + completedTodayEntries.length + '</span></div>';
+      if (completedTodayEntries.length) {
         html += '<ul class="team-load-done-list">';
-        completedTodayTasks.slice(0, 3).forEach(function(task) {
-          var projectLabel = getTaskProjectLabel(task, projectsById);
+        completedTodayEntries.slice(0, 3).forEach(function(entry) {
+          var projectLabel = getTaskProjectLabel(entry.task, projectsById);
+          if (entry.type === 'subtask') {
+            var subtaskTitle = String(entry.subtask.title || 'Teilaufgabe').trim() || 'Teilaufgabe';
+            var parentTitle = String(entry.task.title || 'Aufgabe').trim() || 'Aufgabe';
+            var subtaskContext = 'Teilaufgabe · ' + parentTitle + (projectLabel ? ' · ' + projectLabel : '');
+            html += '<li class="team-load-done-item is-subtask"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span><span class="team-load-done-copy"><span class="team-load-done-title" title="' + escapeHtml(subtaskTitle) + '">' + escapeHtml(subtaskTitle) + '</span>';
+            html += '<span class="team-load-done-project" title="' + escapeHtml(subtaskContext) + '">' + escapeHtml(subtaskContext) + '</span>';
+            html += '</span></li>';
+            return;
+          }
+          var task = entry.task;
           html += '<li class="team-load-done-item"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span><span class="team-load-done-copy"><span class="team-load-done-title" title="' + escapeHtml(task.title || 'Aufgabe') + '">' + escapeHtml(task.title || 'Aufgabe') + '</span>';
           if (projectLabel) html += '<span class="team-load-done-project">' + escapeHtml(projectLabel) + '</span>';
           html += '</span></li>';
         });
-        if (completedTodayTasks.length > 3) html += '<li class="team-load-more">+' + (completedTodayTasks.length - 3) + ' weitere erledigt</li>';
+        if (completedTodayEntries.length > 3) html += '<li class="team-load-more">+' + (completedTodayEntries.length - 3) + ' weitere erledigt</li>';
         html += '</ul>';
       } else {
         html += '<div class="team-load-empty">Noch keine Aufgabe erledigt</div>';
