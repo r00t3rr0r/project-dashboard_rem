@@ -1904,27 +1904,150 @@
     return entries.sort(function(a, b) { return b.at - a.at; }).map(function(entry) { return entry.task; });
   }
 
-  function getEmployeeCompletedTodaySubtasks(employee, tasks, todayKey, completedTasks) {
+  function getCommitStepTitle(commit) {
+    var title = String(commit && commit.title || '').trim();
+    if (!title) title = String(commit && commit.message || '').split('\n')[0].trim();
+    return title || 'Commit';
+  }
+
+  function buildCommitStep(commit) {
+    return {
+      type: 'commit',
+      title: getCommitStepTitle(commit),
+      at: parseCompletionTimestamp(commit && commit.date),
+      sha: String(commit && commit.sha || ''),
+      url: String(commit && commit.url || '')
+    };
+  }
+
+  function getSubtaskStepTitle(subtask) {
+    var title = String(subtask && subtask.title || '').trim();
+    var germanPart = title.match(/^DE:\s*(.+?)\s*\|\s*EN:/);
+    return (germanPart ? germanPart[1] : title) || 'Teilaufgabe';
+  }
+
+  function findCommitEmployeeId(commit, employees) {
+    var login = String(commit && commit.authorLogin || '').trim().replace(/^@/, '').toLowerCase();
+    var author = String(commit && commit.author || '').trim().toLowerCase();
+    if (!login && !author) return '';
+    var matches = (employees || []).filter(function(employee) {
+      if (!employee || !employee.id) return false;
+      var github = employee.github || {};
+      var username = String(github.username || '').trim().replace(/^@/, '').toLowerCase();
+      if (login) return username === login;
+      return Array.isArray(github.aliases) && github.aliases.some(function(alias) {
+        return String(alias || '').trim().toLowerCase() === author;
+      });
+    });
+    return matches.length === 1 ? String(matches[0].id) : '';
+  }
+
+  // Today's commits from the project GitHub caches that are not yet documented in any task,
+  // computed once per render because the caches can hold tens of thousands of commits.
+  function getUndocumentedCommitsForDay(tasks, projects, employees, todayKey) {
+    var documented = Object.create(null);
+    (tasks || []).forEach(function(task) {
+      if (!task) return;
+      (Array.isArray(task.sourceCommitShas) ? task.sourceCommitShas : []).forEach(function(sha) { documented[String(sha)] = true; });
+      getTaskImportedCommits(task).forEach(function(commit) { documented[String(commit.sha || '')] = true; });
+      (Array.isArray(task.subtasks) ? task.subtasks : []).forEach(function(subtask) {
+        if (subtask && subtask.sourceCommitSha) documented[String(subtask.sourceCommitSha)] = true;
+      });
+    });
+
+    var dayStart = new Date(todayKey + 'T00:00:00');
+    var utcDays = {};
+    [-1, 0, 1].forEach(function(offset) {
+      utcDays[new Date(dayStart.getTime() + offset * 86400000).toISOString().slice(0, 10)] = true;
+    });
+
+    var result = [];
+    (projects || []).forEach(function(project) {
+      var commits = project && Array.isArray(project.githubCommits) ? project.githubCommits : [];
+      commits.forEach(function(commit) {
+        if (!commit || !utcDays[String(commit.date || '').slice(0, 10)]) return;
+        var sha = String(commit.sha || '');
+        if (!sha || documented[sha]) return;
+        var at = parseCompletionTimestamp(commit.date);
+        if (!isTimestampOnDay(at, todayKey)) return;
+        var employeeId = findCommitEmployeeId(commit, employees);
+        if (!employeeId) return;
+        documented[sha] = true;
+        result.push({ project: project, commit: commit, employeeId: employeeId });
+      });
+    });
+    return result;
+  }
+
+  // Daily work log of an employee: completed tasks, tasks with subtasks completed today and
+  // today's GitHub commits, each listed with the development steps that belong to it.
+  function getEmployeeDailyWorkLog(employee, tasks, todayKey, undocumentedCommits) {
     var employeeId = String(employee && employee.id || '');
     var employeeName = String(employee && employee.name || '').trim().toLowerCase();
-    var listedTasks = completedTasks || getEmployeeCompletedTodayTasks(employee, tasks, todayKey);
-    var entries = [];
+    var doneTasks = getEmployeeCompletedTodayTasks(employee, tasks, todayKey);
+    var groups = [];
+    var counts = { tasks: 0, subtasks: 0, commits: 0 };
 
     (tasks || []).forEach(function(task) {
-      if (!task || listedTasks.indexOf(task) !== -1) return;
-      var subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
+      if (!task) return;
+      var isDone = doneTasks.indexOf(task) !== -1;
+      var steps = [];
+      var importedShas = Object.create(null);
 
-      subtasks.forEach(function(subtask) {
+      getTaskImportedCommits(task).forEach(function(commit) {
+        importedShas[String(commit.sha || '')] = true;
+        var at = parseCompletionTimestamp(commit.date);
+        if (!isTimestampOnDay(at, todayKey)) return;
+        var commitEmployeeId = String(commit.employeeId || '');
+        if (commitEmployeeId ? commitEmployeeId !== employeeId : !isDone) return;
+        steps.push(buildCommitStep(commit));
+      });
+
+      (Array.isArray(task.subtasks) ? task.subtasks : []).forEach(function(subtask) {
         if (!subtask || !subtask.completed) return;
+        if (subtask.sourceCommitSha && importedShas[String(subtask.sourceCommitSha)]) return;
         var completion = getSubtaskCompletionDetails(task, subtask);
         if (!isTimestampOnDay(completion.at, todayKey)) return;
         var assigneeName = completion.ownAssignee ? '' : (task.employeeName || task.assigneeName);
         if (!matchesEmployee(employeeId, employeeName, completion.assigneeIds, assigneeName)) return;
-        entries.push({ task: task, subtask: subtask, completedAt: completion.at });
+        steps.push({ type: 'subtask', title: getSubtaskStepTitle(subtask), at: completion.at, subtaskId: String(subtask.id || '') });
       });
+
+      if (!isDone && !steps.length) return;
+      steps.sort(function(a, b) { return a.at - b.at; });
+      var latestStepAt = steps.reduce(function(max, step) { return Math.max(max, step.at); }, 0);
+      var subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
+      groups.push({
+        kind: isDone ? 'task' : 'progress',
+        task: task,
+        at: isDone ? getTaskCompletionDetails(task, employeeId).at : latestStepAt,
+        steps: steps,
+        subtaskTotal: subtasks.length,
+        subtaskDone: subtasks.filter(function(subtask) { return subtask && subtask.completed; }).length
+      });
+      if (isDone) counts.tasks++;
+      steps.forEach(function(step) { counts[step.type === 'commit' ? 'commits' : 'subtasks']++; });
     });
 
-    return entries.sort(function(a, b) { return b.completedAt - a.completedAt; });
+    var commitsByProject = Object.create(null);
+    (undocumentedCommits || []).forEach(function(entry) {
+      if (entry.employeeId !== employeeId) return;
+      var key = String(entry.project && entry.project.id || '');
+      if (!commitsByProject[key]) {
+        commitsByProject[key] = { kind: 'commits', project: entry.project, at: 0, steps: [] };
+        groups.push(commitsByProject[key]);
+      }
+      var step = buildCommitStep(entry.commit);
+      commitsByProject[key].steps.push(step);
+      commitsByProject[key].at = Math.max(commitsByProject[key].at, step.at);
+      counts.commits++;
+    });
+    Object.keys(commitsByProject).forEach(function(key) {
+      commitsByProject[key].steps.sort(function(a, b) { return a.at - b.at; });
+    });
+
+    groups.sort(function(a, b) { return b.at - a.at; });
+    return { groups: groups, counts: counts };
   }
 
   function getTaskProjectLabel(task, projectsById) {
@@ -1949,9 +2072,11 @@
     }
   }
 
-  function getTeamLoadEmployeeRows(employees, tasks) {
+  function getTeamLoadEmployeeRows(employees, tasks, projects) {
     var rows = [];
     var seen = {};
+    var todayKey = getLocalDateKey(new Date());
+    var undocumentedCommits = getUndocumentedCommitsForDay(tasks, projects, employees, todayKey);
 
     (employees || []).forEach(function(employee) {
       if (!employee) return;
@@ -1961,8 +2086,7 @@
       rows.push({
         employee: employee,
         activeTasks: getEmployeeTeamLoadTasks(employee, tasks),
-        completedTodayTasks: getEmployeeCompletedTodayTasks(employee, tasks, getLocalDateKey(new Date())),
-        completedTodaySubtasks: getEmployeeCompletedTodaySubtasks(employee, tasks, getLocalDateKey(new Date()))
+        dailyLog: getEmployeeDailyWorkLog(employee, tasks, todayKey, undocumentedCommits)
       });
     });
 
@@ -1994,8 +2118,7 @@
           if (diff !== 0) return diff;
           return String(a.title || '').localeCompare(String(b.title || ''), 'de');
         }),
-        completedTodayTasks: getEmployeeCompletedTodayTasks(fallbackEmployee, tasks, getLocalDateKey(new Date())),
-        completedTodaySubtasks: getEmployeeCompletedTodaySubtasks(fallbackEmployee, tasks, getLocalDateKey(new Date()))
+        dailyLog: getEmployeeDailyWorkLog(fallbackEmployee, tasks, todayKey, undocumentedCommits)
       });
     });
 
@@ -2037,6 +2160,131 @@
     var hours = Math.floor(elapsedMinutes / 60);
     var minutes = elapsedMinutes % 60;
     return 'vor ' + hours + ' Std.' + (minutes ? ' ' + minutes + ' Min.' : '');
+  }
+
+  function openDoneTaskDetail(taskId, options) {
+    if (!taskId) return;
+    if (window.KanbanBoard && typeof window.KanbanBoard.openTaskDetail === 'function') {
+      window.KanbanBoard.openTaskDetail(taskId, options);
+      return;
+    }
+    if (window.AppShell && typeof window.AppShell.navigateTo === 'function') window.AppShell.navigateTo('kanban');
+    window.setTimeout(function() {
+      if (window.KanbanBoard && typeof window.KanbanBoard.focusTask === 'function') window.KanbanBoard.focusTask(taskId);
+    }, 0);
+  }
+
+  function openDoneCommitDetail(sha, projectId) {
+    var overlay = document.getElementById('modal-overlay');
+    var content = document.getElementById('modal-content');
+    var project = (window.DataLayer.getProjects() || []).filter(function(item) { return item && String(item.id) === String(projectId); })[0];
+    var commit = project && Array.isArray(project.githubCommits) ? project.githubCommits.filter(function(item) { return item && String(item.sha) === String(sha); })[0] : null;
+    if (!overlay || !content || !commit) return;
+    var message = String(commit.message || '').trim();
+    var title = message.split('\n')[0].trim() || 'Commit';
+    var body = message.slice(title.length).trim();
+    var dateLabel = commit.date ? new Date(commit.date).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '';
+    var projectTitle = String(project.title || project.name || 'Projekt');
+    var shortSha = escapeHtml(String(commit.sha).slice(0, 7));
+    content.innerHTML = '<div class="kanban-task-detail-header"><div><p class="kanban-task-detail-eyebrow">' + escapeHtml(projectTitle) + ' · Commit ohne Aufgabe</p><h2>' + escapeHtml(title) + '</h2></div>' +
+      '<button type="button" class="kanban-icon-btn" data-close-done-commit title="Schließen" aria-label="Schließen"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div>' +
+      '<dl class="kanban-task-detail-grid">' +
+      '<div class="kanban-task-detail-field"><dt>Commit</dt><dd>' + (commit.url ? '<a href="' + escapeHtml(commit.url) + '" target="_blank" rel="noopener noreferrer">' + shortSha + '</a>' : shortSha) + '</dd></div>' +
+      '<div class="kanban-task-detail-field"><dt>Autor</dt><dd>' + escapeHtml(commit.author || commit.authorLogin || '–') + '</dd></div>' +
+      '<div class="kanban-task-detail-field"><dt>Zeitpunkt</dt><dd>' + escapeHtml(dateLabel || '–') + '</dd></div>' +
+      '<div class="kanban-task-detail-field"><dt>Projekt</dt><dd>' + escapeHtml(projectTitle) + '</dd></div>' +
+      '</dl>' +
+      '<section class="kanban-task-detail-section"><h3>Commit-Nachricht</h3><div class="kanban-task-detail-copy">' + escapeHtml(body || title) + '</div></section>' +
+      '<p class="text-muted">Dieser Commit ist noch keiner Aufgabe zugeordnet.</p>' +
+      '<div class="modal-actions"><button type="button" class="btn btn-primary" data-close-done-commit>Schließen</button></div>';
+    overlay.classList.remove('hidden');
+    Array.prototype.forEach.call(content.querySelectorAll('[data-close-done-commit]'), function(button) {
+      button.addEventListener('click', function() {
+        overlay.classList.add('hidden');
+        content.innerHTML = '';
+      });
+    });
+  }
+
+  function getExpandedTeamLoadDoneKeys(container) {
+    var expandedKeys = Object.create(null);
+    if (!container || typeof container.querySelectorAll !== 'function') return expandedKeys;
+    Array.prototype.forEach.call(container.querySelectorAll('.team-load-done-more[open][data-expand-key]'), function(details) {
+      var key = details.getAttribute('data-expand-key');
+      if (key) expandedKeys[key] = true;
+    });
+    return expandedKeys;
+  }
+
+  function formatDoneStepTime(timestamp) {
+    return timestamp ? new Date(timestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : '';
+  }
+
+  function buildTeamLoadDoneOpenAttrs(group, step) {
+    if (group.kind === 'commits') {
+      return ' data-open-done-commit="' + escapeHtml(step ? step.sha : '') + '" data-project-id="' + escapeHtml(String(group.project && group.project.id || '')) + '"';
+    }
+    var attrs = ' data-open-done-task="' + escapeHtml(String(group.task.id || '')) + '"';
+    if (step && step.type === 'subtask' && step.subtaskId) attrs += ' data-focus-subtask="' + escapeHtml(step.subtaskId) + '"';
+    if (step && step.type === 'commit' && step.sha) attrs += ' data-focus-sha="' + escapeHtml(step.sha) + '"';
+    return attrs;
+  }
+
+  function buildTeamLoadDoneStepHtml(step, group) {
+    var html = '<li class="team-load-done-step is-' + step.type + '">';
+    html += '<span class="team-load-done-step-time">' + escapeHtml(formatDoneStepTime(step.at)) + '</span>';
+    if (step.type === 'commit') {
+      var shortSha = step.sha.slice(0, 7);
+      if (step.url) {
+        html += '<a class="team-load-done-step-sha" href="' + escapeHtml(step.url) + '" target="_blank" rel="noopener noreferrer" title="Commit ' + escapeHtml(step.sha) + ' auf GitHub öffnen">' + escapeHtml(shortSha) + '</a>';
+      } else {
+        html += '<span class="team-load-done-step-sha">' + escapeHtml(shortSha) + '</span>';
+      }
+    } else {
+      html += '<span class="team-load-done-step-badge">Teilaufgabe</span>';
+    }
+    html += '<button type="button" class="team-load-done-step-title team-load-done-open"' + buildTeamLoadDoneOpenAttrs(group, step) + ' title="' + escapeHtml(step.title) + '">' + escapeHtml(step.title) + '</button>';
+    return html + '</li>';
+  }
+
+  function buildTeamLoadDoneGroupHtml(group, projectsById, employeeKey, expandedDoneKeys) {
+    var icon = group.kind === 'task' ? 'check_circle' : (group.kind === 'commits' ? 'commit' : 'checklist');
+    var title;
+    var meta = [];
+    var groupKey;
+    if (group.kind === 'commits') {
+      title = 'Commits ohne Aufgabe';
+      var projectTitle = String(group.project && (group.project.title || group.project.name) || '').trim();
+      if (projectTitle) meta.push(projectTitle);
+      groupKey = 'commits:' + String(group.project && group.project.id || '');
+    } else {
+      title = String(group.task.title || 'Aufgabe').trim() || 'Aufgabe';
+      if (group.kind === 'progress') meta.push('Teilaufgaben ' + group.subtaskDone + '/' + group.subtaskTotal);
+      var projectLabel = getTaskProjectLabel(group.task, projectsById);
+      if (projectLabel) meta.push(projectLabel);
+      groupKey = 'task:' + String(group.task.id || '');
+    }
+
+    var html = '<li class="team-load-done-item is-' + group.kind + '"><span class="material-symbols-rounded" aria-hidden="true">' + icon + '</span><span class="team-load-done-copy">';
+    if (group.kind === 'commits') {
+      html += '<span class="team-load-done-title" title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</span>';
+    } else {
+      html += '<button type="button" class="team-load-done-title team-load-done-open"' + buildTeamLoadDoneOpenAttrs(group) + ' title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</button>';
+    }
+    if (meta.length) html += '<span class="team-load-done-project" title="' + escapeHtml(meta.join(' · ')) + '">' + escapeHtml(meta.join(' · ')) + '</span>';
+    if (group.steps.length) {
+      html += '<ul class="team-load-done-steps" aria-label="Entwicklungsschritte">';
+      group.steps.slice(0, 3).forEach(function(step) { html += buildTeamLoadDoneStepHtml(step, group); });
+      html += '</ul>';
+      if (group.steps.length > 3) {
+        var stepsKey = 'steps:' + employeeKey + ':' + groupKey;
+        html += '<details class="team-load-done-more" data-expand-key="' + escapeHtml(stepsKey) + '"' + (expandedDoneKeys[stepsKey] ? ' open' : '') + '>';
+        html += '<summary>+' + (group.steps.length - 3) + ' weitere Schritte</summary><ul class="team-load-done-steps">';
+        group.steps.slice(3).forEach(function(step) { html += buildTeamLoadDoneStepHtml(step, group); });
+        html += '</ul></details>';
+      }
+    }
+    return html + '</span></li>';
   }
 
   function getExpandedDashboardSubtaskTaskIds(container) {
@@ -2103,6 +2351,7 @@
     if (!container) return;
 
     var expandedSubtaskTaskIds = getExpandedDashboardSubtaskTaskIds(container);
+    var expandedDoneKeys = getExpandedTeamLoadDoneKeys(container);
 
     if (employees.length === 0) {
       setHtmlIfChanged(container, '<h3>Aufgabenverteilung</h3><p class="chart-empty">Nicht genügend Daten für Chart.</p>');
@@ -2119,15 +2368,15 @@
     var authManager = window.AuthManager;
     var currentUser = authManager && typeof authManager.getCurrentUser === 'function' ? authManager.getCurrentUser() : null;
     var currentUserId = currentUser ? String(currentUser.id || '') : '';
-    var employeeRows = getTeamLoadEmployeeRows(employees, tasks).filter(function(row) {
-      return row.activeTasks.length > 0 || row.completedTodayTasks.length > 0 || row.completedTodaySubtasks.length > 0 ||
+    var employeeRows = getTeamLoadEmployeeRows(employees, tasks, projects).filter(function(row) {
+      return row.activeTasks.length > 0 || row.dailyLog.groups.length > 0 ||
         hasEmployeeDashboardPresenceToday(row.employee, todayKey);
     }).sort(function(a, b) {
       if (b.activeTasks.length !== a.activeTasks.length) return b.activeTasks.length - a.activeTasks.length;
       var onlineDifference = Number(isEmployeeDashboardOnline(b.employee)) - Number(isEmployeeDashboardOnline(a.employee));
       if (onlineDifference) return onlineDifference;
-      var aDoneToday = a.completedTodayTasks.length + (a.completedTodaySubtasks || []).length;
-      var bDoneToday = b.completedTodayTasks.length + (b.completedTodaySubtasks || []).length;
+      var aDoneToday = a.dailyLog.groups.length;
+      var bDoneToday = b.dailyLog.groups.length;
       if (bDoneToday !== aDoneToday) return bDoneToday - aDoneToday;
       var presenceDifference = getEmployeeDashboardPresenceTimestamp(b.employee) - getEmployeeDashboardPresenceTimestamp(a.employee);
       if (presenceDifference) return presenceDifference;
@@ -2145,8 +2394,7 @@
     employeeRows.forEach(function(row) {
       var employee = row.employee || {};
       var activeTasks = row.activeTasks || [];
-      var completedTodayTasks = row.completedTodayTasks || [];
-      var completedTodaySubtasks = row.completedTodaySubtasks || [];
+      var dailyLog = row.dailyLog || { groups: [], counts: { tasks: 0, subtasks: 0, commits: 0 } };
       var avatarUrl = getEmployeeAvatarUrl(employee);
       var profileUrl = employee.github && employee.github.profileUrl ? String(employee.github.profileUrl).trim() : '';
       var githubLabel = employee.github && employee.github.username ? '@' + String(employee.github.username).replace(/^@+/, '') : '';
@@ -2259,34 +2507,31 @@
       }
       html += '</section>';
 
-      var completedTodayEntries = completedTodayTasks.map(function(task) {
-        return { type: 'task', task: task };
-      }).concat(completedTodaySubtasks.map(function(entry) {
-        return { type: 'subtask', task: entry.task, subtask: entry.subtask };
-      }));
+      var employeeKey = String(employee.id || employee.name || '');
+      var doneGroups = dailyLog.groups;
+      var summaryParts = [];
+      if (dailyLog.counts.tasks) summaryParts.push(dailyLog.counts.tasks + (dailyLog.counts.tasks === 1 ? ' Aufgabe' : ' Aufgaben'));
+      if (dailyLog.counts.subtasks) summaryParts.push(dailyLog.counts.subtasks + (dailyLog.counts.subtasks === 1 ? ' Teilaufgabe' : ' Teilaufgaben'));
+      if (dailyLog.counts.commits) summaryParts.push(dailyLog.counts.commits + (dailyLog.counts.commits === 1 ? ' Commit' : ' Commits'));
 
-      html += '<section class="team-load-done-section" aria-label="Heute erledigte Aufgaben">';
-      html += '<div class="team-load-section-heading"><span>Heute erledigt</span><span class="team-load-section-count' + (completedTodayEntries.length ? ' is-done' : '') + '">' + completedTodayEntries.length + '</span></div>';
-      if (completedTodayEntries.length) {
+      html += '<section class="team-load-done-section" aria-label="Heute erledigte Aufgaben und Entwicklungsschritte">';
+      html += '<div class="team-load-section-heading"><span>Heute erledigt</span><span class="team-load-section-count' + (doneGroups.length ? ' is-done' : '') + '">' + doneGroups.length + '</span></div>';
+      if (doneGroups.length) {
+        html += '<div class="team-load-done-summary">' + escapeHtml(summaryParts.join(' · ')) + '</div>';
         html += '<ul class="team-load-done-list">';
-        completedTodayEntries.slice(0, 3).forEach(function(entry) {
-          var projectLabel = getTaskProjectLabel(entry.task, projectsById);
-          if (entry.type === 'subtask') {
-            var subtaskTitle = String(entry.subtask.title || 'Teilaufgabe').trim() || 'Teilaufgabe';
-            var parentTitle = String(entry.task.title || 'Aufgabe').trim() || 'Aufgabe';
-            var subtaskContext = 'Teilaufgabe · ' + parentTitle + (projectLabel ? ' · ' + projectLabel : '');
-            html += '<li class="team-load-done-item is-subtask"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span><span class="team-load-done-copy"><span class="team-load-done-title" title="' + escapeHtml(subtaskTitle) + '">' + escapeHtml(subtaskTitle) + '</span>';
-            html += '<span class="team-load-done-project" title="' + escapeHtml(subtaskContext) + '">' + escapeHtml(subtaskContext) + '</span>';
-            html += '</span></li>';
-            return;
-          }
-          var task = entry.task;
-          html += '<li class="team-load-done-item"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span><span class="team-load-done-copy"><span class="team-load-done-title" title="' + escapeHtml(task.title || 'Aufgabe') + '">' + escapeHtml(task.title || 'Aufgabe') + '</span>';
-          if (projectLabel) html += '<span class="team-load-done-project">' + escapeHtml(projectLabel) + '</span>';
-          html += '</span></li>';
+        doneGroups.slice(0, 3).forEach(function(group) {
+          html += buildTeamLoadDoneGroupHtml(group, projectsById, employeeKey, expandedDoneKeys);
         });
-        if (completedTodayEntries.length > 3) html += '<li class="team-load-more">+' + (completedTodayEntries.length - 3) + ' weitere erledigt</li>';
         html += '</ul>';
+        if (doneGroups.length > 3) {
+          var moreKey = 'groups:' + employeeKey;
+          html += '<details class="team-load-done-more" data-expand-key="' + escapeHtml(moreKey) + '"' + (expandedDoneKeys[moreKey] ? ' open' : '') + '>';
+          html += '<summary>+' + (doneGroups.length - 3) + ' weitere anzeigen</summary><ul class="team-load-done-list">';
+          doneGroups.slice(3).forEach(function(group) {
+            html += buildTeamLoadDoneGroupHtml(group, projectsById, employeeKey, expandedDoneKeys);
+          });
+          html += '</ul></details>';
+        }
       } else {
         html += '<div class="team-load-empty">Noch keine Aufgabe erledigt</div>';
       }
@@ -2378,6 +2623,22 @@
     }
     if (dashboardPage) {
       dashboardPage.addEventListener('click', function(event) {
+        var doneTaskBtn = event.target && event.target.closest ? event.target.closest('[data-open-done-task]') : null;
+        if (doneTaskBtn) {
+          event.preventDefault();
+          openDoneTaskDetail(doneTaskBtn.getAttribute('data-open-done-task') || '', {
+            subtaskId: doneTaskBtn.getAttribute('data-focus-subtask') || '',
+            sha: doneTaskBtn.getAttribute('data-focus-sha') || ''
+          });
+          return;
+        }
+        var doneCommitBtn = event.target && event.target.closest ? event.target.closest('[data-open-done-commit]') : null;
+        if (doneCommitBtn) {
+          event.preventDefault();
+          openDoneCommitDetail(doneCommitBtn.getAttribute('data-open-done-commit') || '', doneCommitBtn.getAttribute('data-project-id') || '');
+          return;
+        }
+
         var statusBtn = event.target && event.target.closest ? event.target.closest('[data-edit-daily-status]') : null;
         if (statusBtn) {
           event.preventDefault();

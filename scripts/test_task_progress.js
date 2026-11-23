@@ -190,10 +190,39 @@ test('team load lists subtasks completed today under "Heute erledigt"',()=>{
 
   const html = teamLoadContainer.innerHTML;
   assert.match(html,/Heute erledigt<\/span><span class="team-load-section-count is-done">1</);
-  assert.match(html,/team-load-done-item is-subtask/);
-  assert.match(html,/team-load-done-title" title="Heute fertig"/);
-  assert.match(html,/Teilaufgabe · Aktive Aufgabe/);
+  assert.match(html,/team-load-done-item is-progress/);
+  assert.match(html,/team-load-done-title" title="Aktive Aufgabe"/);
+  assert.match(html,/team-load-done-project" title="Teilaufgaben 2\/3"/);
+  assert.match(html,/team-load-done-step-title" title="Heute fertig"/);
   assert.doesNotMatch(html,/Gestern fertig/);
+});
+
+test('team load documents today\'s GitHub commits as development steps, including undocumented ones',()=>{
+  const data = makeDataLayer();
+  data.getEmployees = ()=>[{id:'employee',name:'Alex',github:{username:'alex',aliases:['Alex Beispiel']}}];
+  const today = new Date().toISOString();
+  const old = new Date(Date.now()-40*86400000).toISOString();
+  data.createProject({id:'project',title:'Projekt',githubCommits:[
+    {sha:'aaaaaaa1',message:'feat: dokumentiert',author:'Alex Beispiel',date:today},
+    {sha:'bbbbbbb2',message:'fix: noch ohne Aufgabe\n\nDetails',author:'Alex Beispiel',date:today,url:'https://github.com/o/r/commit/bbbbbbb2'},
+    {sha:'ccccccc3',message:'chore: alt',author:'Alex Beispiel',date:old},
+    {sha:'ddddddd4',message:'feat: fremd',author:'Jemand',date:today}
+  ]});
+  data.createTask({id:'doc',title:'Tagesdoku',projectId:'project',status:'done',assigneeId:'employee',
+    githubCommitImport:{commits:[{sha:'aaaaaaa1',title:'Dokumentierter Schritt',date:today,employeeId:'employee',url:'https://github.com/o/r/commit/aaaaaaa1'}]},
+    subtasks:[{title:'DE: Dokumentierter Schritt | EN: Documented | Commit: aaaaaaa1',completed:true,sourceCommitSha:'aaaaaaa1'}]});
+  const {dashboard,teamLoadContainer} = makeDashboard(data);
+  dashboard.renderTeamLoad();
+
+  const html = teamLoadContainer.innerHTML;
+  assert.match(html,/1 Aufgabe · 2 Commits/);
+  assert.match(html,/title="Tagesdoku"/);
+  assert.match(html,/href="https:\/\/github.com\/o\/r\/commit\/aaaaaaa1"[^>]*>aaaaaaa</);
+  assert.match(html,/team-load-done-step-title" title="Dokumentierter Schritt"/);
+  assert.match(html,/Commits ohne Aufgabe/);
+  assert.match(html,/team-load-done-step-title" title="fix: noch ohne Aufgabe"/);
+  assert.equal((html.match(/Dokumentierter Schritt"/g)||[]).length,1);
+  assert.doesNotMatch(html,/chore: alt|feat: fremd|feat: dokumentiert/);
 });
 
 test('team load finds tasks completed today via status history and GitHub commit dates',()=>{

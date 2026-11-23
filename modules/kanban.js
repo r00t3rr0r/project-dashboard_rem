@@ -2264,7 +2264,10 @@
     return '<ul class="kanban-task-detail-list">' + items.join('') + '</ul>';
   }
 
-  function openTaskDetailModal(taskId) {
+  function openTaskDetailModal(taskId, options) {
+    var focus = options || {};
+    var focusSubtaskId = String(focus.subtaskId || '');
+    var focusSha = String(focus.sha || '');
     var task = window.DataLayer.getTaskById(taskId);
     var overlay = document.getElementById('modal-overlay');
     var content = document.getElementById('modal-content');
@@ -2289,9 +2292,14 @@
     if (schedule.fixedAt) scheduleDetails.push('Fester Termin: ' + formatDateTimeShort(schedule.fixedAt));
     if (schedule.rangeStart || schedule.rangeEnd) scheduleDetails.push('Zeitraum: ' + (schedule.rangeStart || 'offen') + ' bis ' + (schedule.rangeEnd || 'offen'));
 
+    var isFocusedSubtask = function (item) {
+      return (focusSubtaskId && String(item.id || '') === focusSubtaskId) || (focusSha && String(item.sourceCommitSha || '') === focusSha);
+    };
     var subtaskItems = subtasks.map(function (item) {
       var assignee = item.assigneeId ? getAssignee(item) : null;
-      return '<li class="' + (item.completed ? 'is-complete' : '') + '"><button type="button" class="kanban-task-detail-subtask-toggle" data-detail-subtask-toggle="' + escapeHtml(item.id || '') + '" aria-pressed="' + (item.completed ? 'true' : 'false') + '"><span class="material-symbols-rounded" aria-hidden="true">' + (item.completed ? 'check_circle' : 'radio_button_unchecked') + '</span><span>' + escapeHtml(item.title || 'Teilaufgabe') + (item.assigneeId ? ' · ' + escapeHtml(assignee ? assignee.name : 'Unbekannter Mitarbeiter') : '') + '</span></button></li>';
+      var subtaskClasses = [item.completed ? 'is-complete' : '', isFocusedSubtask(item) ? 'is-focused' : ''].filter(Boolean).join(' ');
+      var completedAtLabel = item.completed && item.completedAt ? '<small>Erledigt: ' + escapeHtml(formatDateTimeShort(item.completedAt)) + '</small>' : '';
+      return '<li class="' + subtaskClasses + '"><button type="button" class="kanban-task-detail-subtask-toggle" data-detail-subtask-toggle="' + escapeHtml(item.id || '') + '" aria-pressed="' + (item.completed ? 'true' : 'false') + '"><span class="material-symbols-rounded" aria-hidden="true">' + (item.completed ? 'check_circle' : 'radio_button_unchecked') + '</span><span>' + escapeHtml(item.title || 'Teilaufgabe') + (item.assigneeId ? ' · ' + escapeHtml(assignee ? assignee.name : 'Unbekannter Mitarbeiter') : '') + completedAtLabel + '</span></button></li>';
     });
     var noteItems = notes.map(function (note) {
       return '<li><span class="material-symbols-rounded" aria-hidden="true">sticky_note_2</span><span>' + escapeHtml(note.text || '') + (note.createdAt ? '<small>' + escapeHtml(formatDateTimeShort(note.createdAt)) + '</small>' : '') + '</span></li>';
@@ -2306,6 +2314,17 @@
     var dependencyItems = dependencies.map(function (id) {
       var dependency = window.DataLayer.getTaskById(id);
       return '<li><span class="material-symbols-rounded" aria-hidden="true">account_tree</span><span>' + escapeHtml(dependency && dependency.title ? dependency.title : id) + '<small>' + escapeHtml(id) + '</small></span></li>';
+    });
+    var importedCommits = task.githubCommitImport && Array.isArray(task.githubCommitImport.commits) ? task.githubCommitImport.commits.slice() : [];
+    importedCommits.sort(function (a, b) { return String(a && a.date || '').localeCompare(String(b && b.date || '')); });
+    var commitItems = importedCommits.filter(Boolean).map(function (commit) {
+      var sha = String(commit.sha || '');
+      var shaLabel = escapeHtml(sha.slice(0, 7) || 'Commit');
+      var shaHtml = commit.url ? '<a href="' + escapeHtml(commit.url) + '" target="_blank" rel="noopener noreferrer">' + shaLabel + '</a>' : shaLabel;
+      var title = String(commit.title || commit.message || '').split('\n')[0].trim() || 'Commit';
+      var message = String(commit.message || '').trim();
+      var meta = [commit.date ? formatDateTimeShort(commit.date) : '', commit.author || ''].filter(Boolean).join(' · ');
+      return '<li class="kanban-task-detail-commit' + (focusSha && sha === focusSha ? ' is-focused' : '') + '"><span class="material-symbols-rounded" aria-hidden="true">commit</span><span><strong>' + shaHtml + '</strong> ' + escapeHtml(title) + (meta ? '<small>' + escapeHtml(meta) + '</small>' : '') + (message && message !== title ? '<small class="kanban-task-detail-commit-message">' + escapeHtml(message) + '</small>' : '') + '</span></li>';
     });
     var blockerHistory = Array.isArray(task.blockerHistory) ? task.blockerHistory : [];
     var blockerItems = blockerHistory.map(function (entry) {
@@ -2331,6 +2350,7 @@
       '</dl>' +
       '<section class="kanban-task-detail-section"><h3>Beschreibung</h3><div class="kanban-task-detail-copy">' + (description ? escapeHtml(description) : '<span class="text-muted">Keine Beschreibung hinterlegt.</span>') + '</div></section>' +
       '<section class="kanban-task-detail-section kanban-task-detail-section--full"><h3>Teilaufgaben <span>' + subtasks.filter(function (item) { return item.completed; }).length + '/' + subtasks.length + '</span></h3>' + buildTaskDetailList(subtaskItems, 'Keine Teilaufgaben vorhanden.').replace('kanban-task-detail-list', 'kanban-task-detail-list kanban-task-detail-list--subtasks') + '</section>' +
+      (commitItems.length ? '<section class="kanban-task-detail-section kanban-task-detail-section--full"><h3>GitHub-Commits <span>' + commitItems.length + '</span></h3>' + buildTaskDetailList(commitItems) + '</section>' : '') +
       '<div class="kanban-task-detail-columns"><section class="kanban-task-detail-section"><h3>Notizen / Hinweise</h3>' + buildTaskDetailList(noteItems, 'Keine Hinweise vorhanden.') + '</section><section class="kanban-task-detail-section"><h3>Dateien / Links</h3>' + buildTaskDetailList(attachmentItems, 'Keine Dateien oder Links hinterlegt.') + '</section><section class="kanban-task-detail-section"><h3>Abhängigkeiten</h3>' + buildTaskDetailList(dependencyItems, 'Keine Abhängigkeiten hinterlegt.') + '</section></div>' +
       '<section class="kanban-task-detail-section"><h3>Labels</h3><div class="kanban-task-detail-labels">' + (labels.length ? labels.map(function (label) { return '<span>' + escapeHtml(label.name || 'Label') + '</span>'; }).join('') : '<span class="text-muted">Keine Labels hinterlegt.</span>') + '</div></section>' +
       '<section class="kanban-task-detail-section"><h3>Blocker</h3><div class="kanban-task-detail-copy">' + escapeHtml(blockerSummary) + '</div>' + buildTaskDetailList(blockerItems, 'Keine Blocker-Historie vorhanden.') + '</section>' +
@@ -2356,6 +2376,8 @@
         openTaskDetailModal(taskId);
       });
     });
+    var focusedItem = content.querySelector('.is-focused');
+    if (focusedItem && typeof focusedItem.scrollIntoView === 'function') focusedItem.scrollIntoView({ block: 'center' });
   }
 
   function buildSubtaskListHtml(task) {
@@ -3607,7 +3629,8 @@
       getFilteredTasks: getFilteredTasks,
       setFilterAssigneeId: function(id) { setAssigneeFilter(id, true); },
       setFilterPriority: function(p) { filterPriority = p; renderAllColumns(); },
-      focusTask: focusTask
+      focusTask: focusTask,
+      openTaskDetail: openTaskDetailModal
     };
 
     if (document.readyState === 'loading') {
