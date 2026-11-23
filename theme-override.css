@@ -2158,6 +2158,41 @@ body.light-mode .nav-menu li a:hover {
   font-size: 0.66rem;
 }
 
+.project-progress-cross-project {
+  min-width: 0;
+  padding: 0.6rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.6rem;
+  background: rgba(125, 169, 255, 0.06);
+}
+
+.project-progress-cross-project .project-progress-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.project-progress-task-projects {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.2rem 0.3rem;
+  min-width: 0;
+  font-size: 0.66rem;
+}
+
+.project-progress-task-projects-label {
+  color: var(--text-secondary);
+}
+
+.project-progress-task-project {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
 .project-progress-task-workers .project-progress-contact-avatar {
   width: 1.15rem;
   height: 1.15rem;

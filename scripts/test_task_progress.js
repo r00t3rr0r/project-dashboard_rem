@@ -162,6 +162,52 @@ test('project progress uses the shared current-and-next subtask display and refr
   assert.doesNotMatch(container.innerHTML,/Als Nächstes:/);
 });
 
+test('project progress groups cross-project tasks once and identifies their projects',()=>{
+  const data = makeDataLayer();
+  data.createProject({id:'first',title:'Projekt <Alpha>'});
+  data.createProject({id:'second',title:'Projekt Beta'});
+  const shared = data.createTask({
+    id:'shared',title:'Gemeinsame Arbeit',projectIds:['first','second'],status:'in-progress',
+    subtasks:[{title:'Aktueller Schritt'},{title:'Nächster Schritt'}]
+  });
+  const otherShared = data.createTask({id:'other',title:'Weitere gemeinsame Arbeit',projectIds:['second','missing'],status:'in-progress'});
+  data.createTask({id:'single',title:'Einzelprojekt',projectId:'first',status:'in-progress'});
+  data.createTask({id:'free',title:'Administration',status:'in-progress'});
+  data.createTask({id:'done-shared',title:'Abgeschlossen',projectIds:['first','second'],status:'done'});
+  const {dashboard,container} = makeDashboard(data);
+  data.on('dataChanged',event=>{
+    if (event.entity==='tasks') dashboard.renderProjectProgress();
+  });
+
+  for (const collapsed of ['true','false']) {
+    container.dataset.progressCollapsed=collapsed;
+    dashboard.renderProjectProgress();
+    const articles=container.innerHTML.match(/<article class="project-progress-item[^"]*">[\s\S]*?<\/article>/g);
+    const group=articles.find(article=>article.includes('project-progress-cross-project'));
+    assert.ok(group);
+    assert.match(group,/Projektübergreifende Aufgaben/);
+    assert.equal((group.match(/class="project-progress-task-title"/g)||[]).length,2);
+    assert.match(group,/Gemeinsame Arbeit/);
+    assert.match(group,/Projekt &lt;Alpha&gt;/);
+    assert.match(group,/Projekt Beta/);
+    assert.match(group,/Projekt nicht verfügbar/);
+    assert.match(group,/Aktueller Schritt/);
+    assert.doesNotMatch(group,/Abgeschlossen|Einzelprojekt|Administration/);
+    assert.equal(articles.filter(article=>article.includes('Gemeinsame Arbeit')).length,1);
+    assert.ok(articles.some(article=>article.includes('Einzelprojekt')&&!article.includes('project-progress-cross-project')));
+    assert.ok(articles.some(article=>article.includes('Ohne Projekt')&&article.includes('Administration')));
+  }
+
+  shared.projectIds=['first'];
+  shared.projectId='first';
+  data.updateTask(shared);
+  otherShared.status='done';
+  data.updateTask(otherShared);
+  assert.doesNotMatch(container.innerHTML,/project-progress-cross-project|Projektübergreifende Aufgaben/);
+  assert.match(container.innerHTML,/Gemeinsame Arbeit/);
+  assert.doesNotMatch(container.innerHTML,/Weitere gemeinsame Arbeit/);
+});
+
 test('team load shows the current and next subtask and lets users expand the remaining list',()=>{
   const data = makeDataLayer();
   data.getEmployees = ()=>[{id:'employee',name:'Alex'}];

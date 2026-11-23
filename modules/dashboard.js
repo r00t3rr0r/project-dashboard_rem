@@ -1014,6 +1014,17 @@
     }
 
     var isCollapsed = container.dataset.progressCollapsed === 'true';
+    var projectsById = Object.create(null);
+    projects.forEach(function(project) {
+      if (project && project.id) projectsById[String(project.id)] = project;
+    });
+
+    function getProgressTaskProjectIds(task) {
+      var ids = Array.isArray(task.projectIds) ? task.projectIds : (task.projectId ? [task.projectId] : []);
+      return ids.map(function(id) { return String(id || '').trim(); }).filter(function(id, index, list) {
+        return !!id && list.indexOf(id) === index;
+      });
+    }
 
     function buildProgressEntry(project, tasks) {
       var activeTasks = tasks.filter(function(task) {
@@ -1025,16 +1036,20 @@
 
     var projectEntries = projects.map(function(project) {
       var tasks = allTasks.filter(function(task) {
-        return task && window.DataLayer.isTaskLinkedToProject(task, project.id);
+        return task && getProgressTaskProjectIds(task).length === 1 && window.DataLayer.isTaskLinkedToProject(task, project.id);
       });
       return buildProgressEntry(project, tasks);
     }).filter(function(entry) {
       return entry.tasks.length > 0;
     });
     var unassignedTasks = allTasks.filter(function(task) {
-      return task && !(Array.isArray(task.projectIds) ? task.projectIds.length : task.projectId) && normalizeTaskStatus(task) === 'in-progress';
+      return task && getProgressTaskProjectIds(task).length === 0 && normalizeTaskStatus(task) === 'in-progress';
     });
     if (unassignedTasks.length) projectEntries.push(buildProgressEntry(null, unassignedTasks));
+    var crossProjectTasks = allTasks.filter(function(task) {
+      return task && getProgressTaskProjectIds(task).length > 1 && normalizeTaskStatus(task) === 'in-progress';
+    });
+    if (crossProjectTasks.length) projectEntries.push({ project: null, tasks: crossProjectTasks, crossProject: true });
 
     if (projectEntries.length === 0) {
       setHtmlIfChanged(container, '<h3>Projekt-Fortschritt</h3><p class="chart-empty">Keine Aufgaben in Bearbeitung.</p>');
@@ -1053,10 +1068,10 @@
       var percent = project ? getProjectProgressPercent(project) : 0;
       var toneClass = percent >= 75 ? 'is-strong' : (percent >= 40 ? 'is-mid' : 'is-low');
 
-      html += '<article class="project-progress-item">';
+      html += '<article class="project-progress-item' + (entry.crossProject ? ' project-progress-cross-project' : '') + '">';
       html += '<div class="project-progress-head">';
       html += '<div class="project-progress-head-main">';
-      html += '<span class="project-progress-title">' + escapeHtml(project ? (project.title || project.name) : 'Ohne Projekt') + '</span>';
+      html += '<span class="project-progress-title">' + escapeHtml(project ? (project.title || project.name) : (entry.crossProject ? 'Projektübergreifende Aufgaben' : 'Ohne Projekt')) + '</span>';
       html += renderProjectProgressEmployees(getProjectProgressEmployees(tasks, false), 'project-progress-active-team');
       html += '</div>';
       if (project) html += '<span class="project-progress-percent">' + percent + '%</span>';
@@ -1087,6 +1102,15 @@
         html += '<div class="project-progress-task-head"><span class="project-progress-task-title" title="' + escapeHtml(task.title || 'Aufgabe') + '">' + escapeHtml(task.title || 'Aufgabe') + '</span>';
         if (activityLabel) html += '<span class="project-progress-task-activity">' + escapeHtml(activityLabel) + '</span>';
         html += '</div>';
+        if (entry.crossProject) {
+          html += '<div class="project-progress-task-projects"><span class="project-progress-task-projects-label">Projekte:</span>';
+          getProgressTaskProjectIds(task).forEach(function(id) {
+            var linkedProject = projectsById[id];
+            var name = linkedProject ? (linkedProject.title || linkedProject.name || 'Projekt') : 'Projekt nicht verfügbar';
+            html += '<span class="project-progress-task-project">' + escapeHtml(name) + '</span>';
+          });
+          html += '</div>';
+        }
         if (taskEmployees.length) html += renderProjectProgressEmployees(taskEmployees, 'project-progress-task-workers');
         html += '<div class="project-progress-task-track' + (taskIsRunning ? ' is-running' : '') + (taskProgress === 0 ? ' is-empty' : '') + '" role="img" aria-label="Gesamtfortschritt ' + taskProgress + '%, heute plus ' + taskProgressToday + ' Prozentpunkte"><span class="project-progress-task-fill ' + taskToneClass + (taskIsRunning ? ' is-running' : '') + '" style="--task-progress:' + taskProgress + '%"></span>';
         if (taskProgressToday > 0) html += '<span class="project-progress-task-today" style="--task-progress-start:' + (taskProgress - taskProgressToday) + '%;--task-progress:' + taskProgressToday + '%"></span>';
