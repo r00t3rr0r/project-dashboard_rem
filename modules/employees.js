@@ -572,11 +572,12 @@
     var profileLink = github.profileUrl || buildGitHubProfileUrl(username);
     var lastSyncLabel = activity && activity.fetchedAt ? formatDateTime(activity.fetchedAt) : (github.lastSyncedAt ? formatDateTime(github.lastSyncedAt) : 'noch nicht synchronisiert');
     var statusNote = '';
+    var syncError = github.syncStatus === 'syncing' ? '' : (github.syncError || (activity && activity.syncError) || '');
 
     if (!username) {
       statusNote = '<p class="employee-github-note">GitHub-Profillink oder Benutzername hinterlegen, um Aktivitaet projektscharf zuzuordnen.</p>';
-    } else if (activity && activity.syncError) {
-      statusNote = '<p class="employee-github-note is-error">Sync-Hinweis: ' + escapeHtml(activity.syncError) + '</p>';
+    } else if (syncError) {
+      statusNote = '<p class="employee-github-note is-error">Sync-Fehler: ' + escapeHtml(syncError) + '</p>';
     } else if (activity && activity.source === 'project-cache') {
       statusNote = '<p class="employee-github-note">Aktuell aus bereits synchronisierten Projekt-Commits abgeleitet. Fuer exaktere Daten pro Projekt GitHub Sync ausfuehren.</p>';
     }
@@ -619,10 +620,30 @@
   }
 
   function fetchGitHubJsonWithMeta(url, token) {
-    return fetch(url, { headers: buildGitHubRequestHeaders(token) }).then(function(response) {
+    return fetch(url, { headers: buildGitHubRequestHeaders(token) }).catch(function(err) {
+      var detail = err && err.message ? ': ' + err.message : '';
+      throw new Error('GitHub-API nicht erreichbar (Netzwerk- oder CORS-Fehler)' + detail);
+    }).then(function(response) {
       return response.json().catch(function() { return {}; }).then(function(body) {
         if (!response.ok) {
-          throw new Error(body && body.message ? body.message : 'GitHub API HTTP ' + response.status);
+          var message = body && body.message ? String(body.message) : '';
+          var status = response.status;
+          var rateLimitRemaining = response.headers && response.headers.get
+            ? response.headers.get('x-ratelimit-remaining')
+            : '';
+          if (status === 401) {
+            throw new Error('GitHub-Zugriff verweigert (401). Bitte Benutzername und Personal Access Token pruefen.');
+          }
+          if ((status === 403 || status === 429) && (status === 429 || rateLimitRemaining === '0' || /rate limit/i.test(message))) {
+            throw new Error('GitHub API Rate Limit erreicht (' + status + '). Bitte spaeter erneut versuchen oder einen PAT hinterlegen.');
+          }
+          if (status === 403) {
+            throw new Error('GitHub-Zugriff verweigert (403). Token-Berechtigungen und Repository-Zugriff pruefen.' + (message ? ' GitHub meldet: ' + message : ''));
+          }
+          if (status === 404) {
+            throw new Error('Repository nicht gefunden oder fuer diesen Token nicht zugaenglich (404).' + (message ? ' GitHub meldet: ' + message : ''));
+          }
+          throw new Error(message || 'GitHub API HTTP ' + status);
         }
         return {
           body: body,
@@ -638,7 +659,10 @@
     var url = 'https://api.github.com/repos/' + encodeURIComponent(project.github.owner) + '/' + encodeURIComponent(project.github.repo) + '/commits?author=' + encodeURIComponent(username) + '&since=' + encodeURIComponent(sinceIso) + '&per_page=100&page=' + currentPage;
 
     return fetchGitHubJsonWithMeta(url, token).then(function(result) {
-      var items = Array.isArray(result.body) ? result.body : [];
+      if (!Array.isArray(result.body)) {
+        throw new Error('GitHub lieferte keine gueltige Commit-Liste.');
+      }
+      var items = result.body;
       items.forEach(function(item) {
         var commit = item.commit || {};
         var author = commit.author || {};
@@ -659,11 +683,14 @@
         });
       });
 
-      if (items.length === 100 && currentPage < 3) {
+      if (items.length === 100) {
         return fetchEmployeeCommitsForProject(project, username, sinceIso, currentPage + 1, allItems, token);
       }
 
       return allItems;
+    }).catch(function(err) {
+      if (err && typeof err === 'object') err.commits = allItems.slice();
+      throw err;
     });
   }
 
@@ -684,20 +711,26 @@
     employee.github.syncStatus = 'syncing';
     employee.github.syncError = '';
     persistEmployee(employee);
+    renderEmployeeList('employee-list');
 
     if (!projects.length) {
-      employee.github.syncStatus = 'idle';
-      employee.github.syncError = 'Keine GitHub-verknuepften Projekte vorhanden.';
+      employee.github.syncStatus = 'error';
+      employee.github.syncError = 'Keine GitHub-verknuepften Projekte gefunden. Bitte zuerst ein Projekt mit Repository-Eigentuemer und Repository-Namen verknuepfen.';
       persistEmployee(employee);
       renderEmployeeList('employee-list');
-      return Promise.resolve(buildProjectCacheGitHubActivity(employee));
+      return Promise.reject(new Error(employee.github.syncError));
     }
 
     githubSyncRequests[employeeId] = Promise.all(projects.map(function(project) {
       return fetchEmployeeCommitsForProject(project, username, sinceIso, 1, [], githubToken).then(function(commits) {
         return { commits: commits, error: '' };
       }).catch(function(err) {
-        return { commits: [], error: err && err.message ? err.message : String(err) };
+        var repoName = project.github.owner + '/' + project.github.repo;
+        var projectName = project.title || project.name || repoName;
+        return {
+          commits: err && Array.isArray(err.commits) ? err.commits : [],
+          error: projectName + ' (' + repoName + '): ' + (err && err.message ? err.message : String(err))
+        };
       });
     })).then(function(results) {
       var allCommits = [];
@@ -706,6 +739,10 @@
         allCommits = allCommits.concat(result.commits || []);
         if (result.error) errors.push(result.error);
       });
+
+      if (errors.length === projects.length) {
+        throw new Error(errors.join('\n'));
+      }
 
       var freshEmployee = getEmployees().find(function(item) { return item.id === employeeId; }) || employee;
       var activity = aggregateGitHubActivity(freshEmployee, allCommits, 'github-api', new Date().toISOString(), errors.join(' | '));
@@ -720,7 +757,9 @@
       }), freshEmployee.name);
       persistEmployee(freshEmployee);
 
-      createNotification('GitHub-Aktivitaet fuer ' + freshEmployee.name + ' wurde aktualisiert.');
+      createNotification(errors.length
+        ? 'GitHub Sync fuer ' + freshEmployee.name + ' teilweise fehlgeschlagen: ' + errors.join(' | ')
+        : 'GitHub-Aktivitaet fuer ' + freshEmployee.name + ' wurde aktualisiert.');
       renderEmployeeList('employee-list');
       delete githubSyncRequests[employeeId];
       return activity;
