@@ -196,6 +196,43 @@ test('team load lists subtasks completed today under "Heute erledigt"',()=>{
   assert.doesNotMatch(html,/Gestern fertig/);
 });
 
+test('team load finds tasks completed today via status history and GitHub commit dates',()=>{
+  const data = makeDataLayer();
+  data.getEmployees = ()=>[{id:'employee',name:'Alex'},{id:'other',name:'Bea'}];
+  const nowIso = new Date().toISOString();
+  const oldIso = new Date(Date.now()-40*86400000).toISOString();
+  const manual = data.createTask({id:'manual',title:'Manuell fertig',status:'in-progress',assigneeIds:['other','employee']});
+  manual.status = 'done';
+  data.updateTask(manual);
+  data.createTask({id:'commit-today',title:'Commit heute',status:'done',assigneeId:'employee',
+    githubCommitImport:{commits:[{sha:'a1',date:nowIso,employeeId:'employee'}]},
+    subtasks:[{title:'Commit a1',completed:true,assigneeId:'employee',sourceCommitSha:'a1'}]});
+  data.createTask({id:'commit-old',title:'Commit alt',status:'done',assigneeId:'employee',
+    githubCommitImport:{commits:[{sha:'b2',date:oldIso,employeeId:'employee'}]},
+    subtasks:[{title:'Commit b2',completed:true,assigneeId:'employee',sourceCommitSha:'b2'}]});
+  const {dashboard,teamLoadContainer} = makeDashboard(data);
+  dashboard.renderTeamLoad();
+
+  const alexCard = teamLoadContainer.innerHTML.split('<article').find(card=>card.includes('>Alex'));
+  assert.match(alexCard,/Heute erledigt<\/span><span class="team-load-section-count is-done">2</);
+  assert.match(alexCard,/title="Manuell fertig"/);
+  assert.match(alexCard,/title="Commit heute"/);
+  assert.doesNotMatch(alexCard,/Commit alt|Commit a1|Commit b2/);
+});
+
+test('updating a task stamps completedAt only for newly completed subtasks',()=>{
+  const data = makeDataLayer();
+  const task = data.createTask({id:'task',title:'Aufgabe',status:'in-progress',
+    subtasks:[{title:'Alt erledigt',completed:true},{title:'Neu'}]});
+  task.subtasks[1].completed = true;
+  data.updateTask(task);
+  assert.equal(task.subtasks[0].completedAt,'');
+  assert.ok(task.subtasks[1].completedAt);
+  task.subtasks[1].completed = false;
+  data.updateTask(task);
+  assert.equal(task.subtasks[1].completedAt,'');
+});
+
 test('project progress shows only tasks in progress, regardless of subtasks or recent activity',()=>{
   const data = makeDataLayer();
   data.createProject({id:'project',title:'Projekt'});

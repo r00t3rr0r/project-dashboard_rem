@@ -1807,59 +1807,120 @@
     return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
   }
 
-  function getTaskCompletionDetails(task) {
-    var history = Array.isArray(task && task.history) ? task.history : [];
-    var completion = null;
-    for (var index = history.length - 1; index >= 0; index--) {
-      if (history[index] && history[index].type === 'completed') {
-        completion = history[index];
+  function getTaskAssigneeIdList(task) {
+    var ids = [];
+    function add(value) {
+      var id = String(value || '').trim();
+      if (id && ids.indexOf(id) === -1) ids.push(id);
+    }
+    if (task && Array.isArray(task.assigneeIds)) task.assigneeIds.forEach(add);
+    add(task && task.assigneeId);
+    add(task && task.employeeId);
+    return ids;
+  }
+
+  function getTaskImportedCommits(task) {
+    var commitImport = task && task.githubCommitImport;
+    return commitImport && Array.isArray(commitImport.commits) ? commitImport.commits.filter(Boolean) : [];
+  }
+
+  function parseCompletionTimestamp(value) {
+    var timestamp = Date.parse(String(value || ''));
+    return isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+  }
+
+  function matchesEmployee(employeeId, employeeName, assigneeIds, assigneeName) {
+    if (employeeId && assigneeIds.indexOf(employeeId) !== -1) return true;
+    return !!employeeName && String(assigneeName || '').trim().toLowerCase() === employeeName;
+  }
+
+  // Returns when the task was completed and by whom. GitHub commit documentation tasks are
+  // created directly as "done", so their real completion time is the commit date.
+  function getTaskCompletionDetails(task, employeeId) {
+    var assigneeIds = getTaskAssigneeIdList(task);
+    var at = parseCompletionTimestamp(task && task.completedAt);
+
+    var commits = getTaskImportedCommits(task);
+    if (!at && commits.length) {
+      var ownCommits = employeeId ? commits.filter(function(commit) { return String(commit.employeeId || '') === employeeId; }) : [];
+      (ownCommits.length ? ownCommits : commits).forEach(function(commit) {
+        at = Math.max(at, parseCompletionTimestamp(commit.date));
+      });
+      commits.forEach(function(commit) {
+        var commitEmployeeId = String(commit.employeeId || '').trim();
+        if (commitEmployeeId && assigneeIds.indexOf(commitEmployeeId) === -1) assigneeIds.push(commitEmployeeId);
+      });
+    }
+
+    if (!at) {
+      var history = Array.isArray(task && task.history) ? task.history : [];
+      for (var index = history.length - 1; index >= 0; index--) {
+        var entry = history[index];
+        if (!entry || entry.status !== 'done') continue;
+        var previous = history[index - 1];
+        if (previous && previous.status === 'done') continue;
+        at = parseCompletionTimestamp(entry.at);
+        if (entry.assigneeId && assigneeIds.indexOf(String(entry.assigneeId)) === -1) assigneeIds.unshift(String(entry.assigneeId));
         break;
       }
     }
 
-    return {
-      at: task && task.completedAt || completion && completion.at || '',
-      assigneeId: completion && completion.assigneeId || task && (task.assigneeId || task.employeeId) || ''
-    };
+    return { at: at, assigneeIds: assigneeIds };
+  }
+
+  function getSubtaskCompletionDetails(task, subtask) {
+    var at = parseCompletionTimestamp(subtask && subtask.completedAt);
+    var commitEmployeeId = '';
+    var sha = String(subtask && subtask.sourceCommitSha || '');
+    if (sha) {
+      getTaskImportedCommits(task).some(function(commit) {
+        if (String(commit.sha || '') !== sha) return false;
+        if (!at) at = parseCompletionTimestamp(commit.date);
+        commitEmployeeId = String(commit.employeeId || '');
+        return true;
+      });
+    }
+    var ownAssigneeId = String(subtask && subtask.assigneeId || commitEmployeeId || '').trim();
+    return { at: at, assigneeIds: ownAssigneeId ? [ownAssigneeId] : getTaskAssigneeIdList(task), ownAssignee: !!ownAssigneeId };
+  }
+
+  function isTimestampOnDay(timestamp, todayKey) {
+    return timestamp > 0 && getLocalDateKey(new Date(timestamp)) === todayKey;
   }
 
   function getEmployeeCompletedTodayTasks(employee, tasks, todayKey) {
     var employeeId = String(employee && employee.id || '');
     var employeeName = String(employee && employee.name || '').trim().toLowerCase();
-
-    return (tasks || []).filter(function(task) {
-      if (!task || normalizeTaskStatus(task) !== 'done') return false;
-      var completion = getTaskCompletionDetails(task);
-      var completedAt = Date.parse(completion.at);
-      if (!isFinite(completedAt) || getLocalDateKey(new Date(completedAt)) !== todayKey) return false;
-      if (employeeId && String(completion.assigneeId) === employeeId) return true;
-      return String(task.employeeName || task.assigneeName || '').trim().toLowerCase() === employeeName;
-    }).sort(function(a, b) {
-      return Date.parse(getTaskCompletionDetails(b).at) - Date.parse(getTaskCompletionDetails(a).at);
-    });
-  }
-
-  function getEmployeeCompletedTodaySubtasks(employee, tasks, todayKey) {
-    var employeeId = String(employee && employee.id || '');
-    var employeeName = String(employee && employee.name || '').trim().toLowerCase();
     var entries = [];
 
     (tasks || []).forEach(function(task) {
-      if (!task || normalizeTaskStatus(task) === 'done') return;
-      var subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
-      if (!subtasks.length) return;
+      if (!task || normalizeTaskStatus(task) !== 'done') return;
+      var completion = getTaskCompletionDetails(task, employeeId);
+      if (!isTimestampOnDay(completion.at, todayKey)) return;
+      if (!matchesEmployee(employeeId, employeeName, completion.assigneeIds, task.employeeName || task.assigneeName)) return;
+      entries.push({ task: task, at: completion.at });
+    });
 
-      var taskMatches = (employeeId && String(task.assigneeId || task.employeeId || '') === employeeId) ||
-        (!!employeeName && String(task.employeeName || task.assigneeName || '').trim().toLowerCase() === employeeName);
+    return entries.sort(function(a, b) { return b.at - a.at; }).map(function(entry) { return entry.task; });
+  }
+
+  function getEmployeeCompletedTodaySubtasks(employee, tasks, todayKey, completedTasks) {
+    var employeeId = String(employee && employee.id || '');
+    var employeeName = String(employee && employee.name || '').trim().toLowerCase();
+    var listedTasks = completedTasks || getEmployeeCompletedTodayTasks(employee, tasks, todayKey);
+    var entries = [];
+
+    (tasks || []).forEach(function(task) {
+      if (!task || listedTasks.indexOf(task) !== -1) return;
+      var subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
 
       subtasks.forEach(function(subtask) {
         if (!subtask || !subtask.completed) return;
-        var completedAt = Date.parse(subtask.completedAt || '');
-        if (!isFinite(completedAt) || getLocalDateKey(new Date(completedAt)) !== todayKey) return;
-        var subtaskAssigneeId = String(subtask.assigneeId || '');
-        var matches = subtaskAssigneeId ? (!!employeeId && subtaskAssigneeId === employeeId) : taskMatches;
-        if (!matches) return;
-        entries.push({ task: task, subtask: subtask, completedAt: completedAt });
+        var completion = getSubtaskCompletionDetails(task, subtask);
+        if (!isTimestampOnDay(completion.at, todayKey)) return;
+        var assigneeName = completion.ownAssignee ? '' : (task.employeeName || task.assigneeName);
+        if (!matchesEmployee(employeeId, employeeName, completion.assigneeIds, assigneeName)) return;
+        entries.push({ task: task, subtask: subtask, completedAt: completion.at });
       });
     });
 
@@ -2055,8 +2116,12 @@
     });
 
     var todayKey = getLocalDateKey(new Date());
+    var authManager = window.AuthManager;
+    var currentUser = authManager && typeof authManager.getCurrentUser === 'function' ? authManager.getCurrentUser() : null;
+    var currentUserId = currentUser ? String(currentUser.id || '') : '';
     var employeeRows = getTeamLoadEmployeeRows(employees, tasks).filter(function(row) {
-      return row.activeTasks.length > 0 || hasEmployeeDashboardPresenceToday(row.employee, todayKey);
+      return row.activeTasks.length > 0 || row.completedTodayTasks.length > 0 || row.completedTodaySubtasks.length > 0 ||
+        hasEmployeeDashboardPresenceToday(row.employee, todayKey);
     }).sort(function(a, b) {
       if (b.activeTasks.length !== a.activeTasks.length) return b.activeTasks.length - a.activeTasks.length;
       var onlineDifference = Number(isEmployeeDashboardOnline(b.employee)) - Number(isEmployeeDashboardOnline(a.employee));
@@ -2115,7 +2180,16 @@
       html += '<div class="team-load-main">';
       html += '<div class="team-load-header">';
       html += '<div class="team-load-headcopy">';
-      html += '<div class="team-load-name">' + escapeHtml(employee.name || 'Mitarbeiter');
+      var isCurrentUser = !!currentUserId && String(employee.id || '') === currentUserId;
+      html += '<div class="team-load-name">';
+      if (isCurrentUser) {
+        html += '<button type="button" class="team-load-name-button" data-edit-daily-status="true" title="Eigenen Status bearbeiten (Arbeitsort, Krankmeldung, Notiz)" aria-label="Eigenen Tagesstatus bearbeiten">';
+        html += escapeHtml(employee.name || 'Mitarbeiter');
+        html += '<span class="material-symbols-rounded" aria-hidden="true">edit</span>';
+        html += '</button>';
+      } else {
+        html += escapeHtml(employee.name || 'Mitarbeiter');
+      }
       if (isOnline) {
         html += '<span class="team-load-presence" title="Online im Dashboard"><span class="team-load-presence-dot" aria-hidden="true"></span><span>Online</span></span>';
       } else if (wasOnlineToday) {
@@ -2304,6 +2378,15 @@
     }
     if (dashboardPage) {
       dashboardPage.addEventListener('click', function(event) {
+        var statusBtn = event.target && event.target.closest ? event.target.closest('[data-edit-daily-status]') : null;
+        if (statusBtn) {
+          event.preventDefault();
+          if (window.AuthManager && typeof window.AuthManager.openDailyStatusEditor === 'function') {
+            window.AuthManager.openDailyStatusEditor();
+          }
+          return;
+        }
+
         var btn = event.target && event.target.closest ? event.target.closest('[data-dismiss-notice]') : null;
         if (btn) {
           event.preventDefault();

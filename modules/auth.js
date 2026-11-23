@@ -89,6 +89,7 @@
   var dailyStatusPromptTimer = null;
   var dailyStatusDialogOpen = false;
   var dailyStatusConfirmedKey = '';
+  var dailyStatusEscapeHandler = null;
   var dashboardPresenceLastTouchedAt = 0;
 
   function stableHashHex(input) {
@@ -1264,13 +1265,24 @@
       content.removeAttribute('data-prevent-overlay-close');
       content.removeAttribute('data-prevent-escape-close');
     }
+    if (dailyStatusEscapeHandler) {
+      document.removeEventListener('keydown', dailyStatusEscapeHandler);
+      dailyStatusEscapeHandler = null;
+    }
     dailyStatusDialogOpen = false;
   }
 
-  function openDailyStatusDialog(user) {
+  function openDailyStatusDialog(user, options) {
     var overlay = document.getElementById('modal-overlay');
     var content = document.getElementById('modal-content');
-    if (!overlay || !content || !user || dailyStatusDialogOpen || hasDailyWorkStatus(user)) return;
+    var editMode = !!(options && options.edit);
+    if (!overlay || !content || !user || dailyStatusDialogOpen) return;
+    if (!editMode && hasDailyWorkStatus(user)) return;
+
+    var todayStatus = user.dailyWorkStatus && typeof user.dailyWorkStatus === 'object'
+      && String(user.dailyWorkStatus.date || '') === getLocalDateKey()
+      ? user.dailyWorkStatus
+      : null;
 
     dailyStatusDialogOpen = true;
     content.className = 'modal daily-status-modal';
@@ -1279,8 +1291,8 @@
     content.setAttribute('data-prevent-escape-close', 'true');
     content.innerHTML = ''
       + '<div class="daily-status-heading">'
-      + '  <span class="material-symbols-rounded" aria-hidden="true">today</span>'
-      + '  <div><p class="daily-status-eyebrow">Tagesstart</p><h2>Wie arbeitest du heute?</h2></div>'
+      + '  <span class="material-symbols-rounded" aria-hidden="true">' + (editMode ? 'edit_calendar' : 'today') + '</span>'
+      + '  <div><p class="daily-status-eyebrow">' + (editMode ? 'Tagesstatus' : 'Tagesstart') + '</p><h2>' + (editMode ? 'Status bearbeiten' : 'Wie arbeitest du heute?') + '</h2></div>'
       + '</div>'
       + '<p class="daily-status-intro" id="daily-status-greeting"></p>'
       + '<form id="daily-status-form" class="daily-status-form" novalidate>'
@@ -1291,7 +1303,11 @@
         }).join('')
       + '  </select><small class="daily-status-error" id="daily-status-error" role="alert"></small></div>'
       + '  <div class="form-group"><label for="daily-status-note">Notiz zum Arbeitstag <span class="text-muted">(optional)</span></label><textarea id="daily-status-note" rows="3" maxlength="500" placeholder="z. B. vormittags Kundentermin, ab 14 Uhr erreichbar"></textarea></div>'
-      + '  <div class="daily-status-actions"><span><span class="material-symbols-rounded" aria-hidden="true">lock</span> Einmal täglich erforderlich</span><button type="submit" class="btn btn-primary" id="daily-status-save">Tagesstatus speichern</button></div>'
+      + '  <div class="daily-status-actions">'
+      + (editMode
+          ? '<button type="button" class="btn btn-secondary" id="daily-status-cancel">Abbrechen</button>'
+          : '<span><span class="material-symbols-rounded" aria-hidden="true">lock</span> Einmal täglich erforderlich</span>')
+      + '<button type="submit" class="btn btn-primary" id="daily-status-save">Tagesstatus speichern</button></div>'
       + '</form>';
 
     var greeting = document.getElementById('daily-status-greeting');
@@ -1301,8 +1317,19 @@
     var workplaceGroup = document.getElementById('daily-status-workplace-group');
     var noteInput = document.getElementById('daily-status-note');
     var errorEl = document.getElementById('daily-status-error');
-    if (greeting) greeting.textContent = 'Guten Tag, ' + String(user.name || 'Mitarbeiter') + '. Diese Angabe ist für dein Team sichtbar.';
-    if (workplaceInput) workplaceInput.value = String(user.workplace || '');
+    var cancelButton = document.getElementById('daily-status-cancel');
+    if (greeting) {
+      greeting.textContent = editMode
+        ? 'Passe deinen heutigen Status an, ' + String(user.name || 'Mitarbeiter') + '. Diese Angabe ist für dein Team sichtbar.'
+        : 'Guten Tag, ' + String(user.name || 'Mitarbeiter') + '. Diese Angabe ist für dein Team sichtbar.';
+    }
+    if (sickInput) sickInput.checked = !!(todayStatus && todayStatus.sick);
+    if (workplaceInput) {
+      workplaceInput.value = todayStatus && String(todayStatus.workplace || '').trim()
+        ? String(todayStatus.workplace)
+        : String(user.workplace || '');
+    }
+    if (noteInput && todayStatus) noteInput.value = String(todayStatus.note || '');
 
     function syncSickState() {
       var sick = !!(sickInput && sickInput.checked);
@@ -1312,6 +1339,14 @@
     }
 
     if (sickInput) sickInput.addEventListener('change', syncSickState);
+    if (cancelButton) cancelButton.addEventListener('click', closeDailyStatusDialog);
+    if (editMode) {
+      dailyStatusEscapeHandler = function (event) {
+        if (event.key !== 'Escape') return;
+        closeDailyStatusDialog();
+      };
+      document.addEventListener('keydown', dailyStatusEscapeHandler);
+    }
     if (form) form.addEventListener('submit', function (event) {
       event.preventDefault();
       var sick = !!(sickInput && sickInput.checked);
@@ -1752,6 +1787,12 @@
     login: login,
     logout: logout,
     openLoginModal: openLoginModal,
+    openDailyStatusEditor: function () {
+      var user = getCurrentUser();
+      if (!user) return false;
+      openDailyStatusDialog(user, { edit: true });
+      return true;
+    },
     isSetupMode: isSetupMode
   };
 

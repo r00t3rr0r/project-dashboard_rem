@@ -2170,9 +2170,32 @@
     return task;
   }
 
+  // Last persisted completion state per subtask; tasks are often mutated in place before
+  // updateTask(), so the previous state cannot be read from the task object itself.
+  var subtaskCompletionSnapshot = Object.create(null);
+
+  function rememberSubtaskCompletion(task) {
+    if (!task || !task.id) return;
+    var state = Object.create(null);
+    (task.subtasks || []).forEach(function (st) {
+      if (st && st.id) state[String(st.id)] = !!st.completed;
+    });
+    subtaskCompletionSnapshot[String(task.id)] = state;
+  }
+
+  function stampSubtaskCompletionTimes(task, nowIso) {
+    var previous = task && subtaskCompletionSnapshot[String(task.id)];
+    (task && task.subtasks || []).forEach(function (st) {
+      if (!st || !st.completed || st.completedAt) return;
+      if (previous && previous[String(st.id)] === true) return;
+      st.completedAt = nowIso;
+    });
+  }
+
   function normalizeTasksCollection() {
     tasks.forEach(function (task, index) {
       tasks[index] = normalizeTask(task);
+      rememberSubtaskCompletion(tasks[index]);
     });
   }
 
@@ -2753,6 +2776,7 @@
       if (!task.createdAt) task.createdAt = nowIso;
       if (!task.updatedAt) task.updatedAt = task.createdAt;
       task = normalizeTask(task);
+      rememberSubtaskCompletion(task);
       updateTaskAssignmentResponses(task, null);
       return task;
     });
@@ -2781,6 +2805,8 @@
       var previousTask = tasks[idx];
       task.updatedAt = new Date().toISOString();
       task = normalizeTask(task);
+      stampSubtaskCompletionTimes(task, task.updatedAt);
+      rememberSubtaskCompletion(task);
       updateTaskAssignmentResponses(task, previousTask);
       appendTaskHistoryUpdate(task);
       tasks[idx] = task;

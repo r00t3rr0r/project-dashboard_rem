@@ -14,7 +14,7 @@ Die Anwendung wurde umfassend modernisiert:
 - Konsolidierte Modal- und Komponenten-Styles in mehreren Modulen
 - Theme-Token-Dokumentation in [THEME-TOKENS-DARK.md](THEME-TOKENS-DARK.md)
 
-Bei Aufgaben mit Teilaufgaben wird der Aufgabenfortschritt automatisch aus dem Anteil der erledigten Teilaufgaben berechnet. Die Bereiche „Aufgabenverteilung“ und „Projekt-Fortschritt“ zeigen für Aufgaben in Bearbeitung die aktuell bearbeitete und die nächste offene Teilaufgabe; weitere offene Teilaufgaben lassen sich darunter aufklappen. Unter „Heute erledigt“ erscheinen neben komplett abgeschlossenen Aufgaben auch die heute abgehakten Teilaufgaben noch laufender Aufgaben. Der Aufgabenstatus wird dadurch nicht automatisch geändert. Ohne Teilaufgaben bleibt der Fortschritt manuell einstellbar.
+Bei Aufgaben mit Teilaufgaben wird der Aufgabenfortschritt automatisch aus dem Anteil der erledigten Teilaufgaben berechnet. Die Bereiche „Aufgabenverteilung“ und „Projekt-Fortschritt“ zeigen für Aufgaben in Bearbeitung die aktuell bearbeitete und die nächste offene Teilaufgabe; weitere offene Teilaufgaben lassen sich darunter aufklappen. Unter „Heute erledigt“ erscheinen alle Aufgaben, die der Mitarbeiter heute abgeschlossen hat (Statuswechsel auf „Erledigt“ bzw. bei GitHub-Commit-Dokumentation das Commit-Datum), sowie heute abgehakte Teilaufgaben weiterer Aufgaben. Mitarbeiter mit heute erledigten Aufgaben werden auch ohne aktive Aufgabe angezeigt. Der Aufgabenstatus wird dadurch nicht automatisch geändert. Ohne Teilaufgaben bleibt der Fortschritt manuell einstellbar.
 
 ## Quickstart
 

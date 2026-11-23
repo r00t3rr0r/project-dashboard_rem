@@ -3297,6 +3297,39 @@ body.projects-modal-open {
   line-height: 1.08;
 }
 
+.team-load-name-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--text-muted);
+  text-underline-offset: 3px;
+}
+
+.team-load-name-button .material-symbols-rounded {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  transition: color 0.15s ease;
+}
+
+.team-load-name-button:hover,
+.team-load-name-button:focus-visible {
+  color: var(--accent-blue, #4dabf7);
+  text-decoration-color: currentColor;
+}
+
+.team-load-name-button:hover .material-symbols-rounded,
+.team-load-name-button:focus-visible .material-symbols-rounded {
+  color: inherit;
+}
+
 .team-load-card.is-online {
   border-color: rgba(88, 211, 155, 0.34);
 }
