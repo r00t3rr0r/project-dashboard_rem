@@ -3786,22 +3786,39 @@ a.team-load-done-step-sha:hover {
   white-space: nowrap;
 }
 
-:where(button.team-load-done-open) {
+.team-load-done-section button.team-load-done-open,
+body.light-mode .team-load-done-section button.team-load-done-open {
   display: block;
   max-width: 100%;
+  min-height: 0;
   padding: 0;
   border: 0;
+  border-radius: 0;
   background: none;
+  box-shadow: none;
   color: inherit;
-  font: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
   text-align: left;
+  transform: none;
+  transition: color 0.15s ease;
   cursor: pointer;
 }
 
-button.team-load-done-open:hover,
-button.team-load-done-open:focus-visible {
+.team-load-done-section button.team-load-done-title {
+  color: var(--text-primary);
+  font-size: 0.69rem;
+}
+
+.team-load-done-section button.team-load-done-open:hover,
+.team-load-done-section button.team-load-done-open:focus-visible,
+body.light-mode .team-load-done-section button.team-load-done-open:hover {
+  background: none;
+  box-shadow: none;
   color: #4fa9ff;
   text-decoration: underline;
+  transform: none;
 }
 
 .team-load-done-more summary {
