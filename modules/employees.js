@@ -319,6 +319,20 @@
     });
   }
 
+  function getEmployeeGitHubProjects(employeeId) {
+    var auth = getAuthManager();
+    if (!auth || typeof auth.getProjectsForEmployee !== 'function') return [];
+
+    var employeeProjectIds = Object.create(null);
+    (auth.getProjectsForEmployee(employeeId) || []).forEach(function(project) {
+      if (project && project.id) employeeProjectIds[String(project.id)] = true;
+    });
+
+    return getLinkedGitHubProjects().filter(function(project) {
+      return !!employeeProjectIds[String(project.id || '')];
+    });
+  }
+
   function getEmployeeGitHubIdentity(employee) {
     var github = employee && employee.github ? employee.github : {};
     var usernames = [];
@@ -694,7 +708,82 @@
     });
   }
 
-  function syncEmployeeGitHubActivity(employeeId) {
+  function showGitHubSyncProjectModal(employeeId) {
+    var employee = getEmployees().find(function(item) { return item.id === employeeId; });
+    if (!employee) {
+      alert('Mitarbeiter nicht gefunden.');
+      return;
+    }
+    if (!employee.github || !employee.github.username) {
+      alert('GitHub-Konto ist nicht verknuepft.');
+      return;
+    }
+
+    var projects = getEmployeeGitHubProjects(employeeId);
+    if (!projects.length) {
+      alert('Fuer ' + employee.name + ' wurden keine zugeordneten Dashboard-Projekte mit verknuepftem GitHub-Repository gefunden.');
+      return;
+    }
+
+    var projectOptions = projects.map(function(project) {
+      var repo = project.github.owner + '/' + project.github.repo;
+      return '<label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;cursor:pointer;">' +
+        '<input type="checkbox" data-field="github-sync-project" data-project-id="' + escapeHtml(project.id) + '" checked style="margin-top:3px;">' +
+        '<span><strong>' + escapeHtml(project.title || project.name || 'Unbenanntes Projekt') + '</strong><br><small style="color:var(--text-muted);">' + escapeHtml(repo) + '</small></span>' +
+      '</label>';
+    }).join('');
+
+    showConfirmModal(
+      'GitHub-Repositories synchronisieren',
+      '<div class="modal-form-stack">' +
+        '<p class="modal-hint">Es werden nur Projekte angezeigt, die ' + escapeHtml(employee.name) + ' zugeordnet sind. Waehle aus, welche Repositories synchronisiert werden sollen.</p>' +
+        '<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;">' +
+          '<input id="employee-github-sync-all" type="checkbox" checked> Alle Projekte auswaehlen' +
+        '</label>' +
+        '<div style="display:grid;gap:8px;max-height:45vh;overflow-y:auto;">' + projectOptions + '</div>' +
+      '</div>',
+      function() {
+        var overlay = document.getElementById('modal-overlay');
+        var selectedInputs = overlay
+          ? overlay.querySelectorAll('input[data-field="github-sync-project"]:checked')
+          : [];
+        var selectedProjectIds = Array.prototype.map.call(selectedInputs, function(input) {
+          return input.getAttribute('data-project-id') || '';
+        }).filter(Boolean);
+
+        if (!selectedProjectIds.length) {
+          alert('Bitte mindestens ein Projekt fuer den GitHub Sync auswaehlen.');
+          return;
+        }
+
+        closeModal();
+        syncEmployeeGitHubActivity(employeeId, selectedProjectIds).catch(function(err) {
+          alert(err && err.message ? err.message : 'GitHub Sync fehlgeschlagen.');
+        });
+      },
+      ['Synchronisieren', 'Abbrechen']
+    );
+
+    var overlay = document.getElementById('modal-overlay');
+    var selectAll = document.getElementById('employee-github-sync-all');
+    var projectInputs = overlay ? overlay.querySelectorAll('input[data-field="github-sync-project"]') : [];
+    if (selectAll) {
+      selectAll.addEventListener('change', function() {
+        Array.prototype.forEach.call(projectInputs, function(input) {
+          input.checked = selectAll.checked;
+        });
+      });
+    }
+    Array.prototype.forEach.call(projectInputs, function(input) {
+      input.addEventListener('change', function() {
+        if (selectAll) {
+          selectAll.checked = Array.prototype.every.call(projectInputs, function(item) { return item.checked; });
+        }
+      });
+    });
+  }
+
+  function syncEmployeeGitHubActivity(employeeId, selectedProjectIds) {
     if (!employeeId) return Promise.reject(new Error('Mitarbeiter-ID fehlt.'));
     if (!canEditEmployeeProfile(employeeId)) return Promise.reject(new Error('Nur das eigene Mitarbeiterprofil kann synchronisiert werden.'));
     if (githubSyncRequests[employeeId]) return githubSyncRequests[employeeId];
@@ -705,7 +794,16 @@
 
     var username = employee.github.username;
     var githubToken = employee.github.privateAccessToken || '';
-    var projects = getLinkedGitHubProjects();
+    var projects = getEmployeeGitHubProjects(employeeId);
+    if (Array.isArray(selectedProjectIds)) {
+      var selectedIds = Object.create(null);
+      selectedProjectIds.forEach(function(id) {
+        selectedIds[String(id || '')] = true;
+      });
+      projects = projects.filter(function(project) {
+        return !!selectedIds[String(project.id || '')];
+      });
+    }
     var sinceIso = new Date(Date.now() - GITHUB_ACTIVITY_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
     employee.github.syncStatus = 'syncing';
@@ -715,7 +813,9 @@
 
     if (!projects.length) {
       employee.github.syncStatus = 'error';
-      employee.github.syncError = 'Keine GitHub-verknuepften Projekte gefunden. Bitte zuerst ein Projekt mit Repository-Eigentuemer und Repository-Namen verknuepfen.';
+      employee.github.syncError = Array.isArray(selectedProjectIds)
+        ? 'Die Auswahl enthaelt keine GitHub-Repositories, die diesem Mitarbeiter zugeordnet sind.'
+        : 'Keine zugeordneten Dashboard-Projekte mit GitHub-Repository gefunden.';
       persistEmployee(employee);
       renderEmployeeList('employee-list');
       return Promise.reject(new Error(employee.github.syncError));
@@ -2458,9 +2558,7 @@
       }
 
       if (action === 'github-sync') {
-        syncEmployeeGitHubActivity(empId).catch(function(err) {
-          alert(err && err.message ? err.message : 'GitHub Sync fehlgeschlagen.');
-        });
+        showGitHubSyncProjectModal(empId);
       }
     });
 

@@ -4,11 +4,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {test} = require('node:test');
 
-function harness(mode, allowed=true) {
+function harness(mode, allowed=true, projects=[], tasks=[]) {
   const alerts=[], batches=[];
   const data={
     createTasks:tasks=>{batches.push(tasks);return tasks;},
-    getProjectById:id=>id==='p1'?{id:'p1'}:null
+    getProjectById:id=>id==='p1'?{id:'p1'}:null,
+    getProjects:()=>projects,
+    getTasks:()=>tasks
   };
   const window={DataLayer:data,alert:message=>alerts.push(message)};
   const source=fs.readFileSync(path.join(__dirname,'../modules/auth.js'),'utf8').replace(
@@ -21,7 +23,7 @@ function harness(mode, allowed=true) {
   );
   vm.runInNewContext(source,{window,document:{readyState:'loading',addEventListener(){}},console});
   window.testWrapDataLayer();
-  return {data,alerts,batches};
+  return {data,alerts,batches,manager:window.AuthManager};
 }
 
 function task(employeeId='alice') {
@@ -51,4 +53,18 @@ test('employee batch creation checks every project and commit before saving',()=
   assert.equal(saved[0].assigneeId,'alice');
   assert.equal(saved[0].assigneeIds.join(','),'alice');
   assert.equal(saved[0].githubCommitImport.commits[0].employeeId,'alice');
+});
+
+test('employee projects include created, team-assigned, and task-assigned projects only',()=>{
+  const projects=[
+    {id:'created',createdByEmployeeId:'alice'},
+    {id:'team',teamMembers:[{employeeId:'alice'}]},
+    {id:'task-assigned'},
+    {id:'other',createdByEmployeeId:'bob',teamMembers:[{employeeId:'bob'}]}
+  ];
+  const h=harness('employee',true,projects,[{id:'t1',projectId:'task-assigned',assigneeId:'alice'}]);
+
+  assert.deepEqual(Array.from(h.manager.getProjectsForEmployee('alice'),project=>project.id),['created','team','task-assigned']);
+  assert.deepEqual(Array.from(h.manager.getProjectsForEmployee('bob'),project=>project.id),['other']);
+  assert.deepEqual(Array.from(h.manager.getProjectsForEmployee(''),project=>project.id),[]);
 });

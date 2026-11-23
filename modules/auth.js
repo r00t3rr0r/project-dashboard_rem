@@ -658,6 +658,15 @@
     });
   }
 
+  function getProjectsForEmployee(employeeId) {
+    var id = String(employeeId || '').trim();
+    if (!id || !window.DataLayer || typeof window.DataLayer.getProjects !== 'function') return [];
+    var user = { id: id };
+    return (window.DataLayer.getProjects() || []).filter(function(project) {
+      return employeeOwnsProject(user, project);
+    });
+  }
+
   function canViewProject(project) {
     var mode = getMode();
     if (mode === 'setup' || mode === 'admin' || mode === 'management') return true;
@@ -1777,6 +1786,7 @@
     canViewProject: canViewProject,
     canEditProject: canEditProject,
     getVisibleProjects: getVisibleProjects,
+    getProjectsForEmployee: getProjectsForEmployee,
     canCreateTask: canCreateTask,
     canEditTask: canEditTask,
     canMoveTask: canMoveTask,

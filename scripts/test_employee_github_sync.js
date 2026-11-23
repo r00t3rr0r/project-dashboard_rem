@@ -27,7 +27,15 @@ function makeHarness(projects, fetch) {
         return true;
       },
       getProjects:()=>projects,
+      getTasks:()=>[],
       createNotification:notification=>notifications.push(notification)
+    },
+    AuthManager:{
+      canManageEmployeeActivities:()=>true,
+      getProjectsForEmployee:employeeId=>projects.filter(project=>
+        String(project.createdByEmployeeId||'')===String(employeeId)||
+        (Array.isArray(project.teamMembers)&&project.teamMembers.some(member=>String(member.employeeId||'')===String(employeeId)))
+      )
     }
   };
   let source = fs.readFileSync(path.join(__dirname,'../modules/employees.js'),'utf8');
@@ -46,7 +54,7 @@ function makeHarness(projects, fetch) {
 }
 
 function project(owner,repo,title) {
-  return {id:repo,title,github:{owner,repo}};
+  return {id:repo,title,teamMembers:[{employeeId:'alice'}],github:{owner,repo}};
 }
 
 function response(status,body,message='') {
@@ -132,6 +140,22 @@ test('GitHub commit pagination continues beyond three full pages',async()=>{
   assert.equal(activity.totalCommits,401);
 });
 
+test('sync is limited to the employee projects and the selected project ids',async()=>{
+  const ownProject = project('acme','own','Own project');
+  const anotherOwnProject = project('acme','another','Another own project');
+  const otherProject = project('acme','other','Other project');
+  otherProject.teamMembers = [{employeeId:'bob'}];
+  const requestedUrls = [];
+  const h = makeHarness([ownProject,anotherOwnProject,otherProject],async url=>{
+    requestedUrls.push(new URL(url).pathname);
+    return response(200,[]);
+  });
+
+  await h.api.syncGitHubActivity('alice',['own','other']);
+
+  assert.deepEqual(requestedUrls,['/repos/acme/own/commits']);
+});
+
 test('GitHub rate-limit errors explain the cause and next step',async()=>{
   const h = makeHarness([project('acme','app','App')],async()=>response(403,{},'API rate limit exceeded'));
 
@@ -142,6 +166,6 @@ test('GitHub rate-limit errors explain the cause and next step',async()=>{
 test('sync without linked repositories reports the missing setup',async()=>{
   const h = makeHarness([],async()=>assert.fail('GitHub API should not be called'));
 
-  await assert.rejects(h.api.syncGitHubActivity('alice'),/Keine GitHub-verknuepften Projekte gefunden/);
+  await assert.rejects(h.api.syncGitHubActivity('alice'),/Keine zugeordneten Dashboard-Projekte/);
   assert.equal(h.employees[0].github.syncStatus,'error');
 });
