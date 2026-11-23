@@ -12,7 +12,7 @@ function renderTimeline(projectId){
     var allTasks=window.DataLayer.getTasks();
     var tasks=allTasks.slice();
     
-    if(projectId){tasks=tasks.filter(function(t){return t.projectId===projectId;});}
+    if(projectId){tasks=tasks.filter(function(t){return window.DataLayer.isTaskLinkedToProject(t,projectId);});}
     
     if(tasks.length===0){container.innerHTML='<h3>Task-Timeline</h3><p class="timeline-empty">Keine Tasks vorhanden.</p>';return;}
     

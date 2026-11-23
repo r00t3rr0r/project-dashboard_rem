@@ -1128,7 +1128,7 @@ function refreshAiHealthStatus(force){
 }
 
 function getTasksForProject(projectId){
-  return window.DataLayer.getTasks().filter(function(task){return task.projectId===projectId;});
+  return window.DataLayer.getTasks().filter(function(task){return window.DataLayer.isTaskLinkedToProject(task,projectId);});
 }
 
 function hasEmployeeActiveTask(projectId){

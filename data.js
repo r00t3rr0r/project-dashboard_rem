@@ -2080,7 +2080,18 @@
     if (!task.status) task.status = 'backlog';
     if (!task.priority) task.priority = 'medium';
     if (!task.urgency) task.urgency = 'normal';
-    if (typeof task.projectId !== 'string' || !task.projectId.trim()) task.projectId = null;
+    var normalizedProjectIds = [];
+    var seenProjectIds = {};
+    function addProjectId(value) {
+      var id = typeof value === 'string' ? value.trim() : '';
+      if (!id || seenProjectIds[id]) return;
+      seenProjectIds[id] = true;
+      normalizedProjectIds.push(id);
+    }
+    addProjectId(task.projectId);
+    if (Array.isArray(task.projectIds)) task.projectIds.forEach(addProjectId);
+    task.projectIds = normalizedProjectIds;
+    task.projectId = normalizedProjectIds.length ? normalizedProjectIds[0] : null;
     var normalizedAssigneeIds = [];
     var seenAssigneeIds = {};
     function addAssigneeId(value) {
@@ -2671,6 +2682,16 @@
   /** @returns {Task[]} */
   function getTasks()       { return tasks; }
 
+  function isTaskLinkedToProject(task, projectId) {
+    var id = String(projectId || '').trim();
+    if (!task || !id) return false;
+    if (String(task.projectId || '') === id) return true;
+    if (Array.isArray(task.projectIds)) {
+      return task.projectIds.some(function (projectIdValue) { return String(projectIdValue || '') === id; });
+    }
+    return false;
+  }
+
   /**
    * Tasks mit optionalen Filtern.
    * filter: { projectId?, status?, labelIds?[], assigneeId?[] }
@@ -2679,7 +2700,7 @@
     var result = tasks.slice();
 
     if (filter && filter.projectId) {
-      result = result.filter(function (t) { return t.projectId === filter.projectId; });
+      result = result.filter(function (t) { return isTaskLinkedToProject(t, filter.projectId); });
     }
     if (filter && filter.status) {
       result = result.filter(function (t) { return t.status === filter.status; });
@@ -3285,6 +3306,7 @@
 
     // Tasks CRUD
     getTasks:           getTasks,
+    isTaskLinkedToProject: isTaskLinkedToProject,
     getTasksFiltered:   getTasksFiltered,
     createTask:         createTask,
     createTasks:        createTasks,

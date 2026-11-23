@@ -410,7 +410,7 @@
         var projects = loadData('projects', [] || []);
         var tasks = loadData('tasks', []);
         (projects || []).forEach(function(proj) {
-            var projTasks = (tasks || []).filter(function(t) { return t.projectId === proj.id; });
+            var projTasks = (tasks || []).filter(function(t) { return window.DataLayer.isTaskLinkedToProject(t, proj.id); });
             callback({
                 id: proj.id,
                 name: proj.name || proj.title || 'Projekt',

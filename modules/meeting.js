@@ -680,7 +680,7 @@ function buildTaskDependencySelectOptions(projectId,selectedId){
   var selected=String(selectedId||'');
   var options=['<option value="">-- Kein Vorgänger --</option>'];
   tasks.filter(function(task){
-    return task&&String(task.projectId||'')===String(projectId||'');
+    return task&&window.DataLayer.isTaskLinkedToProject(task,projectId);
   }).sort(function(a,b){
     var aSeq=Number(a&&a.sequenceIndex||0)||0;
     var bSeq=Number(b&&b.sequenceIndex||0)||0;
@@ -2412,7 +2412,7 @@ function exportJson(){
 
 function buildExistingDataSummary(project){
   if(!window.DataLayer)return '{}';
-  var tasks=window.DataLayer.getTasks?window.DataLayer.getTasks().filter(function(task){return task.projectId===project.id;}):[];
+  var tasks=window.DataLayer.getTasks?window.DataLayer.getTasks().filter(function(task){return window.DataLayer.isTaskLinkedToProject(task,project.id);}):[];
   var events=window.DataLayer.getCalendarEvents?window.DataLayer.getCalendarEvents().filter(function(evt){return evt.projectId===project.id;}):[];
   var releases=window.DataLayer.getReleases?window.DataLayer.getReleases().filter(function(rel){return rel.projectId===project.id;}):[];
   return JSON.stringify({

@@ -62,7 +62,7 @@
 
                 // Suche in Tasks des Projekts
                 var projectTasks = (tasks || []).filter(function(task) {
-                    return task.projectId === proj.id;
+                    return window.DataLayer.isTaskLinkedToProject(task, proj.id);
                 });
                 projectTasks.forEach(function(task) {
                     var taskText = '';

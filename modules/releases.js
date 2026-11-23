@@ -106,7 +106,7 @@
             var allTasks = loadData('tasks', []);
             var projectTasks = (allTasks || []).filter(function(t) {
                 if (!release.projectId) return true;
-                return t.projectId === release.projectId;
+                return window.DataLayer.isTaskLinkedToProject(t, release.projectId);
             });
 
             if (!projectTasks.length) {

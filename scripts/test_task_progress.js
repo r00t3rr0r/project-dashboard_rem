@@ -104,6 +104,24 @@ test('existing tasks are recalculated on hydration and manual tasks remain uncha
   assert.equal(data.getTaskById('manual').progress,37);
 });
 
+test('tasks support no project and deduplicated links to multiple projects',()=>{
+  const data = makeDataLayer();
+  const legacy = data.createTask({id:'legacy',title:'Alt',projectId:'one'});
+  const linked = data.createTask({id:'linked',title:'Verknuepft',projectIds:['two','three','two']});
+  const general = data.createTask({id:'general',title:'Allgemein'});
+
+  assert.deepEqual(Array.from(legacy.projectIds),['one']);
+  assert.equal(legacy.projectId,'one');
+  assert.deepEqual(Array.from(linked.projectIds),['two','three']);
+  assert.equal(linked.projectId,'two');
+  assert.deepEqual(Array.from(general.projectIds),[]);
+  assert.equal(general.projectId,null);
+  assert.deepEqual(Array.from(data.getTasksFiltered({projectId:'three'}),task=>task.id),['linked']);
+  assert.equal(data.isTaskLinkedToProject(linked,'two'),true);
+  assert.equal(data.isTaskLinkedToProject(linked,'three'),true);
+  assert.equal(data.isTaskLinkedToProject(general,'three'),false);
+});
+
 test('project progress uses the shared current-and-next subtask display and refreshes after task updates',()=>{
   const data = makeDataLayer();
   data.createProject({id:'project',title:'Projekt'});

@@ -196,7 +196,7 @@ function createGitHubWorkflow(root,data){
 function projectContext(project){
   var tasks=window.DataLayer&&window.DataLayer.getTasks?window.DataLayer.getTasks():[];
   var employees=window.DataLayer&&window.DataLayer.getEmployees?window.DataLayer.getEmployees():[];
-  var projectTasks=tasks.filter(function(task){return task&&task.projectId===project.id;});
+  var projectTasks=tasks.filter(function(task){return task&&window.DataLayer.isTaskLinkedToProject(task,project.id);});
   var workload={};
   tasks.forEach(function(task){
     if(!task||task.status==='done')return;
@@ -263,7 +263,7 @@ function importedCommitShas(projectId,repository){
   var imported=new Set();
   (window.DataLayer.getTasks()||[]).forEach(function(task){
     var source=task.githubCommitImport;
-    if(task.projectId!==projectId)return;
+    if(!window.DataLayer.isTaskLinkedToProject(task,projectId))return;
     if(source&&String(source.repository).toLowerCase()===repository.toLowerCase()){
       (source.shas||[]).forEach(function(sha){imported.add(sha);});
     }

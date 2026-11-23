@@ -19,7 +19,7 @@
 
   function getTasks(projectId) {
     return (window.DataLayer.getTasks() || []).filter(function(t) {
-      return t.projectId === projectId;
+      return window.DataLayer.isTaskLinkedToProject(t, projectId);
     });
   }
 

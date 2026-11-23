@@ -42,7 +42,7 @@
             if (!project) return null;
 
             var allTasks = loadData('tasks', []);
-            var projectTasks = (allTasks || []).filter(function(t) { return t.projectId === projectId; });
+            var projectTasks = (allTasks || []).filter(function(t) { return window.DataLayer.isTaskLinkedToProject(t, projectId); });
             if (projectTasks.length > 0) {
                 var copy = {};
                 for (var k in project) copy[k] = project[k];

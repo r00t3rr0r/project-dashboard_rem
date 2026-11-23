@@ -73,7 +73,7 @@ function getProjectSnapshot(project){
       startDate:project&&project.startDate?project.startDate:'',
       endDate:project&&project.endDate?project.endDate:''
     },
-    tasks:tasks.filter(function(item){return item&&item.projectId===project.id;}).map(function(item){
+    tasks:tasks.filter(function(item){return item&&window.DataLayer.isTaskLinkedToProject(item,project.id);}).map(function(item){
       return {
         id:item.id,
         title:item.title||'',

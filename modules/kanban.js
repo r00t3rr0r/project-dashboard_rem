@@ -1103,12 +1103,21 @@
 
   function matchesCurrentFilters(task, status) {
     if (!task) return false;
-    if (task.projectId && window.DataLayer && typeof window.DataLayer.getProjects === 'function') {
-      var taskProjectId = normalizeComparableId(task.projectId);
-      var project = (window.DataLayer.getProjects() || []).find(function (item) {
-        return normalizeComparableId(item && item.id) === taskProjectId;
+    if (window.DataLayer && typeof window.DataLayer.getProjects === 'function') {
+      var linkedProjectIds = Array.isArray(task.projectIds) ? task.projectIds : (task.projectId ? [task.projectId] : []);
+      var taskProjects = (window.DataLayer.getProjects() || []).filter(function (item) {
+        return linkedProjectIds.some(function (id) { return normalizeComparableId(id) === normalizeComparableId(item && item.id); });
       });
-      if (project && String(project.status || '').trim().toLowerCase() === 'planning') return false;
+      if (filterProjectId) {
+        var selectedProject = taskProjects.find(function (item) {
+          return normalizeComparableId(item && item.id) === normalizeComparableId(filterProjectId);
+        });
+        if (selectedProject && String(selectedProject.status || '').trim().toLowerCase() === 'planning') return false;
+      } else if (taskProjects.length && taskProjects.every(function (item) {
+        return String(item.status || '').trim().toLowerCase() === 'planning';
+      })) {
+        return false;
+      }
     }
     var taskStatus = String(task.status || 'backlog').trim().toLowerCase();
     var requestedStatus = String(status || '').trim().toLowerCase();
@@ -1124,7 +1133,7 @@
     if (selectedAssigneeId && selectedAssigneeId !== UNASSIGNED_FILTER_VALUE && taskAssigneeIds.indexOf(selectedAssigneeId) === -1) return false;
     if (filterPriority && task.priority !== filterPriority) return false;
     if (filterUrgency && task.urgency !== filterUrgency) return false;
-    if (filterProjectId && normalizeComparableId(task.projectId) !== normalizeComparableId(filterProjectId)) return false;
+    if (filterProjectId && !window.DataLayer.isTaskLinkedToProject(task, filterProjectId)) return false;
     return true;
   }
 
@@ -1504,6 +1513,11 @@
     return project ? (project.title || project.name || 'Projekt') : 'Ohne Projekt';
   }
 
+  function getTaskProjectTitles(task) {
+    var projectIds = Array.isArray(task && task.projectIds) ? task.projectIds : (task && task.projectId ? [task.projectId] : []);
+    return projectIds.length ? projectIds.map(getProjectTitle).join(', ') : 'Ohne Projekt';
+  }
+
   function getProjectColor(projectId) {
     var project = (window.DataLayer.getProjects() || []).find(function (item) {
       return item.id === projectId;
@@ -1615,7 +1629,7 @@
     if (isCompactMode) {
       html += '<div class="kanban-card-head kanban-card-compact-head">';
       html += '<div class="kanban-card-context">';
-      html += '<span class="kanban-card-project">' + escapeHtml(getProjectTitle(task.projectId)) + '</span>';
+      html += '<span class="kanban-card-project">' + escapeHtml(getTaskProjectTitles(task)) + '</span>';
       html += chainBadge;
       html += attachmentBadge;
       html += '</div>';
@@ -1633,7 +1647,7 @@
 
     html += '<div class="kanban-card-head">';
     html += '<div class="kanban-card-context">';
-    html += '<span class="kanban-card-project">' + escapeHtml(getProjectTitle(task.projectId)) + '</span>';
+    html += '<span class="kanban-card-project">' + escapeHtml(getTaskProjectTitles(task)) + '</span>';
     html += pauseBadge;
     html += '</div>';
     html += assigneeAvatarStack;
@@ -1829,7 +1843,7 @@
           : (createdByCurrent ? 'Von dir erstellt' : (assigneeIds.length ? 'Team-Aufgabe' : 'Frei verfuegbar'));
         var dueLabel = task.dueDate ? ('Faellig ' + formatDateShort(task.dueDate)) : getScheduleLabel(task);
         var overdueClass = isTaskOverdue(task) ? ' is-overdue' : '';
-        var projectTitle = getProjectTitle(task.projectId);
+        var projectTitle = getTaskProjectTitles(task);
         var projectTone = getProjectColor(task.projectId);
         var chainRemainingCount = Number(task.kanbanChainRemainingCount || 0) || 0;
         var chainNextTitle = String(task.kanbanChainNextTitle || '').trim();
@@ -2273,7 +2287,7 @@
     var content = document.getElementById('modal-content');
     if (!task || !overlay || !content) return;
 
-    var projectTitle = getProjectTitle(task.projectId);
+    var projectTitle = getTaskProjectTitles(task);
     var assignees = getTaskAssignees(task);
     var labels = (window.DataLayer.getLabels() || []).filter(function (label) {
       return Array.isArray(task.labels) && task.labels.indexOf(label.id) !== -1;
@@ -2604,7 +2618,7 @@
 
   function getProjectTaskList(projectId) {
     return (window.DataLayer.getTasks() || []).filter(function (task) {
-      return String(task && task.projectId || '') === String(projectId || '');
+      return window.DataLayer.isTaskLinkedToProject(task, projectId);
     });
   }
 
@@ -2851,7 +2865,8 @@
           rowTask.title = row.title;
           rowTask.effortHours = row.effortHours;
         }
-        rowTask.projectId = currentTask.projectId || null;
+        rowTask.projectIds = Array.isArray(currentTask.projectIds) ? currentTask.projectIds.slice() : (currentTask.projectId ? [currentTask.projectId] : []);
+        rowTask.projectId = rowTask.projectIds.length ? rowTask.projectIds[0] : null;
         rowTask.sequenceIndex = sequenceIndex;
         rowTask.dependsOnPrevious = index > 0;
         rowTask.dependencyTaskIds = dependencyIds;
@@ -2866,6 +2881,7 @@
         priority: currentTask.priority || 'medium',
         urgency: currentTask.urgency || 'normal',
         projectId: currentTask.projectId || null,
+        projectIds: Array.isArray(currentTask.projectIds) ? currentTask.projectIds.slice() : (currentTask.projectId ? [currentTask.projectId] : []),
         assigneeId: currentTask.assigneeId || null,
         assigneeIds: Array.isArray(currentTask.assigneeIds) ? currentTask.assigneeIds.slice() : (currentTask.assigneeId ? [currentTask.assigneeId] : []),
         labels: Array.isArray(currentTask.labels) ? currentTask.labels.slice() : [],
@@ -2914,8 +2930,9 @@
     var labels = window.DataLayer.getLabels() || [];
     var selectedAssigneeIds = getTaskAssigneeIds(currentTaskDraft);
 
-    var projectOptions = '<option value="">-- Kein Projekt --</option>' + projects.map(function (project) {
-      var selected = currentTaskDraft.projectId === project.id ? ' selected' : '';
+    var linkedProjectIds = Array.isArray(currentTaskDraft.projectIds) ? currentTaskDraft.projectIds : (currentTaskDraft.projectId ? [currentTaskDraft.projectId] : []);
+    var projectOptions = projects.map(function (project) {
+      var selected = linkedProjectIds.indexOf(String(project.id)) !== -1 ? ' selected' : '';
       return '<option value="' + escapeHtml(project.id) + '"' + selected + '>' + escapeHtml(project.title || project.name || 'Projekt') + '</option>';
     }).join('');
 
@@ -2942,7 +2959,7 @@
       '  <div class="form-group"><label>Zuweisung</label><div id="task-cockpit-assignee-picker" class="qtm-assignee-picker"></div><small class="task-cockpit-assignee-meta">Mehrfachauswahl: Mitarbeiter per Klick zuweisen</small></div>' +
       '</div>' +
       '<div class="task-cockpit-grid">' +
-      '  <div class="form-group"><label for="task-cockpit-project">Projekt</label><select id="task-cockpit-project">' + projectOptions + '</select></div>' +
+      '  <div class="form-group"><label for="task-cockpit-project">Projekte</label><select id="task-cockpit-project" multiple size="4">' + projectOptions + '</select><small class="text-muted">Optional: keine Auswahl fuer eine projektuebergreifende Aufgabe; mehrere Projekte per STRG-/CMD-Klick verknuepfen.</small></div>' +
       '<div class="form-group"><label for="task-cockpit-labels">Labels</label><select id="task-cockpit-labels" multiple style="min-height:96px;">' + labelOptions + '</select></div>' +
       '<div class="form-group"><label for="task-cockpit-schedule-mode">Terminlogik</label><select id="task-cockpit-schedule-mode"><option value="none">Kein Termin</option><option value="deadline">Deadline</option><option value="fixed">Fester Termin</option><option value="range">Zeitraum</option><option value="asap">Umgehend</option></select></div>' +
       '</div>' +
@@ -3284,7 +3301,14 @@
         currentTaskDraft.effortHours = parseFloat(document.getElementById('task-cockpit-effort').value || '0') || 0;
         currentTaskDraft.assigneeIds = normalizeAssigneeIds(selectedAssigneeIds);
         currentTaskDraft.assigneeId = currentTaskDraft.assigneeIds.length ? currentTaskDraft.assigneeIds[0] : null;
-        currentTaskDraft.projectId = document.getElementById('task-cockpit-project').value || null;
+        var projectSelect = document.getElementById('task-cockpit-project');
+        currentTaskDraft.projectIds = [];
+        if (projectSelect && projectSelect.selectedOptions) {
+          for (var projectIndex = 0; projectIndex < projectSelect.selectedOptions.length; projectIndex++) {
+            currentTaskDraft.projectIds.push(projectSelect.selectedOptions[projectIndex].value);
+          }
+        }
+        currentTaskDraft.projectId = currentTaskDraft.projectIds.length ? currentTaskDraft.projectIds[0] : null;
 
         var labelsSelect = document.getElementById('task-cockpit-labels');
         var selectedLabelIds = [];

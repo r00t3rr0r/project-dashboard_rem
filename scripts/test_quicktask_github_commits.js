@@ -8,7 +8,11 @@ function harness() {
   const project={id:'p1',title:'Projekt',github:{owner:'acme',repo:'app'}};
   const tasks=[],requests=[];
   const window={
-    DataLayer:{getTasks:()=>tasks},
+    DataLayer:{
+      getTasks:()=>tasks,
+      isTaskLinkedToProject:(task,projectId)=>
+        (Array.isArray(task.projectIds)&&task.projectIds.includes(projectId))||task.projectId===projectId
+    },
     AuthManager:{getCurrentUser:()=>({github:{privateAccessToken:'test-token'}})},
     addEventListener(){}
   };
@@ -368,6 +372,7 @@ test('AI Conf prefill creates editable daily drafts and rejects a missing commit
     url:item.html_url
   }));
   h.window.QuickTaskModule.open({task:{projectId:'p1',status:'done'},githubCommits:entries});
+  element('qtm-project').value='p1';
   assert.match(element('qtm-title').value,/2020-01-01/);
   assert.match(element('qtm-github-daily-drafts').innerHTML,/2020-01-02/);
   element('qtm-github-title-1').value='Tagesaufgabe';
@@ -404,4 +409,27 @@ test('reports persistence failure without closing the task editor',async()=>{
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(closed,false);
   assert.match(element('qtm-upload-status').textContent,/nicht dauerhaft gespeichert/);
+});
+
+test('creates general tasks and supports linking a task to multiple projects',async()=>{
+  const {h,element,created}=modalHarness();
+  const secondProject={id:'p2',title:'Zweites Projekt'};
+  h.window.DataLayer.getProjects=()=>[h.project,secondProject];
+
+  h.window.QuickTaskModule.open();
+  element('qtm-title').value='Allgemeine Aufgabe';
+  assert.equal(typeof element('qt-submit').listeners.click,'function');
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,1);
+  assert.deepEqual(Array.from(created[0].projectIds),[]);
+  assert.equal(created[0].projectId,null);
+
+  h.window.QuickTaskModule.open();
+  element('qtm-title').value='Projektuebergreifende Aufgabe';
+  element('qtm-project').selectedOptions=[{value:'p1'},{value:'p2'}];
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(Array.from(created[1].projectIds),['p1','p2']);
+  assert.equal(created[1].projectId,'p1');
 });

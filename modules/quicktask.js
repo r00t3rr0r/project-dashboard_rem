@@ -217,7 +217,7 @@ function getGitHubCommitDocumentationTaskId(sha,project){
   var repository=String(project.github.owner+'/'+project.github.repo).toLowerCase();
   var tasks=window.DataLayer&&typeof window.DataLayer.getTasks==='function'?window.DataLayer.getTasks():[];
   var existing=tasks.find(function(task){
-    if(!task||String(task.projectId||'')!==String(project.id||''))return false;
+    if(!task||!window.DataLayer.isTaskLinkedToProject(task,project.id))return false;
     if(String(task.externalId||'')===target)return true;
     var source=task.githubCommitImport;
     if(source&&String(source.repository||'').toLowerCase()===repository&&Array.isArray(source.shas)&&source.shas.indexOf(sha)!==-1)return true;
@@ -278,7 +278,7 @@ function collectEmployeeLoad(projectId){
       var key=String(id);
       if(!loads[key])loads[key]={open:0,openInProject:0,highPressure:0};
       loads[key].open++;
-      if(projectId&&String(task.projectId||'')===String(projectId))loads[key].openInProject++;
+      if(projectId&&window.DataLayer.isTaskLinkedToProject(task,projectId))loads[key].openInProject++;
       if(isCritical)loads[key].highPressure++;
     });
   });
@@ -376,7 +376,8 @@ function buildTaskPayloadFromFields(fields){
     description:(fields.description||'').trim(),
     priority:fields.priority||'medium',
     urgency:fields.urgency||'normal',
-    projectId:fields.projectId||null,
+    projectId:(Array.isArray(fields.projectIds)&&fields.projectIds.length?fields.projectIds[0]:fields.projectId)||null,
+    projectIds:Array.isArray(fields.projectIds)?fields.projectIds.slice():(fields.projectId?[fields.projectId]:[]),
     assigneeId:normalizedAssigneeIds.length?normalizedAssigneeIds[0]:null,
     assigneeIds:normalizedAssigneeIds,
     labels:Array.isArray(fields.labels)?fields.labels:[],
@@ -394,7 +395,7 @@ function getNextProjectSequenceIndex(projectId){
   var maxIndex=0;
   (window.DataLayer.getTasks()||[]).forEach(function(task){
     if(!task)return;
-    if(projectId&&task.projectId!==projectId)return;
+    if(projectId&&!window.DataLayer.isTaskLinkedToProject(task,projectId))return;
     var seq=Number(task.sequenceIndex||0)||0;
     if(seq>maxIndex)maxIndex=seq;
   });
@@ -439,7 +440,6 @@ function openQuickTaskModal(prefill){
     var labels=window.DataLayer.getLabels();
     var adminMode=isAdminMode(auth);
     
-    var pOpts=buildProjectOptions(projects,'-- Projekt waehlen --');
     var lOpts=buildLabelOptions(labels);
     var aiToolsHtml=adminMode
       ? '<div class="task-ai-panel">'
@@ -461,7 +461,7 @@ function openQuickTaskModal(prefill){
       '<div class="qtm-new-layout">' +
       '<section class="qtm-new-section"><h3>Aufgabendaten</h3>' +
       '<div class="form-group"><label for="qtm-title">Titel *</label><input type="text" id="qtm-title"></div>' +
-      '<div class="form-group"><label for="qtm-project">Projekt</label><select id="qtm-project">'+pOpts+'</select></div>' +
+      '<div class="form-group"><label for="qtm-project">Projekte</label><select id="qtm-project" multiple size="4">'+projects.map(function(project){return '<option value="'+escapeAttr(project.id)+'">'+escapeHtml(project.title||project.name||'Ohne Titel')+'</option>';}).join('')+'</select><small class="text-muted">Optional: keine Auswahl fuer eine projektuebergreifende Aufgabe; mehrere Projekte per STRG-/CMD-Klick verknuepfen.</small></div>' +
       '<div class="form-group"><label>Mitarbeiter</label><div id="qtm-assignee-picker" class="qtm-assignee-picker"></div><small id="qtm-assignee-help" style="color:var(--text-muted)">Mehrfachauswahl: Mitarbeiter per Klick zuweisen</small></div>' +
       '<div class="form-group"><label for="qtm-desc">Beschreibung</label><textarea id="qtm-desc" rows="6"></textarea></div>' +
       '</section>' +
@@ -492,7 +492,8 @@ function openQuickTaskModal(prefill){
     document.getElementById('qtm-desc').value=String(initialTask.description||'');
     document.getElementById('qtm-prio').value=String(initialTask.priority||'medium');
     document.getElementById('qtm-effort').value=String(initialTask.effortHours===undefined?'0':initialTask.effortHours);
-    if(initialTask.projectId)document.getElementById('qtm-project').value=String(initialTask.projectId);
+    var initialProjectIds=Array.isArray(initialTask.projectIds)&&initialTask.projectIds.length?initialTask.projectIds:(initialTask.projectId?[initialTask.projectId]:[]);
+    setMultiSelectValues(document.getElementById('qtm-project'),initialProjectIds.map(String));
     if(Array.isArray(prefill.subtasks))document.getElementById('qtm-subtasks').value=prefill.subtasks.map(function(subtask){return String(subtask&&subtask.title||subtask||'');}).filter(Boolean).join('\n');
 
     var aiState={loading:false,draft:null,suggestions:[]};
@@ -602,9 +603,15 @@ function openQuickTaskModal(prefill){
     }
 
     function getProjectSelection(){
-      var projectId=((document.getElementById('qtm-project')||{}).value||'').trim();
+      var projectSelect=document.getElementById('qtm-project');
+      var projectIds=[];
+      if(projectSelect&&projectSelect.selectedOptions){
+        for(var i=0;i<projectSelect.selectedOptions.length;i++)projectIds.push(String(projectSelect.selectedOptions[i].value||'').trim());
+      }
+      if(!projectIds.length&&projectSelect&&projectSelect.value)projectIds.push(String(projectSelect.value).trim());
+      var projectId=projectIds[0]||'';
       var project=projects.find(function(item){return String(item.id)===projectId;})||null;
-      return {projectId:projectId,project:project};
+      return {projectId:projectId,projectIds:projectIds,project:project};
     }
 
     function applyLabelSuggestions(labelNames){
@@ -759,7 +766,7 @@ function openQuickTaskModal(prefill){
       var tasks=(window.DataLayer&&typeof window.DataLayer.getTasks==='function')?window.DataLayer.getTasks():[];
       var employeesSafe=Array.isArray(employees)?employees:[];
       var projectTasks=tasks.filter(function(task){
-        return task&&String(task.projectId||'')===String(project.id||'');
+        return task&&window.DataLayer.isTaskLinkedToProject(task,project.id);
       }).slice(0,120).map(function(task){
         var assigneeIds=getTaskAssigneeIds(task);
         return {
@@ -956,7 +963,7 @@ function openQuickTaskModal(prefill){
       githubProjectSelect.addEventListener('change',function(){
         var review=document.getElementById('qtm-github-commit-review');
         if(review)review.classList.add('hidden');
-        if(githubDraftGroups.length&&githubDraftProjectId!==githubProjectSelect.value){
+        if(githubDraftGroups.length&&githubDraftProjectId!==getProjectSelection().projectId){
           githubDraftGroups=[];
           githubDraftProjectId='';
           document.getElementById('qtm-github-daily-drafts').classList.add('hidden');
@@ -1089,7 +1096,7 @@ function openQuickTaskModal(prefill){
         description:document.getElementById('qtm-desc').value,
         priority:document.getElementById('qtm-prio').value,
         urgency:document.getElementById('qtm-urgency').value,
-        projectId:document.getElementById('qtm-project').value,
+        projectIds:getProjectSelection().projectIds,
         assigneeId:selectedAssigneeIds[0]||null,
         assigneeIds:selectedAssigneeIds,
         labels:selLabels,
@@ -1239,7 +1246,7 @@ function openBlockerModal(){
     var allTasks=window.DataLayer.getTasks()||[];
     var tasks=allTasks.filter(function(task){
       if(!task)return false;
-      if(task.projectId&&projectById[String(task.projectId)])return true;
+      if((Array.isArray(task.projectIds)?task.projectIds:(task.projectId?[task.projectId]:[])).some(function(id){return !!projectById[String(id)];}))return true;
       if(auth&&typeof auth.canEditTask==='function')return auth.canEditTask(task);
       return true;
     }).sort(function(a,b){
@@ -1247,7 +1254,8 @@ function openBlockerModal(){
     }).slice(0,300);
 
     var taskOptions=tasks.map(function(task){
-      var projectTitle=task.projectId&&projectById[String(task.projectId)]?(projectById[String(task.projectId)].title||projectById[String(task.projectId)].name||'Projekt'):'Ohne Projekt';
+      var linkedProjects=(Array.isArray(task.projectIds)?task.projectIds:(task.projectId?[task.projectId]:[])).map(function(id){return projectById[String(id)];}).filter(Boolean);
+      var projectTitle=linkedProjects.length?linkedProjects.map(function(project){return project.title||project.name||'Projekt';}).join(', '):'Ohne Projekt';
       var label='['+projectTitle+'] '+(task.title||'(Ohne Titel)');
       return '<option value="'+escapeAttr(task.id)+'">'+escapeHtml(label)+'</option>';
     }).join('');
@@ -1783,8 +1791,7 @@ function populateQuickTaskPage(){
     var projSelect = document.getElementById('qt-project');
     if (projSelect) {
       var projects = getVisibleProjects();
-      var pOpts = '<option value="">— Kein Projekt —</option>' + 
-        projects.map(function(p){ return '<option value="'+escapeAttr(p.id)+'">'+escapeHtml(p.title||p.name||'')+'</option>'; }).join('');
+      var pOpts = projects.map(function(p){ return '<option value="'+escapeAttr(p.id)+'">'+escapeHtml(p.title||p.name||'')+'</option>'; }).join('');
       projSelect.innerHTML = pOpts;
     }
 
@@ -1916,7 +1923,7 @@ document.addEventListener('DOMContentLoaded',function(){
         priority:document.getElementById('qt-priority').value||'medium',
         urgency:(document.getElementById('qt-urgency')||{}).value||'normal',
         assigneeId:document.getElementById('qt-assignee').value||null,
-        projectId:document.getElementById('qt-project').value||null,
+        projectIds:Array.prototype.map.call((document.getElementById('qt-project')||{}).selectedOptions||[],function(option){return option.value;}),
         effortHours:(document.getElementById('qt-effort')||{}).value||'0',
         scheduleMode:(document.getElementById('qt-schedule-mode')||{}).value||'none',
         deadline:(document.getElementById('qt-deadline')||{}).value||'',

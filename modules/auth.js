@@ -644,6 +644,14 @@
     return window.DataLayer.getTasks() || [];
   }
 
+  function getTaskProjectIds(task) {
+    var ids = Array.isArray(task && task.projectIds) ? task.projectIds.slice() : [];
+    if (task && task.projectId) ids.unshift(task.projectId);
+    return ids.map(function (id) { return String(id || '').trim(); }).filter(function (id, index, list) {
+      return !!id && list.indexOf(id) === index;
+    });
+  }
+
   function employeeOwnsProject(user, project) {
     if (!user || !project) return false;
     if (String(project.createdByEmployeeId || '') === String(user.id)) return true;
@@ -654,7 +662,7 @@
     }
 
     return getTasks().some(function (task) {
-      return String(task.projectId || '') === String(project.id || '') && String(task.assigneeId || '') === String(user.id);
+      return getTaskProjectIds(task).indexOf(String(project.id || '')) !== -1 && String(task.assigneeId || '') === String(user.id);
     });
   }
 
@@ -732,9 +740,7 @@
     var assignedToUser = String(task.assigneeId || '') === String(user.id) ||
       (Array.isArray(task.assigneeIds) && task.assigneeIds.some(function (id) { return String(id || '') === String(user.id); }));
     if (assignedToUser) return true;
-    if (task.projectId) {
-      return canViewProject(getProjectById(task.projectId));
-    }
+    if (getTaskProjectIds(task).some(function (projectId) { return canViewProject(getProjectById(projectId)); })) return true;
     return String(task.createdByEmployeeId || '') === String(user.id);
   }
 
@@ -753,7 +759,7 @@
     var next = clone(task || {});
     var user = getCurrentUser();
     if (getMode() === 'employee' && user) {
-      if (next.projectId && !canViewProject(getProjectById(next.projectId))) {
+      if (getTaskProjectIds(next).some(function (projectId) { return !canViewProject(getProjectById(projectId)); })) {
         throw new Error('Dieses Projekt ist fuer den aktuellen Mitarbeiter nicht freigegeben.');
       }
       next.assigneeId = user.id;

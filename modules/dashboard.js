@@ -144,7 +144,7 @@
 
   function getProjectProgressPercent(project) {
     var tasks = (window.DataLayer && typeof window.DataLayer.getTasks === 'function' ? window.DataLayer.getTasks() : []).filter(function(task) {
-      return task && task.projectId === project.id;
+      return task && window.DataLayer.isTaskLinkedToProject(task, project.id);
     });
 
     var doneCount = tasks.filter(function(task) {
@@ -1025,14 +1025,14 @@
 
     var projectEntries = projects.map(function(project) {
       var tasks = allTasks.filter(function(task) {
-        return task && String(task.projectId || '') === String(project.id || '');
+        return task && window.DataLayer.isTaskLinkedToProject(task, project.id);
       });
       return buildProgressEntry(project, tasks);
     }).filter(function(entry) {
       return entry.tasks.length > 0;
     });
     var unassignedTasks = allTasks.filter(function(task) {
-      return task && !task.projectId && normalizeTaskStatus(task) === 'in-progress';
+      return task && !(Array.isArray(task.projectIds) ? task.projectIds.length : task.projectId) && normalizeTaskStatus(task) === 'in-progress';
     });
     if (unassignedTasks.length) projectEntries.push(buildProgressEntry(null, unassignedTasks));
 
@@ -2051,8 +2051,12 @@
   }
 
   function getTaskProjectLabel(task, projectsById) {
-    var project = task && task.projectId ? projectsById[String(task.projectId)] : null;
-    if (project) return String(project.title || project.name || '').trim();
+    var projectIds = Array.isArray(task && task.projectIds) ? task.projectIds : (task && task.projectId ? [task.projectId] : []);
+    var projectNames = projectIds.map(function(id) {
+      var project = projectsById[String(id)];
+      return project ? String(project.title || project.name || '').trim() : '';
+    }).filter(Boolean);
+    if (projectNames.length) return projectNames.join(', ');
     return String(task && (task.projectTitle || task.projectName) || '').trim();
   }
 

@@ -93,7 +93,8 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `description` | `string`   | Beschreibung/Aufgabentext                     |
 | `priority`    | `string`   | `"low"` \| `"medium"` \| `"high"` \| `"blocker"` |
 | `status`      | `string`   | `"todo"` \| `"in-progress"` \| `"review"` \| `"done"` \| `"backlog"` |
-| `projectId`   | `string\|null` | Verknüpftes Projekt-ID                    |
+| `projectId`   | `string\|null` | Primaere Projekt-ID (Kompatibilitaetsalias fuer `projectIds`; `null` ohne Projekt) |
+| `projectIds`  | `string[]` | Alle verknuepften Projekt-IDs; leeres Array fuer projektungebundene Aufgaben; `projectId` entspricht dem ersten Eintrag |
 | `assigneeId`  | `string\|null` | Primaere Mitarbeiter-ID (erstes Element aus `assigneeIds`) |
 | `assigneeIds` | `string[]` | Mehrfachzuweisung: alle zugeordneten Mitarbeiter-IDs |
 | `labels`      | `string[]` | Array von Label-IDs                           |

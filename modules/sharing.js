@@ -37,7 +37,7 @@ function renderSharing(){
 }
 
 function calculateProjectProgress(projectId){
-  var tasks=(window.DataLayer.getTasks()||[]).filter(function(t){return t.projectId===projectId;});
+  var tasks=(window.DataLayer.getTasks()||[]).filter(function(t){return window.DataLayer.isTaskLinkedToProject(t,projectId);});
   if(tasks.length===0)return 0;
   return Math.round((tasks.filter(function(t){return t.status==='done';}).length/tasks.length)*100);
 }
@@ -57,7 +57,7 @@ window.copyShareLink=function(encodedUrl){
 
 window.generateReleaseBulletin=function(projectId){
   try{
-    var tasks=(window.DataLayer.getTasks()||[]).filter(function(t){return t.projectId===projectId&&t.status==='done';});
+    var tasks=(window.DataLayer.getTasks()||[]).filter(function(t){return window.DataLayer.isTaskLinkedToProject(t,projectId)&&t.status==='done';});
     
     if(tasks.length===0)return alert('Keine abgeschlossenen Tasks f\u00fcr Bulletin.');
     

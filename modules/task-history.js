@@ -230,8 +230,8 @@
 
   function matchesProject(task) {
     if (!state.projectId) return true;
-    if (state.projectId === 'none') return !task.projectId;
-    return String(task.projectId || '') === String(state.projectId);
+    if (state.projectId === 'none') return !(Array.isArray(task.projectIds) ? task.projectIds.length : task.projectId);
+    return window.DataLayer.isTaskLinkedToProject(task, state.projectId);
   }
 
   function matchesAssignee(task) {
@@ -247,7 +247,7 @@
     var haystack = [
       task.title || '',
       task.description || '',
-      getName(context.projectsById, task.projectId, ''),
+      (Array.isArray(task.projectIds) ? task.projectIds : (task.projectId ? [task.projectId] : [])).map(function (id) { return getName(context.projectsById, id, ''); }).filter(Boolean).join(', '),
       getAssigneeNames(task, context.employeesById)
     ];
     (task.labels || []).forEach(function (value) {
@@ -507,7 +507,7 @@
     if (task.status === 'done') {
       buttons.push('<button type="button" class="btn btn-secondary task-history-reactivate" data-task-id="' + escapeAttr(task.id) + '" title="Aufgabe wieder öffnen"><span class="material-symbols-rounded" aria-hidden="true">replay</span><span>Wieder öffnen</span></button>');
     }
-    buttons.push('<button type="button" class="task-history-icon-btn task-history-open-kanban" data-task-id="' + escapeAttr(task.id) + '" data-project-id="' + escapeAttr(task.projectId || '') + '" title="Im Kanban-Board öffnen und bearbeiten"><span class="material-symbols-rounded" aria-hidden="true">view_kanban</span></button>');
+    buttons.push('<button type="button" class="task-history-icon-btn task-history-open-kanban" data-task-id="' + escapeAttr(task.id) + '" data-project-id="' + escapeAttr(state.projectId && state.projectId !== 'none' ? state.projectId : (task.projectId || '')) + '" title="Im Kanban-Board öffnen und bearbeiten"><span class="material-symbols-rounded" aria-hidden="true">view_kanban</span></button>');
     return buttons.join('');
   }
 
@@ -519,7 +519,8 @@
     var completedBy = completion
       ? getName(context.employeesById, completion.actorId, getName(context.employeesById, completion.assigneeId, 'Nicht erfasst'))
       : '';
-    var projectName = getName(context.projectsById, task.projectId, 'Allgemeine Aufgabe');
+    var projectIds = Array.isArray(task.projectIds) ? task.projectIds : (task.projectId ? [task.projectId] : []);
+    var projectName = projectIds.length ? projectIds.map(function (id) { return getName(context.projectsById, id, ''); }).filter(Boolean).join(', ') : 'Allgemeine Aufgabe';
     var assignees = getAssigneeNames(task, context.employeesById);
     var progress = Math.max(0, Math.min(100, Number(task.progress) || 0));
     var isExpanded = !!state.expanded[String(task.id)];

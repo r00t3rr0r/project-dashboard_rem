@@ -24,38 +24,38 @@
   .auth-remember { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
   .auth-gate-error { color: var(--danger, #ed7777); font-size: 14px; }
 </style>
-  <script src="data.js?v=20261123a"></script>
-<script src="modules/auth.js?v=20261123c"></script>
+  <script src="data.js?v=20261123b"></script>
+<script src="modules/auth.js?v=20261123d"></script>
 <!-- Core: App Router, Theme, Export/Import -->
 <script src="modules/app.js?v=20261119a"></script>
 <!-- Feature Modules (alphabetical) -->
 <script src="modules/analytics.js?v=20261117c"></script>
 <script src="modules/calendar.js?v=20261123a"></script>
-<script src="modules/dashboard.js?v=20261123c"></script>
-<script src="modules/documentation.js?v=20260730b"></script>
-<script src="modules/employees.js?v=20261123c"></script>
+<script src="modules/dashboard.js?v=20261123d"></script>
+<script src="modules/documentation.js?v=20261123c"></script>
+<script src="modules/employees.js?v=20261123d"></script>
 <script src="modules/integrations.js?v=20260730b"></script>
-<script src="modules/kanban.js?v=20261123b"></script>
+<script src="modules/kanban.js?v=20261123c"></script>
 <script src="modules/labels.js?v=20260730y"></script>
 <script src="modules/notifications.js?v=20260730b"></script>
 <script src="modules/prompt-config.js?v=20260830a"></script>
 <script src="modules/local-ollama.js?v=20261123a"></script>
-<script src="modules/ai-conf.js?v=20261120d"></script>
-  <script src="modules/projects.js?v=20261117b"></script>
-<script src="modules/ki-workflow.js?v=20260830a"></script>
-<script src="modules/meeting.js?v=20261117a"></script>
-<script src="modules/quicktask.js?v=20261120e"></script>
-<script src="modules/task-history.js?v=20261120d"></script>
-<script src="modules/releases.js?v=20260730u"></script>
-<script src="modules/search.js?v=20260730k"></script>
-<script src="modules/sharing.js?v=20260730b"></script>
-<script src="modules/standup.js?v=20260730w"></script>
+<script src="modules/ai-conf.js?v=20261123e"></script>
+  <script src="modules/projects.js?v=20261123c"></script>
+<script src="modules/ki-workflow.js?v=20261123b"></script>
+<script src="modules/meeting.js?v=20261123b"></script>
+<script src="modules/quicktask.js?v=20261123a"></script>
+<script src="modules/task-history.js?v=20261123e"></script>
+<script src="modules/releases.js?v=20261123v"></script>
+<script src="modules/search.js?v=20261123l"></script>
+<script src="modules/sharing.js?v=20261123c"></script>
+<script src="modules/standup.js?v=20261123x"></script>
 <script src="modules/templates.js?v=20260730y"></script>
 <!-- Sprint Management -->
 <script src="modules/sprint.js?v=20260730k"></script>
 <!-- Health Check & Timeline -->
-<script src="modules/healthcheck.js?v=20261117d"></script>
-<script src="modules/timeline.js?v=20261117x"></script>
+<script src="modules/healthcheck.js?v=20261123e"></script>
+<script src="modules/timeline.js?v=20261123y"></script>
 </head>
 <body class="auth-locked">
   <div class="app-shell-glow app-shell-glow-left"></div>
@@ -384,10 +384,10 @@
           </div>
 
           <div class="form-group">
-            <label for="qt-project">Projekt zuordnen</label>
-            <select id="qt-project" aria-label="Projekt auswählen">
-              <option value="">— Kein Projekt —</option>
+            <label for="qt-project">Projekte zuordnen</label>
+            <select id="qt-project" aria-label="Projekte auswählen" multiple size="4">
             </select>
+            <small class="text-muted">Optional: keine Auswahl fuer eine projektuebergreifende Aufgabe; mehrere Projekte per STRG-/CMD-Klick verknuepfen.</small>
           </div>
 
           <div class="form-group">

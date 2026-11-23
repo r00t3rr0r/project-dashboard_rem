@@ -1169,6 +1169,9 @@
       (project.tasks || []).forEach(function(task) {
         var taskCopy = Object.assign({}, task);
         taskCopy.projectId = taskCopy.projectId || project.id;
+        taskCopy.projectIds = Array.isArray(taskCopy.projectIds) ? taskCopy.projectIds.slice() : [];
+        if (taskCopy.projectId && taskCopy.projectIds.indexOf(taskCopy.projectId) === -1) taskCopy.projectIds.unshift(taskCopy.projectId);
+        if (taskCopy.projectIds.indexOf(project.id) === -1) taskCopy.projectIds.push(project.id);
         taskCopy.projectName = taskCopy.projectName || project.title || project.name || '';
 
         if (taskCopy.id && seenById[taskCopy.id]) return;
