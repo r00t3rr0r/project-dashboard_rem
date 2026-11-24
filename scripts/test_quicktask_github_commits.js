@@ -183,6 +183,10 @@ function modalHarness() {
     note:entry.sha,titleDe:'Anmeldung korrigiert',titleEn:'Fixed login',
     descriptionDe:'Deutsche Nachricht',descriptionEn:'English message'
   }))}})};
+  h.window.AIConfModule.renderCommitSelection=(host,commits,translate)=>{
+    host.innerHTML='Commits vor der Uebersetzung auswaehlen';
+    host.selectCommits=selected=>translate(selected||commits,()=>{});
+  };
   return {h,element,created};
 }
 
@@ -193,6 +197,8 @@ test('only selected commits become task metadata after applying the preview',asy
   element('qtm-project').value='p1';
   element('qtm-github-commits').click();
   await new Promise(resolve=>setImmediate(resolve));
+  assert.match(element('qtm-github-commit-review').innerHTML,/vor der Uebersetzung/);
+  await element('qtm-github-commit-review').selectCommits();
   assert.match(element('qtm-github-commit-review').innerHTML,/EN: Fixed login/);
   element('qtm-github-commit-review').querySelectorAll=()=>[{getAttribute:()=>commit(1).sha}];
   element('qtm-github-create').click();
@@ -206,6 +212,25 @@ test('only selected commits become task metadata after applying the preview',asy
   assert.match(created[0].title,/^Anmeldung korrigiert - /);
   assert.equal(created[0].sourceCommitShas.join(','),commit(1).sha);
   assert.match(created[0].subtasks[0].title,/DE: Anmeldung korrigiert \| EN: Fixed login/);
+});
+
+test('QuickTask translates only commits confirmed in the preselection',async()=>{
+  const {h,element}=modalHarness(),batches=[];
+  h.sandbox.fetch=async()=>({ok:true,json:async()=>[commit(1),commit(2)]});
+  h.window.LocalOllama.generate=async(path,payload)=>{
+    const entries=JSON.parse(payload.draftInput);
+    batches.push(...entries.map(entry=>entry.sha));
+    return {draft:{taskSuggestions:entries.map(entry=>({note:entry.sha,titleDe:'Titel',titleEn:'Title',descriptionDe:'Text',descriptionEn:'Text'}))}};
+  };
+  h.window.QuickTaskModule.open();
+  element('qtm-project').value='p1';
+  element('qtm-github-commits').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(batches.length,0);
+  const selected={sha:commit(2).sha,date:'2020-01-01T00:00:00Z',message:'Original',author:'Alice'};
+  await element('qtm-github-commit-review').selectCommits([selected]);
+  assert.deepEqual(batches,[selected.sha]);
+  assert.equal(element('qtm-github-commit-review')._commits.length,1);
 });
 
 test('creates a completed task per local commit day and linked chronological calendar entries',async()=>{
@@ -223,6 +248,7 @@ test('creates a completed task per local commit day and linked chronological cal
     element('qtm-project').value='p1';
     element('qtm-github-commits').click();
     await new Promise(resolve=>setImmediate(resolve));
+    await element('qtm-github-commit-review').selectCommits();
     element('qtm-github-commit-review').querySelectorAll=()=>items.slice(0,3).map(item=>({getAttribute:()=>item.sha}));
     element('qtm-github-create').click();
     const assign=(sha,employeeId)=>{
@@ -337,6 +363,7 @@ test('requires a manual selection for commits without a linked author',async()=>
   element('qtm-project').value='p1';
   element('qtm-github-commits').click();
   await new Promise(resolve=>setImmediate(resolve));
+  await element('qtm-github-commit-review').selectCommits();
   element('qtm-github-commit-review').querySelectorAll=()=>[{getAttribute:()=>item.sha}];
   element('qtm-github-create').click();
   element('qt-submit').click();
@@ -411,6 +438,7 @@ test('reports persistence failure without closing the task editor',async()=>{
   element('qtm-project').value='p1';
   element('qtm-github-commits').click();
   await new Promise(resolve=>setImmediate(resolve));
+  await element('qtm-github-commit-review').selectCommits();
   element('qtm-github-commit-review').querySelectorAll=()=>[{getAttribute:()=>item.sha}];
   element('qtm-github-create').click();
   element('qtm-github-assignee-'+item.sha).value='alice';
@@ -493,6 +521,7 @@ test('commits with known GitHub logins are grouped into one task per employee pe
   element('qtm-project').value='p1';
   element('qtm-github-commits').click();
   await new Promise(resolve=>setImmediate(resolve));
+  await element('qtm-github-commit-review').selectCommits();
   element('qtm-github-commit-review').querySelectorAll=()=>items.map(item=>({getAttribute:()=>item.sha}));
   element('qtm-github-create').click();
   // Vorschlaege sind bereits gesetzt: alice-Gruppe (2 Commits) + bob-Gruppe (1 Commit) am selben Tag

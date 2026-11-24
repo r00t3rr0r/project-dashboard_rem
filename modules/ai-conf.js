@@ -392,6 +392,51 @@ function translateCommitBatch(project,commits){
     });
   });
 }
+function renderCommitSelection(host,commits,onTranslate){
+  var ordered=commits.slice().sort(function(a,b){return Date.parse(b.date)-Date.parse(a.date);});
+  host.innerHTML='<fieldset class="commit-selection"><legend>Commits vor der Uebersetzung auswaehlen</legend>'
+    +'<small>'+ordered.length+' neue Commits im Standardbranch. Zeitraum in lokaler Zeitzone; leere Anzahl waehlt alle Treffer. Die Vorauswahl kann einzeln geaendert werden.</small>'
+    +'<div class="commit-selection-filters"><label>Von <input type="date" data-commit-from></label><label>Bis <input type="date" data-commit-until></label><label>Neueste Anzahl <input type="number" min="1" step="1" value="20" data-commit-limit></label><button type="button" class="btn btn-secondary" data-commit-apply>Auswahl anwenden</button><button type="button" class="btn btn-secondary" data-commit-none>Keine auswaehlen</button></div>'
+    +'<div data-commit-count aria-live="polite"></div><div class="commit-selection-list">'+ordered.map(function(commit,index){
+      return '<label class="commit-selection-item"><input type="checkbox" data-commit-choice="'+escapeAttr(commit.sha)+'"'+(index<20?' checked':'')+'><span><strong>'+escapeHtml(commit.message.split('\n')[0]||'(Ohne Nachricht)')+'</strong><small>'+escapeHtml(commit.author)+' · '+escapeHtml(new Date(commit.date).toLocaleString('de-DE'))+' · '+escapeHtml(commit.sha.slice(0,7))+'</small><small class="commit-selection-message">'+escapeHtml(commit.message)+'</small></span></label>';
+    }).join('')+'</div><button type="button" class="btn btn-primary" data-commit-translate>Ausgewaehlte Commits uebersetzen</button></fieldset><div data-commit-status role="status" aria-live="polite"></div>';
+  var fieldset=host.querySelector('.commit-selection'),status=host.querySelector('[data-commit-status]');
+  var choices=host.querySelectorAll('[data-commit-choice]');
+  function updateCount(){
+    var count=Array.prototype.filter.call(choices,function(input){return input.checked;}).length;
+    host.querySelector('[data-commit-count]').textContent=count+' von '+ordered.length+' Commits ausgewaehlt';
+  }
+  function selectByFilters(){
+    var from=host.querySelector('[data-commit-from]').value,until=host.querySelector('[data-commit-until]').value;
+    var limitValue=host.querySelector('[data-commit-limit]').value;
+    var limit=limitValue===''?ordered.length:Number(limitValue);
+    if((from&&until&&from>until)||!Number.isSafeInteger(limit)||limit<1){
+      status.textContent='Bitte einen gueltigen Zeitraum und eine positive ganze Anzahl eingeben.';return;
+    }
+    status.textContent='';
+    var count=0;
+    Array.prototype.forEach.call(choices,function(input,index){
+      var date=new Date(ordered[index].date);
+      var day=date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0');
+      input.checked=(!from||day>=from)&&(!until||day<=until)&&count<limit;
+      if(input.checked)count++;
+    });
+    updateCount();
+  }
+  Array.prototype.forEach.call(choices,function(input){input.addEventListener('change',updateCount);});
+  host.querySelector('[data-commit-apply]').addEventListener('click',selectByFilters);
+  host.querySelector('[data-commit-none]').addEventListener('click',function(){Array.prototype.forEach.call(choices,function(input){input.checked=false;});updateCount();});
+  host.querySelector('[data-commit-translate]').addEventListener('click',function(){
+    var selected=ordered.filter(function(commit,index){return choices[index].checked;});
+    if(!selected.length){status.textContent='Bitte mindestens einen Commit auswaehlen.';return;}
+    fieldset.disabled=true;
+    status.textContent='Uebersetzung wird vorbereitet ...';
+    Promise.resolve().then(function(){return onTranslate(selected,function(message){status.textContent=message;});}).catch(function(error){
+      status.textContent=error&&error.name==='AbortError'?'KI-Arbeit wurde gestoppt.':String(error&&error.message||error);
+    }).finally(function(){fieldset.disabled=false;});
+  });
+  updateCount();
+}
 function renderCommitDraft(root){
   var host=root.querySelector('#ai-assistant-result'),item=assistantDraft.items[0];
   host.hidden=false;
@@ -413,7 +458,6 @@ function runCommitAssistant(root){
   var projectId=String((root.querySelector('#ai-assistant-project')||{}).value||'');
   var project=getProjects().find(function(item){return item.id===projectId;});
   if(!project){notify('Bitte zuerst ein Projekt auswaehlen.',true);return;}
-  if(!window.LocalOllama||typeof window.LocalOllama.generate!=='function'){notify('Lokaler Ollama-Client ist nicht verfuegbar.',true);return;}
   var until=new Date().toISOString();
   var repository=String((project.github||{}).owner||'')+'/'+String((project.github||{}).repo||'');
   var since='';
@@ -427,18 +471,24 @@ function runCommitAssistant(root){
     var imported=importedCommitShas(project.id,repository);
     commits=commits.filter(function(commit){return !imported.has(commit.sha);});
     if(!commits.length){result.textContent='Keine neuen Commits gefunden (Standardbranch).';return null;}
-    var translated=[],chain=Promise.resolve();
-    for(var offset=0;offset<commits.length;offset+=4){
-      (function(batch){chain=chain.then(function(){
-        result.textContent='Deutsche und englische Uebersetzungen werden erstellt: '+translated.length+' / '+commits.length+' Commits ...';
-        return translateCommitBatch(project,batch).then(function(items){translated=translated.concat(items);});
-      });})(commits.slice(offset,offset+4));
-    }
-    return chain.then(function(){return translated;});
-  }).then(function(commits){
-    if(!commits)return;
-    assistantDraft={projectId:project.id,mode:'githubCommits',repository:repository,since:since,until:until,items:[{title:'Erledigte Entwicklung / Completed development: '+projectTitle(project)+' ('+new Date(until).toLocaleDateString('de-DE')+')',commits:commits}]};
-    renderAssistantDraft(root);
+    renderCommitSelection(result,commits,function(selected,progress){
+      if(!window.LocalOllama||typeof window.LocalOllama.generate!=='function')throw new Error('Lokaler Ollama-Client ist nicht verfuegbar.');
+      var importedNow=importedCommitShas(project.id,repository);
+      if(selected.some(function(commit){return importedNow.has(commit.sha);}))throw new Error('Mindestens ein ausgewaehlter Commit wurde inzwischen uebernommen. Bitte erneut abrufen.');
+      select.disabled=true;
+      root.querySelectorAll('[data-assistant]').forEach(function(button){button.disabled=true;});
+      var translated=[],chain=Promise.resolve();
+      for(var offset=0;offset<selected.length;offset+=4){
+        (function(batch){chain=chain.then(function(){
+          progress('Deutsche und englische Uebersetzungen werden erstellt: '+translated.length+' / '+selected.length+' Commits ...');
+          return translateCommitBatch(project,batch).then(function(items){translated=translated.concat(items);});
+        });})(selected.slice(offset,offset+4));
+      }
+      return chain.then(function(){
+        assistantDraft={projectId:project.id,mode:'githubCommits',repository:repository,since:since,until:until,items:[{title:'Erledigte Entwicklung / Completed development: '+projectTitle(project)+' ('+new Date(until).toLocaleDateString('de-DE')+')',commits:translated}]};
+        renderAssistantDraft(root);
+      }).finally(function(){select.disabled=false;root.querySelectorAll('[data-assistant]').forEach(function(button){button.disabled=false;});});
+    });
   }).catch(function(error){
     result.textContent=error&&error.name==='AbortError'?'KI-Arbeit wurde gestoppt.':String(error&&error.message||error);
     notify('Commit-Aufgaben konnten nicht vorbereitet werden.',true);
@@ -667,5 +717,6 @@ function bindEvents(root,config,models){
 window.AIConfModule={render:render,getConfiguration:readConfig};
 window.AIConfModule.translateCommitBatch=translateCommitBatch;
 window.AIConfModule.commitCalendarData=commitCalendarData;
+window.AIConfModule.renderCommitSelection=renderCommitSelection;
 window.addEventListener('localOllamaStatusChanged',function(event){syncActivityUI(event.detail);});
 })();

@@ -6181,3 +6181,13 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
   font-size: 0.74rem;
   font-weight: 600;
 }
+.commit-selection { display: grid; gap: .6rem; min-width: 0; border: 0; padding: 0; margin: 0; }
+.commit-selection legend { font-weight: 600; }
+.commit-selection-filters { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; }
+.commit-selection-filters label { display: grid; gap: .2rem; }
+.commit-selection-filters input[type="number"] { width: 7rem; }
+.commit-selection-list { display: grid; gap: .35rem; max-height: 22rem; overflow-y: auto; }
+.commit-selection-item { display: grid; grid-template-columns: auto minmax(0,1fr); gap: .5rem; padding: .5rem; border: 1px solid var(--border-color); }
+.commit-selection-item > span { display: grid; gap: .2rem; min-width: 0; }
+.commit-selection-item small { color: var(--text-muted); overflow-wrap: anywhere; }
+.commit-selection-message { white-space: pre-wrap; }

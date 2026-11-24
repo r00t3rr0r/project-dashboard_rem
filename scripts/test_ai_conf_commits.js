@@ -7,7 +7,25 @@ const {test} = require('node:test');
 function makeHarness() {
   const project = {id:'p1',title:'Testprojekt',github:{owner:'acme',repo:'app'}};
   const tasks = [], requests = [], notifications = [], openedDrafts = [];
-  const host = {hidden:false,innerHTML:'',textContent:'',querySelector:()=>({addEventListener(){}}),querySelectorAll:()=>[]};
+  const controls={},choices=[];
+  function control(selector){
+    return controls[selector]||(controls[selector]={value:selector==='[data-commit-limit]'?'20':'',textContent:'',disabled:false,listeners:{},
+      addEventListener(event,listener){this.listeners[event]=listener;},
+      click(){if(this.listeners.click)this.listeners.click.call(this);}});
+  }
+  const host = {hidden:false,textContent:'',_html:'',
+    set innerHTML(value){
+      this._html=value;
+      if(value.includes('data-commit-choice=')){
+        choices.length=0;
+        for(const match of value.matchAll(/data-commit-choice="([^"]+)"( checked)?/g)){
+          choices.push({sha:match[1],checked:!!match[2],addEventListener(){}});
+        }
+      }
+    },
+    get innerHTML(){return this._html;},
+    querySelector:control,
+    querySelectorAll:selector=>selector==='[data-commit-choice]'?choices:[]};
   const select = {value:project.id,disabled:false};
   const button = {disabled:false};
   const root = {
@@ -17,7 +35,7 @@ function makeHarness() {
   const window = {
     addEventListener(){},
     dispatchEvent(){},
-    DataLayer:{getTasks:()=>tasks,getProjects:()=>[project],createTask:task=>{tasks.push(task);return task;}},
+    DataLayer:{getTasks:()=>tasks,getProjects:()=>[project],isTaskLinkedToProject:(task,id)=>task.projectId===id,createTask:task=>{tasks.push(task);return task;}},
     AuthManager:{getCurrentUser:()=>({github:{privateAccessToken:'test-token'}})},
     QuickTaskModule:{showToast:message=>notifications.push(message),open:draft=>openedDrafts.push(draft)},
     LocalOllama:{generate:async(endpoint,payload)=>({draft:{taskSuggestions:JSON.parse(payload.draftInput).map(translatedSuggestion)}})}
@@ -33,7 +51,11 @@ function makeHarness() {
     'window.AIConfModule={fetchRecentCommits,translateCommitBatch,importCommitTask,importedCommitShas,runCommitAssistant,saveConfig,getConfiguration:readConfig,setDraft:function(value){assistantDraft=value;}};'
   );
   vm.runInNewContext(source,sandbox);
-  return {api:window.AIConfModule,window,sandbox,project,tasks,requests,notifications,openedDrafts,root,host,select,button};
+  return {api:window.AIConfModule,window,sandbox,project,tasks,requests,notifications,openedDrafts,root,host,select,button,controls,choices};
+}
+async function translateSelection(harness){
+  harness.host.querySelector('[data-commit-translate]').click();
+  await new Promise(resolve=>setImmediate(resolve));
 }
 
 const since = '2026-11-16T12:00:00.000Z', until = '2026-11-17T12:00:00.000Z';
@@ -376,12 +398,64 @@ test('batches AI requests and creates only a preview until confirmation',async()
     return {draft:{taskSuggestions:JSON.parse(payload.draftInput).map(translatedSuggestion)}};
   };
   await harness.api.runCommitAssistant(harness.root);
+  assert.equal(batchCount,0);
+  await translateSelection(harness);
   assert.equal(batchCount,4);
   assert.equal(harness.tasks.length,0);
   assert(harness.host.innerHTML.includes('Als erledigt uebernehmen'));
   assert.equal((harness.host.innerHTML.match(/data-commit-sha=/g)||[]).length,13);
   assert.equal(harness.select.disabled,false);
   assert.equal(harness.button.disabled,false);
+});
+
+test('preselects newest 20 and applies local date and quantity filters before translating',async()=>{
+  const harness=makeHarness(),translated=[];
+  const entries=Array.from({length:25},(_,index)=>githubCommit(index,new Date(2020,0,index+1,12).toISOString()));
+  harness.sandbox.fetch=async()=>({ok:true,json:async()=>entries});
+  harness.window.LocalOllama.generate=async(endpoint,payload)=>{
+    const batch=JSON.parse(payload.draftInput);
+    translated.push(...batch.map(item=>item.sha));
+    return {draft:{taskSuggestions:batch.map(translatedSuggestion)}};
+  };
+  await harness.api.runCommitAssistant(harness.root);
+  assert.equal(translated.length,0);
+  assert.equal(harness.choices.filter(item=>item.checked).length,20);
+  assert.equal(harness.choices[0].sha,entries[24].sha);
+  harness.host.querySelector('[data-commit-from]').value='2020-01-05';
+  harness.host.querySelector('[data-commit-until]').value='2020-01-10';
+  harness.host.querySelector('[data-commit-limit]').value='';
+  harness.controls['[data-commit-apply]'].click();
+  assert.equal(harness.choices.filter(item=>item.checked).length,6);
+  harness.host.querySelector('[data-commit-limit]').value='3';
+  harness.controls['[data-commit-apply]'].click();
+  assert.deepEqual(harness.choices.filter(item=>item.checked).map(item=>item.sha),[entries[9].sha,entries[8].sha,entries[7].sha]);
+  harness.choices[1].checked=true;
+  harness.choices.find(item=>item.sha===entries[8].sha).checked=false;
+  await translateSelection(harness);
+  assert.deepEqual(translated,[entries[23].sha,entries[9].sha,entries[7].sha]);
+});
+
+test('invalid filters and empty selection do not start translation; errors retain selection',async()=>{
+  const harness=makeHarness();
+  harness.sandbox.fetch=async()=>({ok:true,json:async()=>[githubCommit(1,'2020-01-01T10:00:00Z')]});
+  let calls=0;
+  harness.window.LocalOllama.generate=async()=>{calls++;throw new Error('Modell nicht erreichbar');};
+  await harness.api.runCommitAssistant(harness.root);
+  harness.host.querySelector('[data-commit-from]').value='2020-02-01';
+  harness.host.querySelector('[data-commit-until]').value='2020-01-01';
+  harness.controls['[data-commit-apply]'].click();
+  assert.match(harness.controls['[data-commit-status]'].textContent,/gueltigen Zeitraum/);
+  assert.equal(harness.choices[0].checked,true);
+  harness.controls['[data-commit-none]'].click();
+  await translateSelection(harness);
+  assert.equal(calls,0);
+  assert.match(harness.controls['[data-commit-status]'].textContent,/mindestens einen/);
+  harness.choices[0].checked=true;
+  await translateSelection(harness);
+  assert.equal(calls,1);
+  assert.equal(harness.choices[0].checked,true);
+  assert.match(harness.controls['[data-commit-status]'].textContent,/Modell nicht erreichbar/);
+  assert.equal(harness.controls['.commit-selection'].disabled,false);
 });
 
 test('translation corrections in the preview are used in the task and calendar metadata',async()=>{
@@ -392,9 +466,10 @@ test('translation corrections in the preview are used in the task and calendar m
     getAttribute:name=>name==='data-translation-sha'?sha:'title',
     addEventListener:(event,listener)=>{input.onInput=listener;}
   };
-  harness.host.querySelectorAll=()=>[input];
-  harness.sandbox.fetch=async()=>({ok:true,json:async()=>[{sha,commit:{message:'Giriş hatasını düzelt',committer:{date:new Date().toISOString()},author:{name:'Dev'}}}]});
+  harness.sandbox.fetch=async()=>({ok:true,json:async()=>[{sha,commit:{message:'Giriş hatasını düzelt',committer:{date:new Date(Date.now()-1000).toISOString()},author:{name:'Dev'}}}]});
   await harness.api.runCommitAssistant(harness.root);
+  harness.host.querySelectorAll=selector=>selector==='[data-commit-choice]'?harness.choices:[input];
+  await translateSelection(harness);
   input.onInput.call(input);
   harness.root.querySelectorAll=selector=>selector==='[data-commit-sha]:checked'?[{getAttribute:()=>sha}]:[];
   harness.api.importCommitTask(harness.root);
@@ -411,7 +486,8 @@ test('empty results and AI cancellation never create tasks and release controls'
   harness.sandbox.fetch = async()=>({ok:true,json:async()=>[githubCommit(1,new Date(Date.now()-1000).toISOString())]});
   harness.window.LocalOllama.generate = async()=>{const error=new Error('aborted');error.name='AbortError';throw error;};
   await harness.api.runCommitAssistant(harness.root);
+  await translateSelection(harness);
   assert.equal(harness.tasks.length,0);
-  assert.equal(harness.host.textContent,'KI-Arbeit wurde gestoppt.');
+  assert.equal(harness.controls['[data-commit-status]'].textContent,'KI-Arbeit wurde gestoppt.');
   assert.equal(harness.button.disabled,false);
 });

@@ -1055,44 +1055,62 @@ function openQuickTaskModal(prefill){
             updateAiStatus('Keine neuen Commits gefunden.',false);
             return;
           }
-          updateAiStatus('Commit-Informationen werden auf Deutsch und Englisch vorbereitet ...',false);
-          return translateGitHubCommits(commits,selection.project).then(function(translatedCommits){
-          review.innerHTML='<strong>Commit-Teilaufgaben pruefen</strong>'
-            +'<div>KI-Uebersetzungen koennen Fehler enthalten. Bitte vor dem Erstellen pruefen.</div>'
-            +translatedCommits.map(function(commit){
-              var existing=getGitHubCommitDocumentationTaskId(commit.sha,selection.project);
-              var checked=existing?'':' checked';
-              var disabled=existing?' disabled':'';
-              var state=existing?' (bereits dokumentiert)':'';
-              return '<label style="display:block;margin-top:0.45rem;opacity:'+(existing?'0.6':'1')+';">'
-                +'<input type="checkbox" data-github-commit-sha="'+escapeAttr(commit.sha)+'"'+checked+disabled+'>'
-                +' DE: '+escapeHtml(commit.title)+' <small>'+escapeHtml(commit.author)+' · '+escapeHtml(new Date(commit.date).toLocaleString('de-DE'))+escapeHtml(state)+'</small>'
-                +'<br><small>EN: '+escapeHtml(commit.titleEn)+'</small>'
-                +'</label>';
-            }).join('')
-            +'<button type="button" class="btn btn-primary" id="qtm-github-create" style="margin-top:0.7rem;">Tagesaufgaben entwerfen</button>';
-          review.classList.remove('hidden');
-          review._commits=translatedCommits;
-          updateAiStatus(String(translatedCommits.length)+' Commit(s) vorbereitet (deutsch + englisch).',false);
-          var createBtn=document.getElementById('qtm-github-create');
-          if(createBtn)createBtn.addEventListener('click',function(){
-            var selected=[];
-            review.querySelectorAll('[data-github-commit-sha]:checked').forEach(function(input){
-              var commit=translatedCommits.find(function(item){return item.sha===input.getAttribute('data-github-commit-sha');});
-              if(commit)selected.push(commit);
-            });
+          if(!window.AIConfModule||typeof window.AIConfModule.renderCommitSelection!=='function')throw new Error('Die Commit-Auswahl ist nicht verfuegbar.');
+          window.AIConfModule.renderCommitSelection(review,commits,function(selected,progress){
             var newCommits=selected.filter(function(commit){return !getGitHubCommitDocumentationTaskId(commit.sha,selection.project);});
-            if(!newCommits.length){
-              review.classList.add('hidden');
-              updateAiStatus('Keine neuen Aufgaben ausgewaehlt.',false);
-              return;
-            }
-              try{applyGitHubCommitDrafts(newCommits,selection.project);}
-              catch(error){updateAiStatus('Tagesaufgaben konnten nicht vorbereitet werden: '+String(error&&error.message||error),true);return;}
-              review.classList.add('hidden');
-              updateAiStatus(String(githubDraftGroups.length)+' Tagesaufgabe(n) vorbereitet. Bitte pruefen und erstellen.',false);
+            if(newCommits.length!==selected.length)throw new Error('Mindestens ein ausgewaehlter Commit wurde inzwischen dokumentiert. Bitte erneut abrufen.');
+            aiState.loading=true;
+            toggleAiButtons(true);
+            githubProjectSelect.disabled=true;
+            progress('Commit-Informationen werden auf Deutsch und Englisch vorbereitet ...');
+            updateAiStatus('Commit-Informationen werden auf Deutsch und Englisch vorbereitet ...',false);
+            return translateGitHubCommits(newCommits,selection.project).then(function(translatedCommits){
+              review.innerHTML='<strong>Commit-Teilaufgaben pruefen</strong>'
+                +'<div>KI-Uebersetzungen koennen Fehler enthalten. Bitte vor dem Erstellen pruefen.</div>'
+                +translatedCommits.map(function(commit){
+                  var existing=getGitHubCommitDocumentationTaskId(commit.sha,selection.project);
+                  var checked=existing?'':' checked';
+                  var disabled=existing?' disabled':'';
+                  var state=existing?' (bereits dokumentiert)':'';
+                  return '<label style="display:block;margin-top:0.45rem;opacity:'+(existing?'0.6':'1')+';">'
+                    +'<input type="checkbox" data-github-commit-sha="'+escapeAttr(commit.sha)+'"'+checked+disabled+'>'
+                    +' DE: '+escapeHtml(commit.title)+' <small>'+escapeHtml(commit.author)+' · '+escapeHtml(new Date(commit.date).toLocaleString('de-DE'))+escapeHtml(state)+'</small>'
+                    +'<br><small>EN: '+escapeHtml(commit.titleEn)+'</small>'
+                    +'</label>';
+                }).join('')
+                +'<button type="button" class="btn btn-primary" id="qtm-github-create" style="margin-top:0.7rem;">Tagesaufgaben entwerfen</button>';
+              review.classList.remove('hidden');
+              review._commits=translatedCommits;
+              updateAiStatus(String(translatedCommits.length)+' Commit(s) vorbereitet (deutsch + englisch).',false);
+              var createBtn=document.getElementById('qtm-github-create');
+              if(createBtn)createBtn.addEventListener('click',function(){
+                var selected=[];
+                review.querySelectorAll('[data-github-commit-sha]:checked').forEach(function(input){
+                  var commit=translatedCommits.find(function(item){return item.sha===input.getAttribute('data-github-commit-sha');});
+                  if(commit)selected.push(commit);
+                });
+                var newCommits=selected.filter(function(commit){return !getGitHubCommitDocumentationTaskId(commit.sha,selection.project);});
+                if(!newCommits.length){
+                  review.classList.add('hidden');
+                  updateAiStatus('Keine neuen Aufgaben ausgewaehlt.',false);
+                  return;
+                }
+                try{applyGitHubCommitDrafts(newCommits,selection.project);}
+                catch(error){updateAiStatus('Tagesaufgaben konnten nicht vorbereitet werden: '+String(error&&error.message||error),true);return;}
+                review.classList.add('hidden');
+                updateAiStatus(String(githubDraftGroups.length)+' Tagesaufgabe(n) vorbereitet. Bitte pruefen und erstellen.',false);
+              });
+            }).catch(function(error){
+              updateAiStatus('GitHub-Commits konnten nicht vorbereitet werden: '+String(error&&error.message||error),true);
+              throw error;
+            }).finally(function(){
+              aiState.loading=false;
+              toggleAiButtons(false);
+              githubProjectSelect.disabled=false;
+            });
           });
-          });
+          review.classList.remove('hidden');
+          updateAiStatus('Commits vor der Uebersetzung auswaehlen.',false);
         }).catch(function(error){
           updateAiStatus('GitHub-Commits konnten nicht vorbereitet werden: '+String(error&&error.message||error),true);
         }).finally(function(){
