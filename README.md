@@ -18,6 +18,16 @@ Bei Aufgaben mit Teilaufgaben wird der Aufgabenfortschritt automatisch aus dem A
 
 Im „Projekt-Fortschritt“ erscheinen Aufgaben mit mehreren Projektzuordnungen einmal gesammelt unter „Projektübergreifende Aufgaben“, jeweils mit den verknüpften Projekten. Aufgaben ohne Projekt bleiben separat unter „Ohne Projekt“ sichtbar.
 
+## Repository-Verwaltung (Projekte-Seite)
+
+Die Projekte-Seite ist die zentrale Stelle zum Administrieren der Projekte und ihrer GitHub-Repositories. Über den Button „Repositories" öffnet sich die Repository-Verwaltung:
+
+- **Zentraler GitHub-Token**: Token eines Accounts, der in allen Projekt-Repositories Contributor ist (z. B. `r3vm4y`). Er wird serverseitig im KV-Store gespeichert (`pd_github_central_token_v1`), gilt damit für alle Clients und dient als Fallback für alle Commit- und Repository-Abrufe, wenn der angemeldete Mitarbeiter keinen eigenen Token hinterlegt hat. So lassen sich Commits aus Repositories verschiedener GitHub-Accounts (auch private) abrufen.
+- **Repository-Übersicht**: Alle Projekte mit verknüpftem Repository inklusive Sichtbarkeit, Commit-Cache, letztem Commit und letztem Sync.
+- **Synchronisation**: Commits pro Repository oder über „Alle Repositories synchronisieren" für sämtliche Projekte auf einmal (sequentiell, um das GitHub-Rate-Limit zu schonen). Fehler einzelner Repositories stoppen den Gesamtlauf nicht.
+
+Token-Auflösung bei GitHub-Abrufen: Formularfeld → Session → Token des angemeldeten Mitarbeiters → zentraler Token.
+
 ## Quickstart
 
 ### Empfohlen: Storage-Server (All-in-One)

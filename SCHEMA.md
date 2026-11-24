@@ -38,6 +38,12 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `pd_calendar_events`     | `CalendarEvent[]`| `[]` | Liste der Kalenderereignisse                       |
 | `pd_team_chat_messages`  | `TeamChatMessage[]` | `[]` | Öffentliche Nachrichten des Team-Gruppenchats  |
 
+### Einzelwerte
+
+| Key                           | Type     | Default | Beschreibung                                                                 |
+|-------------------------------|----------|---------|------------------------------------------------------------------------------|
+| `pd_github_central_token_v1`  | `string` | `''`    | Zentraler GitHub-Token (Fallback für alle Repository-/Commit-Abrufe); wird über die Repository-Verwaltung der Projekte-Seite gepflegt |
+
 ---
 
 ## Objekt-Strukturen

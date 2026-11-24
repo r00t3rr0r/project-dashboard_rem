@@ -11,6 +11,7 @@ var MAX_TOTAL_ATTACHMENT_SIZE=100*1024*1024;
 var AI_BACKEND_URL=(window.location&&/^https?:/i.test(window.location.origin||''))?window.location.origin.replace(/\/$/,''):'';
 var DEFAULT_OLLAMA_MODEL='hf.co/HauhauCS/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:Q4_K_M';
 var GITHUB_TOKEN_SESSION_KEY='projektDashboard.githubApiToken';
+var GITHUB_CENTRAL_TOKEN_STORAGE_KEY='pd_github_central_token_v1';
 var MEETING_NOTES_PREFIX='meeting_notes_';
 var MEETING_WORKFLOW_PREFIX='meeting_workflow_';
 var MEETING_ACTIVE_PROJECT_KEY='meeting_active_project';
@@ -2332,6 +2333,24 @@ function getCurrentUserGitHubToken(){
   return String(user.github.privateAccessToken||'').trim();
 }
 
+function getCentralGitHubToken(){
+  if(!window.DataLayer||typeof window.DataLayer.getStoredValue!=='function')return '';
+  return String(window.DataLayer.getStoredValue(GITHUB_CENTRAL_TOKEN_STORAGE_KEY,'')||'').trim();
+}
+
+function setCentralGitHubToken(token){
+  var value=String(token||'').trim();
+  if(!window.DataLayer)return value;
+  if(value){
+    if(typeof window.DataLayer.setStoredValue==='function'){
+      window.DataLayer.setStoredValue(GITHUB_CENTRAL_TOKEN_STORAGE_KEY,value);
+    }
+  } else if(typeof window.DataLayer.deleteStoredValue==='function'){
+    window.DataLayer.deleteStoredValue(GITHUB_CENTRAL_TOKEN_STORAGE_KEY);
+  }
+  return value;
+}
+
 function getGitHubApiToken(){
   var token='';
   var primary=byId('project-github-token');
@@ -2355,8 +2374,12 @@ function getGitHubApiToken(){
   token=getCurrentUserGitHubToken();
   if(token){
     try { window.sessionStorage.setItem(GITHUB_TOKEN_SESSION_KEY,token); } catch(_err3){}
+    return token;
   }
-  return token;
+
+  // Zentraler Dashboard-Token (z. B. PAT eines Contributors aller Repos) als Fallback.
+  // Bewusst nicht in sessionStorage gecacht, damit Aenderungen sofort greifen.
+  return getCentralGitHubToken();
 }
 
 function hasGitHubApiToken(){
@@ -2366,7 +2389,7 @@ function hasGitHubApiToken(){
 function buildPrivateRepoTokenHint(){
   return hasGitHubApiToken()
     ? ''
-    : ' Fuer private Repositories bitte einen gueltigen GitHub Token setzen (Projektformular, Import-Dialog oder im Mitarbeiterprofil).';
+    : ' Fuer private Repositories bitte einen gueltigen GitHub Token setzen (Projektformular, Import-Dialog, Mitarbeiterprofil oder zentraler Token in der Repository-Verwaltung).';
 }
 
 function isGitHubEmptyRepoError(err){
@@ -3559,7 +3582,7 @@ function getProjectImportModal(){
 
 function syncProjectsModalBodyState(){
   if(!document.body)return;
-  var hasOpenModal=isProjectCreateModalOpen()||isProjectImportModalOpen();
+  var hasOpenModal=isProjectCreateModalOpen()||isProjectImportModalOpen()||isRepoAdminModalOpen();
   document.body.classList.toggle('projects-modal-open',hasOpenModal);
 }
 
@@ -3582,6 +3605,7 @@ function openProjectCreateDialog(options){
   var modal=getProjectCreateModal();
   if(!modal)return;
   closeProjectImportDialog();
+  closeRepoAdminDialog();
 
   var config=options&&typeof options==='object'?options:{};
   if(config.reset===true)resetForm();
@@ -3617,6 +3641,7 @@ function openProjectImportDialog(options){
   var modal=getProjectImportModal();
   if(!modal)return;
   closeProjectCreateDialog();
+  closeRepoAdminDialog();
 
   modal.classList.remove('hidden');
   modal.setAttribute('aria-hidden','false');
@@ -3639,6 +3664,158 @@ function closeProjectImportDialog(){
   modal.setAttribute('aria-hidden','true');
   syncProjectsModalBodyState();
   saveProjectPageDraftState();
+}
+
+function getRepoAdminModal(){
+  return byId('project-repo-admin-modal');
+}
+
+function isRepoAdminModalOpen(){
+  var modal=getRepoAdminModal();
+  return !!(modal&&!modal.classList.contains('hidden'));
+}
+
+function openRepoAdminDialog(){
+  var auth=getAuthManager();
+  if(auth&&typeof auth.canCreateProject==='function'&&!auth.canCreateProject()){
+    notify('Nur angemeldete Mitarbeiter duerfen Repositories verwalten.','error');
+    return;
+  }
+  var modal=getRepoAdminModal();
+  if(!modal)return;
+  closeProjectCreateDialog();
+  closeProjectImportDialog();
+
+  modal.classList.remove('hidden');
+  modal.setAttribute('aria-hidden','false');
+  syncProjectsModalBodyState();
+  renderRepoAdminPanel();
+}
+
+function closeRepoAdminDialog(){
+  var modal=getRepoAdminModal();
+  if(!modal)return;
+
+  modal.classList.add('hidden');
+  modal.setAttribute('aria-hidden','true');
+  syncProjectsModalBodyState();
+}
+
+function getProjectsWithGitHubLink(){
+  return getVisibleProjects().filter(function(project){
+    return !!(project.github&&project.github.owner&&project.github.repo);
+  });
+}
+
+var repoAdminSyncState={running:false,current:'',done:0,total:0};
+
+function renderRepoAdminTokenStatus(){
+  var statusEl=byId('github-central-token-status');
+  if(!statusEl)return;
+  var centralToken=getCentralGitHubToken();
+  statusEl.textContent=centralToken
+    ? 'Zentraler Token ist gesetzt und wird als Fallback fuer alle Repository-Abrufe genutzt.'
+    : 'Kein zentraler Token gesetzt. Abrufe nutzen dann nur den Token des angemeldeten Mitarbeiters.';
+}
+
+function renderRepoAdminList(){
+  var host=byId('project-repo-admin-list');
+  if(!host)return;
+
+  var projects=getProjectsWithGitHubLink();
+  if(!projects.length){
+    host.innerHTML='<p class="text-muted">Noch kein Projekt mit einem GitHub-Repository verknuepft.</p>';
+    return;
+  }
+
+  var rows=projects.map(function(project){
+    var github=project.github||{};
+    var meta=project.githubRepoMeta||{};
+    var metrics=project.githubMetrics||null;
+    var commits=Array.isArray(project.githubCommits)?project.githubCommits:[];
+    var fullName=github.owner+'/'+github.repo;
+    var repoUrl=meta.htmlUrl||github.url||('https://github.com/'+fullName);
+    var lastCommitAt=(metrics&&metrics.lastCommitAt)||(commits[0]&&commits[0].date)||null;
+    var syncing=repoAdminSyncState.running;
+
+    return '<article class="repo-admin-item" data-project-id="'+escapeHtml(project.id)+'">'
+      +'<div class="repo-admin-item-main">'
+      +'<strong>'+escapeHtml(getProjectTitle(project))+'</strong>'
+      +'<a href="'+escapeHtml(repoUrl)+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(fullName)+'</a>'
+      +(meta.visibility?'<span class="badge">'+escapeHtml(meta.visibility)+'</span>':'')
+      +'</div>'
+      +'<div class="repo-admin-item-meta text-muted">'
+      +'<span>Commits im Cache: '+commits.length+'</span>'
+      +'<span>Letzter Commit: '+(lastCommitAt?escapeHtml(formatDateTime(lastCommitAt)):'unbekannt')+'</span>'
+      +'<span>Letzter Sync: '+(github.lastSyncAt?escapeHtml(formatDateTime(github.lastSyncAt)):'noch nie')+'</span>'
+      +'</div>'
+      +'<div class="repo-admin-item-actions">'
+      +'<button type="button" class="btn btn-secondary" data-action="repo-admin-sync" data-id="'+escapeHtml(project.id)+'"'+(syncing?' disabled':'')+'>Commits synchronisieren</button>'
+      +'</div>'
+      +'</article>';
+  });
+
+  host.innerHTML='<div class="repo-admin-list">'+rows.join('')+'</div>';
+}
+
+function renderRepoAdminSyncProgress(){
+  var progressEl=byId('project-repo-admin-progress');
+  var syncAllBtn=byId('project-repo-admin-sync-all');
+  if(syncAllBtn)syncAllBtn.disabled=repoAdminSyncState.running;
+  if(!progressEl)return;
+  if(repoAdminSyncState.running){
+    progressEl.textContent='Synchronisiere '+(repoAdminSyncState.done+1)+'/'+repoAdminSyncState.total
+      +(repoAdminSyncState.current?' – '+repoAdminSyncState.current:'')+' ...';
+  } else {
+    progressEl.textContent='';
+  }
+}
+
+function renderRepoAdminPanel(){
+  if(!isRepoAdminModalOpen())return;
+  renderRepoAdminTokenStatus();
+  renderRepoAdminList();
+  renderRepoAdminSyncProgress();
+}
+
+function syncAllProjectRepositories(){
+  if(repoAdminSyncState.running)return Promise.resolve();
+  var projects=getProjectsWithGitHubLink();
+  if(!projects.length){
+    notify('Keine Projekte mit GitHub-Repository verknuepft.','error');
+    return Promise.resolve();
+  }
+
+  repoAdminSyncState={running:true,current:'',done:0,total:projects.length};
+  renderRepoAdminPanel();
+  var errors=[];
+
+  // Sequentiell synchronisieren, um das GitHub-Rate-Limit zu schonen.
+  var chain=projects.reduce(function(promise,project){
+    return promise.then(function(){
+      repoAdminSyncState.current=getProjectTitle(project);
+      renderRepoAdminSyncProgress();
+      return importCommitsForProject(project.id).catch(function(err){
+        errors.push(getProjectTitle(project)+': '+(err&&err.message?err.message:String(err)));
+      }).then(function(){
+        repoAdminSyncState.done+=1;
+        renderRepoAdminPanel();
+      });
+    });
+  },Promise.resolve());
+
+  return chain.then(function(){
+    repoAdminSyncState.running=false;
+    repoAdminSyncState.current='';
+    renderRepoAdminPanel();
+    render();
+    if(errors.length){
+      notify('Repository-Sync abgeschlossen. '+errors.length+' Fehler: '+errors.join(' | ')+buildPrivateRepoTokenHint(),'error');
+    } else {
+      notify('Alle '+projects.length+' Repositories synchronisiert.','info');
+    }
+    return {synced:projects.length-errors.length,errors:errors};
+  });
 }
 
 function saveProjectPageDraftState(){
@@ -5432,6 +5609,67 @@ function bindListActions(){
   });
 }
 
+function bindRepoAdmin(){
+  var openBtn=byId('project-focus-repos');
+  if(openBtn)openBtn.addEventListener('click',openRepoAdminDialog);
+
+  var modal=getRepoAdminModal();
+  if(modal){
+    modal.addEventListener('click',function(evt){
+      if(evt.target===modal)closeRepoAdminDialog();
+    });
+  }
+
+  var closeBtn=byId('project-repo-admin-close-btn');
+  if(closeBtn)closeBtn.addEventListener('click',closeRepoAdminDialog);
+
+  var tokenSaveBtn=byId('github-central-token-save-btn');
+  if(tokenSaveBtn){
+    tokenSaveBtn.addEventListener('click',function(){
+      var input=byId('github-central-token');
+      var value=setCentralGitHubToken(input?input.value:'');
+      if(input)input.value='';
+      notify(value?'Zentraler GitHub-Token gespeichert.':'Zentraler GitHub-Token entfernt.','info');
+      renderRepoAdminPanel();
+    });
+  }
+
+  var tokenClearBtn=byId('github-central-token-clear-btn');
+  if(tokenClearBtn){
+    tokenClearBtn.addEventListener('click',function(){
+      setCentralGitHubToken('');
+      var input=byId('github-central-token');
+      if(input)input.value='';
+      notify('Zentraler GitHub-Token entfernt.','info');
+      renderRepoAdminPanel();
+    });
+  }
+
+  var syncAllBtn=byId('project-repo-admin-sync-all');
+  if(syncAllBtn)syncAllBtn.addEventListener('click',syncAllProjectRepositories);
+
+  var list=byId('project-repo-admin-list');
+  if(list){
+    list.addEventListener('click',function(evt){
+      var button=evt.target&&evt.target.closest?evt.target.closest('[data-action="repo-admin-sync"]'):null;
+      if(!button||button.disabled||!button.dataset.id)return;
+      var projectId=button.dataset.id;
+      button.disabled=true;
+      notify('Commits werden synchronisiert ...','info');
+      Promise.resolve().then(function(){
+        return importCommitsForProject(projectId);
+      }).then(function(project){
+        notify('Projekt "'+getProjectTitle(project)+'": '+(project.githubCommits||[]).length+' Commits synchronisiert.','info');
+        render();
+      }).catch(function(err){
+        notify('Commit-Sync fehlgeschlagen: '+(err&&err.message?err.message:String(err))+buildPrivateRepoTokenHint(),'error');
+      }).then(function(){
+        renderRepoAdminPanel();
+      });
+    });
+  }
+}
+
 function init(){
   try {
     if(!window.DataLayer){
@@ -5441,6 +5679,7 @@ function init(){
 
     bindForm();
     bindListActions();
+    bindRepoAdmin();
     var contextButton=byId('project-context-btn');
     if(contextButton)contextButton.addEventListener('click',generateProjectContextFile);
     render();
@@ -5467,7 +5706,12 @@ window[NAMESPACE]={
   closeCreateDialog:closeProjectCreateDialog,
   openImportDialog:openProjectImportDialog,
   closeImportDialog:closeProjectImportDialog,
+  openRepoAdminDialog:openRepoAdminDialog,
+  closeRepoAdminDialog:closeRepoAdminDialog,
   importCommitsForProject:importCommitsForProject,
+  syncAllRepositories:syncAllProjectRepositories,
+  getCentralGitHubToken:getCentralGitHubToken,
+  setCentralGitHubToken:setCentralGitHubToken,
   generateAiKnowledgeForProject:generateAiKnowledgeForProject,
   createProjectFromGitHub:createProjectFromGitHub,
   createProjectFromZip:createProjectFromZip

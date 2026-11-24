@@ -10,6 +10,8 @@ die Versionierung folgt [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- Projekte-Seite: Repository-Verwaltung als zentrale Stelle fuer alle Projekt-Repositories — Uebersicht aller verknuepften Repos (Account, Sichtbarkeit, Commit-Cache, letzter Commit/Sync), Einzel-Sync je Repository und "Alle Repositories synchronisieren" (sequentiell, fehlertolerant)
+- Zentraler GitHub-Token (`pd_github_central_token_v1`, serverseitig im KV-Store): Fallback fuer alle Commit- und Repository-Abrufe, damit Commits aus Repositories unterschiedlicher GitHub-Accounts (auch private) ueber einen gemeinsamen Contributor-Account (z. B. r3vm4y) abrufbar sind
 - Team-Kalender: Terminbestaetigung (RSVP) mit Zusagen/Vielleicht/Absagen je Teilnehmer, Bestaetigungsuebersicht pro Termin und Panel "Offene Termineinladungen" mit Schnellantwort
 - Team-Kalender: Teilnehmer-Checklisten-Auswahl im Termin-Editor mit Schnellaktionen (Projektteam uebernehmen, Alle auswaehlen, Auswahl leeren)
 - Team-Kalender: Neue Terminarten "Schulung" und "Sonstiges", klickbare Typ-Legende mit Monatszaehlern zum Ein-/Ausblenden einzelner Terminarten, "Heute"-Button

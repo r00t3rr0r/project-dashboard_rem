@@ -189,6 +189,7 @@
         <div class="section-actions project-header-actions">
           <button type="button" id="project-focus-create" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">edit_square</span><span>Neues Projekt</span></button>
           <button type="button" id="project-focus-import" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">file_upload</span><span>Import</span></button>
+          <button type="button" id="project-focus-repos" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">hub</span><span>Repositories</span></button>
           <button type="button" id="project-context-btn" class="btn btn-primary"><span class="material-symbols-rounded" aria-hidden="true">psychology</span><span>KI-Projektkontext</span></button>
         </div>
       </div>
@@ -302,6 +303,35 @@
           </div>
           <button id="create-from-zip-btn" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">folder_zip</span><span>Projekt aus ZIP anlegen</span></button>
           <p class="text-muted mt-1">Für Commit-Analyse zusätzlich einen GitHub-Link am Projekt hinterlegen.</p>
+        </div>
+      </div>
+
+      <div id="project-repo-admin-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="project-repo-admin-title" aria-hidden="true">
+        <div class="modal projects-import-modal" id="projects-repo-admin-panel">
+          <div class="projects-modal-header">
+            <h2 id="project-repo-admin-title">Repository-Verwaltung</h2>
+            <button type="button" id="project-repo-admin-close-btn" class="btn btn-secondary" aria-label="Dialog schliessen"><span class="material-symbols-rounded" aria-hidden="true">close</span><span>Schliessen</span></button>
+          </div>
+          <p class="projects-panel-subtitle">Zentraler Zugriff auf alle Projekt-Repositories, auch wenn sie bei unterschiedlichen GitHub-Accounts liegen.</p>
+
+          <div class="form-group">
+            <label for="github-central-token">Zentraler GitHub-Token</label>
+            <input type="password" id="github-central-token" placeholder="ghp_..." autocomplete="off">
+            <p class="project-field-hint text-muted">Token eines Accounts, der in allen Repositories Contributor ist (z. B. r3vm4y). Wird zentral gespeichert und als Fallback fuer alle Commit-Abrufe genutzt, wenn kein eigener Token hinterlegt ist.</p>
+          </div>
+          <div class="project-actions-inline">
+            <button type="button" id="github-central-token-save-btn" class="btn btn-primary"><span class="material-symbols-rounded" aria-hidden="true">key</span><span>Token speichern</span></button>
+            <button type="button" id="github-central-token-clear-btn" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">key_off</span><span>Token entfernen</span></button>
+          </div>
+          <p id="github-central-token-status" class="text-muted mt-1"></p>
+
+          <hr class="projects-separator">
+
+          <h2>Verknuepfte Repositories</h2>
+          <p class="text-muted">Commits aller Projekt-Repositories abrufen, um immer ueber die neuesten Aenderungen informiert zu sein.</p>
+          <button type="button" id="project-repo-admin-sync-all" class="btn btn-primary"><span class="material-symbols-rounded" aria-hidden="true">sync</span><span>Alle Repositories synchronisieren</span></button>
+          <p id="project-repo-admin-progress" class="text-muted mt-1" aria-live="polite"></p>
+          <div id="project-repo-admin-list" class="mt-1"></div>
         </div>
       </div>
 
