@@ -433,3 +433,39 @@ test('creates general tasks and supports linking a task to multiple projects',as
   assert.deepEqual(Array.from(created[1].projectIds),['p1','p2']);
   assert.equal(created[1].projectId,'p1');
 });
+
+test('falls back to the central token and then unauthenticated when a GitHub token is rejected',async()=>{
+  const h=harness();
+  h.window.DataLayer.getStoredValue=(key,fallback)=>key==='pd_github_central_token_v1'?'central-token':fallback;
+  h.sandbox.fetch=async(url,options)=>{
+    h.requests.push({url,options});
+    const token=(options.headers||{})['X-GitHub-Token']||'';
+    if(token==='central-token')return {ok:true,json:async()=>[commit(1)]};
+    return {ok:false,status:401,json:async()=>({error:'GitHub-Authentifizierung fehlgeschlagen. Bitte Token pruefen.'})};
+  };
+  const commits=await h.api.fetchQuickTaskGitHubCommits(h.project);
+  assert.equal(commits.length,1);
+  assert.equal(h.requests.length,2);
+  assert.equal(h.requests[0].options.headers['X-GitHub-Token'],'test-token');
+  assert.equal(h.requests[1].options.headers['X-GitHub-Token'],'central-token');
+});
+
+test('retries without token for public repositories when all tokens are rejected',async()=>{
+  const h=harness();
+  h.sandbox.fetch=async(url,options)=>{
+    h.requests.push({url,options});
+    const token=(options.headers||{})['X-GitHub-Token']||'';
+    if(token)return {ok:false,status:401,json:async()=>({error:'GitHub-Authentifizierung fehlgeschlagen. Bitte Token pruefen.'})};
+    return {ok:true,json:async()=>[commit(1)]};
+  };
+  const commits=await h.api.fetchQuickTaskGitHubCommits(h.project);
+  assert.equal(commits.length,1);
+  assert.equal(h.requests.length,2);
+  assert.equal(h.requests[1].options.headers['X-GitHub-Token'],undefined);
+});
+
+test('reports a clear error when the dashboard session is missing',async()=>{
+  const h=harness();
+  h.sandbox.fetch=async()=>({ok:false,status:401,json:async()=>({error:'Anmeldung erforderlich.',authRequired:true})});
+  await assert.rejects(h.api.fetchQuickTaskGitHubCommits(h.project),/Anmeldung erforderlich/);
+});

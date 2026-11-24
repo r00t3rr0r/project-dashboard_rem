@@ -271,28 +271,52 @@ function importedCommitShas(projectId,repository){
   });
   return imported;
 }
+function getGitHubTokenCandidates(){
+  var candidates=[];
+  function pushToken(value){
+    value=String(value||'').trim();
+    if(value&&candidates.indexOf(value)===-1)candidates.push(value);
+  }
+  var user=window.AuthManager&&window.AuthManager.getCurrentUser?window.AuthManager.getCurrentUser():null;
+  if(user&&user.github)pushToken(user.github.privateAccessToken);
+  // Zentraler Dashboard-Token (Repository-Verwaltung) als Fallback
+  if(window.DataLayer&&typeof window.DataLayer.getStoredValue==='function'){
+    pushToken(window.DataLayer.getStoredValue('pd_github_central_token_v1',''));
+  }
+  // Letzte Option: ohne Token (oeffentliche Repositories)
+  candidates.push('');
+  return candidates;
+}
 function fetchRecentCommits(project,since,until){
   var github=project.github||{};
   if(!github.owner||!github.repo)return Promise.reject(new Error('Bitte das Projekt zuerst mit einem GitHub-Repository verknuepfen.'));
-  var user=window.AuthManager&&window.AuthManager.getCurrentUser?window.AuthManager.getCurrentUser():null;
-  var token=String(user&&user.github&&user.github.privateAccessToken||'').trim();
-  var headers={'Accept':'application/json'};
-  if(token)headers['X-GitHub-Token']=token;
+  var candidates=getGitHubTokenCandidates();
+  var tokenIndex=0;
   var seen=new Set(),commits=[];
   function page(number){
     var query=new URLSearchParams({owner:github.owner,repo:github.repo,per_page:'100',page:String(number)});
     if(since)query.set('since',since);
     if(until)query.set('until',until);
+    var token=candidates[tokenIndex];
+    var headers={'Accept':'application/json'};
+    if(token)headers['X-GitHub-Token']=token;
     return fetch('/api/github/commits?'+query.toString(),{headers:headers}).then(function(response){
       return response.json().then(function(body){
         if(!response.ok){
           if(response.status===409)return [];
-          throw new Error('GitHub-Abruf fehlgeschlagen ('+response.status+'). '+(response.status===404||response.status===401||response.status===403?'Repository und GitHub-Token im eigenen Mitarbeiterprofil pruefen.':String(body.error||body.message||'')));
+          if(body&&body.authRequired)throw new Error('Anmeldung erforderlich. Bitte am Dashboard neu anmelden.');
+          // Ungueltiger GitHub-Token: naechste Token-Quelle versuchen (zentraler Token, danach ohne Token)
+          if(response.status===401&&token&&tokenIndex<candidates.length-1){
+            tokenIndex+=1;
+            return null;
+          }
+          throw new Error('GitHub-Abruf fehlgeschlagen ('+response.status+'). '+(response.status===404||response.status===401||response.status===403?'Repository und GitHub-Token (Mitarbeiterprofil oder zentraler Token in der Repository-Verwaltung) pruefen.':String(body.error||body.message||'')));
         }
         if(!Array.isArray(body))throw new Error('GitHub hat keine gueltige Commit-Liste geliefert.');
         return body;
       });
     }).then(function(items){
+      if(items===null)return page(number);
       items.forEach(function(item){
         var source=item.commit||{},date=String((source.committer||{}).date||(source.author||{}).date||'');
         var timestamp=Date.parse(date);
