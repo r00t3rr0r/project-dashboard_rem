@@ -406,7 +406,8 @@ STARTED_AT = utc_now_iso_z()
 
 
 def _git(*args, timeout=60):
-    result = subprocess.run(['git', '-C', ROOT] + list(args), capture_output=True, text=True, timeout=timeout)
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0')
+    result = subprocess.run(['git', '-C', ROOT] + list(args), capture_output=True, text=True, timeout=timeout, env=env)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or 'git ' + ' '.join(args) + ' fehlgeschlagen').strip())
     return result.stdout.strip()
@@ -462,41 +463,45 @@ def check_for_update():
             commits.append({'sha': sha, 'author': author, 'date': when, 'subject': subject})
     result = {'checkedAt': utc_now_iso_z(), 'remoteCommit': remote_commit, 'remoteShortCommit': remote_commit[:7],
               'behind': behind, 'ahead': ahead, 'updateAvailable': behind > 0 and ahead == 0,
-              'diverged': behind > 0 and ahead > 0, 'upToDate': remote_commit == head or (behind == 0), 'commits': commits}
+              'diverged': behind > 0 and ahead > 0, 'upToDate': remote_commit == head, 'commits': commits}
     UPDATE_STATE['lastCheck'] = result
     return result
 
 
 def apply_update():
-    """Fast-forward to the remote branch; roll back on any failure. Returns (result, restart_needed)."""
+    """Validate and fast-forward to the remote branch. Returns (result, restart_needed)."""
     started = utc_now_iso_z()
-    previous = _git('rev-parse', 'HEAD')
-    result = {'startedAt': started, 'from': previous[:7], 'to': '', 'ok': False, 'rolledBack': False, 'message': ''}
+    result = {'startedAt': started, 'from': '', 'to': '', 'ok': False, 'rolledBack': False, 'message': ''}
     try:
+        previous = _git('rev-parse', 'HEAD')
+        result['from'] = previous[:7]
         if _git('status', '--porcelain', '--untracked-files=no'):
             raise RuntimeError('Lokale Aenderungen an versionierten Dateien vorhanden - Update abgebrochen.')
         check = check_for_update()
-        if check['diverged']:
+        if check['ahead']:
             raise RuntimeError('Lokale Commits weichen vom Repository ab - automatisches Update nicht moeglich.')
         if not check['behind']:
-            result.update(ok=True, to=previous[:7], message='Bereits auf dem neuesten Stand.')
+            result.update(ok=True, to=previous[:7], finishedAt=utc_now_iso_z(), message='Bereits auf dem neuesten Stand.')
             UPDATE_STATE['lastUpdate'] = result
             return result, False
+        remote_commit = check['remoteCommit']
+        source = subprocess.run(
+            ['git', '-C', ROOT, 'show', remote_commit + ':storage_server.py'],
+            capture_output=True, timeout=60, env=dict(os.environ, GIT_TERMINAL_PROMPT='0')
+        )
+        if source.returncode:
+            raise RuntimeError('Serverdatei im Update konnte nicht gelesen werden: ' + source.stderr.decode('utf-8', 'replace').strip())
         try:
-            ensure_daily_backup(force=True)
+            compile(source.stdout, 'storage_server.py', 'exec')
+        except (SyntaxError, ValueError) as exc:
+            raise RuntimeError('Syntaxpruefung des neuen Servers fehlgeschlagen: ' + str(exc)) from exc
+        try:
+            if not ensure_daily_backup(force=True):
+                raise RuntimeError('Kein Datenbank-Backup erstellt.')
         except Exception as exc:
             raise RuntimeError('Datenbank-Backup vor dem Update fehlgeschlagen: ' + str(exc))
-        _git('merge', '--ff-only', 'FETCH_HEAD', timeout=120)
-        try:
-            compiled = subprocess.run([sys.executable, '-m', 'py_compile', os.path.join(ROOT, 'storage_server.py')],
-                                      capture_output=True, text=True, timeout=60)
-            if compiled.returncode != 0:
-                raise RuntimeError('Syntaxpruefung des neuen Servers fehlgeschlagen: ' + compiled.stderr.strip()[-300:])
-        except Exception:
-            _git('reset', '--hard', previous)
-            result['rolledBack'] = True
-            raise
-        result.update(ok=True, to=_git('rev-parse', '--short', 'HEAD'), commits=check['behind'],
+        _git('merge', '--ff-only', remote_commit, timeout=120)
+        result.update(ok=True, to=remote_commit[:7], commits=check['behind'], finishedAt=utc_now_iso_z(),
                       message='Update installiert. Server wird neu gestartet.')
         UPDATE_STATE['lastUpdate'] = result
         return result, True
@@ -2704,19 +2709,22 @@ class StorageHandler(BaseHTTPRequestHandler):
             return
 
     def _serve_static(self, path):
-        if path.startswith(('/data/', '/.')) or path.endswith(('.py', '.sqlite', '.sqlite-wal', '.sqlite-shm')):
-            self._send_json({'error': 'Forbidden'}, status=403)
-            return
         if path in ('', '/'):
             path = '/app.html'
-        if path.startswith('/'):
-            path = path[1:]
-        if path.startswith('..'):
-            self.send_response(403)
-            self.end_headers()
+        parts = path.lstrip('/').split('/')
+        if any(part.startswith('.') for part in parts) or parts[0] == 'data':
+            self._send_json({'error': 'Forbidden'}, status=403)
+            return
+        root = os.path.realpath(ROOT)
+        full_path = os.path.realpath(os.path.join(root, *parts))
+        relative = os.path.relpath(full_path, root).split(os.sep)
+        if (os.path.commonpath([root, full_path]) != root
+                or any(part.startswith('.') for part in relative)
+                or relative[0] == 'data'
+                or full_path.endswith(('.py', '.sqlite', '.sqlite-wal', '.sqlite-shm'))):
+            self._send_json({'error': 'Forbidden'}, status=403)
             return
 
-        full_path = os.path.join(ROOT, path)
         if not os.path.exists(full_path) or os.path.isdir(full_path):
             self.send_response(404)
             self.end_headers()

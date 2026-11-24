@@ -351,8 +351,10 @@ function setupDashboardUpdate(){
     if(v.lastCheck)html+=row('Letzte Pruefung',fmtDate(v.lastCheck.checkedAt));
     if(v.lastUpdate)html+=row('Letztes Update',fmtDate(v.lastUpdate.finishedAt||v.lastUpdate.startedAt)+' &ndash; '+(v.lastUpdate.ok?'erfolgreich':'fehlgeschlagen'+(v.lastUpdate.rolledBack?' (zurueckgerollt)':''))+': '+esc(v.lastUpdate.message));
     html+='</table>';
+    if(v.gitAvailable===false)html+='<p><strong>Git-Selbstupdate nicht verfuegbar:</strong> '+esc(v.error||'Git-Checkout nicht verfuegbar.')+'</p>';
     if(check){
       if(check.diverged)html+='<p><strong>Lokale Commits weichen vom Repository ab.</strong> Automatisches Update nicht moeglich.</p>';
+      else if(check.ahead)html+='<p><strong>Lokale Commits sind der Update-Quelle voraus.</strong> Automatisches Update nicht moeglich.</p>';
       else if(check.updateAvailable)html+='<p><strong>Update verfuegbar:</strong> '+check.behind+' neue(r) Commit(s) bis '+esc(check.remoteShortCommit)+'</p><ul style="margin:0;padding-left:18px;font-size:12px">'
         +check.commits.map(function(c){return '<li>'+esc(c.sha)+' '+esc(c.subject)+' <em>('+esc(c.author)+', '+fmtDate(c.date)+')</em></li>';}).join('')+'</ul>';
       else html+='<p>Das Dashboard ist auf dem neuesten Stand.</p>';
@@ -371,11 +373,15 @@ function setupDashboardUpdate(){
     fn().catch(function(e){body.textContent='Fehler: '+e.message;}).then(function(){busy=false;checkBtn.disabled=false;});
   }
 
-  function waitForRestart(tries){
-    api('/api/system/version').then(function(){window.location.reload();}).catch(function(){
-      if(tries>0)window.setTimeout(function(){waitForRestart(tries-1);},1500);
-      else body.textContent='Server antwortet nicht. Bitte Seite manuell neu laden.';
-    });
+  function waitForRestart(tries,startedAt,target){
+    function retry(){
+      if(tries>0)window.setTimeout(function(){waitForRestart(tries-1,startedAt,target);},1500);
+      else body.textContent='Neustart oder neue Version nicht bestaetigt. Bitte Server pruefen und Seite manuell neu laden.';
+    }
+    api('/api/system/version').then(function(version){
+      if(version.startedAt!==startedAt&&version.shortCommit===target)window.location.reload();
+      else retry();
+    }).catch(retry);
   }
 
   function build(){
@@ -396,7 +402,7 @@ function setupDashboardUpdate(){
       if(!confirm('Dashboard jetzt aktualisieren? Vor dem Update wird ein Datenbank-Backup erstellt und der Server neu gestartet.'))return;
       run(function(){return api('/api/system/update/apply','POST').then(function(d){
         var u=d.update||{};
-        if(u.ok&&u.commits){render(d.version,null,u.message);waitForRestart(20);}
+        if(u.ok&&u.commits){render(d.version,null,u.message);waitForRestart(20,d.version.startedAt,u.to);}
         else render(d.version,null,u.message);
       });});
     });

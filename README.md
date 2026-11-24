@@ -192,6 +192,24 @@ sudo systemctl restart projekt-dashboard
 sudo systemctl status projekt-dashboard
 ```
 
+### Git-Selbstupdate im Admin-Bereich
+
+Das Selbstupdate benoetigt einen sauberen Git-Checkout auf dem konfigurierten
+Branch und Schreibrechte des Dienstbenutzers auf Checkout und `.git`. Der
+Dienstbenutzer kann damit Anwendungscode veraendern; diese Rechte nur vergeben,
+wenn das Risiko bewusst akzeptiert wird. `data/` bleibt unversioniert und muss
+unabhaengig vom Checkout erhalten bleiben. Das Repository muss fuer den
+Dienstbenutzer ohne interaktive Anmeldung erreichbar sein.
+
+Admins koennen im Header unter "Version / Update" nach Updates suchen und ein
+Fast-Forward-Update bestaetigen. Lokale Aenderungen, abweichende lokale
+Commits, eine ungueltige Serverdatei oder ein fehlgeschlagenes
+Datenbank-Backup verhindern die Installation. Vor dem Fast-Forward wird die
+Serverdatei des Ziel-Commits auf Syntax geprueft und ein Datenbank-Backup
+erstellt; danach startet der Server neu. Der Browser wartet auf den Neustart
+mit dem neuen Commit. Konfiguration: `PROJECT_DASHBOARD_UPDATE_REMOTE`
+(Standard `origin`) und `PROJECT_DASHBOARD_UPDATE_BRANCH` (Standard `main`).
+
 ### Sicherheits-Gate beim Oeffnen
 
 Ohne gueltige Sitzung erscheint ausschliesslich das Loginformular. Mitarbeiter werden aus einem Dropdown ausgewaehlt und melden sich mit ihrem Passwort an. Dashboard und geschuetzte API-Endpunkte bleiben bis dahin gesperrt.
