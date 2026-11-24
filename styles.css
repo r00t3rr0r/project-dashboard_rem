@@ -1959,43 +1959,56 @@ textarea#retro-notes {
    CALENDAR — Offene Einladungen (RSVP)
    ======================================== */
 .calendar-pending-invites {
+  --invite-urgency: 0;
   margin: 0.25rem 0 1rem;
   padding: 0.85rem 0.95rem;
   border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, var(--border-color));
   border-radius: 12px;
   background: linear-gradient(145deg, rgba(74, 158, 255, 0.1), rgba(255, 255, 255, 0.02));
+}
+
+/* Unruhe nur bei offenen Einladungen; Tempo und Ausschlag wachsen mit
+   der Dringlichkeit (--invite-urgency 0..1, je näher der Termin, desto höher) */
+.calendar-pending-invites.has-pending {
+  --invite-nudge-amp: calc(2px + var(--invite-urgency) * 7px);
   animation:
-    invites-attention-nudge 5s ease-in-out infinite,
-    invites-attention-glow 2.5s ease-in-out infinite;
+    invites-attention-nudge calc(6.5s - var(--invite-urgency) * 5s) ease-in-out infinite,
+    invites-attention-glow calc(3s - var(--invite-urgency) * 1.8s) ease-in-out infinite;
   will-change: transform, box-shadow;
+}
+
+/* Weniger als 24h bis zum Termin: Glow und Rahmen kippen ins Rote */
+.calendar-pending-invites.invite-urgency-high {
+  --invite-glow-color: rgba(255, 107, 107, 0.45);
+  --invite-border-hot: color-mix(in srgb, var(--accent-red, #ff6b6b) 80%, var(--border-color));
 }
 
 /* Periodisches Anstupsen: kurzes Hin-und-her-Wackeln, dann Ruhephase */
 @keyframes invites-attention-nudge {
   0%, 72%, 100% { transform: translateX(0); }
-  76% { transform: translateX(-5px); }
-  80% { transform: translateX(5px); }
-  84% { transform: translateX(-4px); }
-  88% { transform: translateX(3px); }
-  92% { transform: translateX(-2px); }
-  96% { transform: translateX(1px); }
+  76% { transform: translateX(calc(var(--invite-nudge-amp, 4px) * -1)); }
+  80% { transform: translateX(var(--invite-nudge-amp, 4px)); }
+  84% { transform: translateX(calc(var(--invite-nudge-amp, 4px) * -0.75)); }
+  88% { transform: translateX(calc(var(--invite-nudge-amp, 4px) * 0.5)); }
+  92% { transform: translateX(calc(var(--invite-nudge-amp, 4px) * -0.35)); }
+  96% { transform: translateX(calc(var(--invite-nudge-amp, 4px) * 0.2)); }
 }
 
-/* Pulsierender Leuchtrahmen */
+/* Pulsierender Leuchtrahmen, Intensität wächst mit der Dringlichkeit */
 @keyframes invites-attention-glow {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(94, 162, 255, 0);
     border-color: color-mix(in srgb, var(--accent-blue) 35%, var(--border-color));
   }
   50% {
-    box-shadow: 0 0 16px 2px rgba(94, 162, 255, 0.35);
-    border-color: color-mix(in srgb, var(--accent-blue) 75%, var(--border-color));
+    box-shadow: 0 0 calc(12px + var(--invite-urgency, 0) * 14px) calc(1px + var(--invite-urgency, 0) * 3px) var(--invite-glow-color, rgba(94, 162, 255, 0.35));
+    border-color: var(--invite-border-hot, color-mix(in srgb, var(--accent-blue) 75%, var(--border-color)));
   }
 }
 
 /* Wippendes Brief-Icon in der Überschrift */
-.calendar-invites-heading > .material-symbols-rounded {
-  animation: invites-icon-ring 2.5s ease-in-out infinite;
+.calendar-pending-invites.has-pending .calendar-invites-heading:not(.dashboard-invites-answered-heading) > .material-symbols-rounded {
+  animation: invites-icon-ring calc(3s - var(--invite-urgency, 0) * 1.8s) ease-in-out infinite;
   transform-origin: top center;
 }
 
@@ -2009,8 +2022,8 @@ textarea#retro-notes {
 
 /* Ruhige Darstellung für Nutzer mit reduzierter Bewegung */
 @media (prefers-reduced-motion: reduce) {
-  .calendar-pending-invites,
-  .calendar-invites-heading > .material-symbols-rounded {
+  .calendar-pending-invites.has-pending,
+  .calendar-pending-invites.has-pending .calendar-invites-heading > .material-symbols-rounded {
     animation: none;
   }
 }

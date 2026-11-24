@@ -2613,6 +2613,14 @@
     return html + '</div></div>';
   }
 
+  function applyDashboardInviteUrgency(host, events) {
+    if (window.CalendarModule && typeof window.CalendarModule.applyInviteUrgency === 'function') {
+      window.CalendarModule.applyInviteUrgency(host, events);
+    } else if (host) {
+      host.classList.toggle('has-pending', !!(events && events.length));
+    }
+  }
+
   function renderDashboardInvites() {
     var host = document.getElementById('dashboard-invites');
     if (!host) return;
@@ -2643,9 +2651,11 @@
     if (!pending.length && !answered.length) {
       setHtmlIfChanged(host, '');
       host.classList.add('hidden');
+      applyDashboardInviteUrgency(host, []);
       return;
     }
     host.classList.remove('hidden');
+    applyDashboardInviteUrgency(host, pending.map(function(item) { return item.evt; }));
     var html = '';
     if (pending.length) {
       html += '<div class="calendar-invites-heading"><span class="material-symbols-rounded" aria-hidden="true">mark_email_unread</span>' +

@@ -412,6 +412,33 @@
     }
   }
 
+  // Dringlichkeit offener Einladungen: 0 (>= 7 Tage entfernt) bis 1 (jetzt/überfällig).
+  // Steuert Tempo/Ausschlag der Aufmerksamkeits-Animationen via CSS-Variable.
+  function applyInviteUrgency(panel, events) {
+    if (!panel) return;
+    var hasPending = !!(events && events.length);
+    panel.classList.toggle('has-pending', hasPending);
+    if (!hasPending) {
+      panel.style.removeProperty('--invite-urgency');
+      panel.classList.remove('invite-urgency-high');
+      return;
+    }
+    var now = Date.now();
+    var minHours = Infinity;
+    events.forEach(function (evt) {
+      var dateKey = String(evt.date || evt.startDate || '');
+      if (!dateKey) return;
+      var start = new Date(dateKey + 'T' + (evt.startTime ? evt.startTime : '00:00') + ':00');
+      if (isNaN(start.getTime())) return;
+      var hours = (start.getTime() - now) / 3600000;
+      if (hours < minHours) minHours = hours;
+    });
+    if (!isFinite(minHours)) minHours = 168;
+    var urgency = Math.max(0, Math.min(1, 1 - minHours / 168));
+    panel.style.setProperty('--invite-urgency', urgency.toFixed(3));
+    panel.classList.toggle('invite-urgency-high', minHours <= 24);
+  }
+
   function renderPendingInvites() {
     var panel = document.getElementById('calendar-pending-invites');
     if (!panel) return;
@@ -420,6 +447,7 @@
     var user = getCurrentUser();
     if (!user || currentCalendarMode === CALENDAR_MODE_ACTIVITY) {
       panel.classList.add('hidden');
+      applyInviteUrgency(panel, []);
       return;
     }
 
@@ -435,9 +463,11 @@
 
     if (!pendingEvents.length) {
       panel.classList.add('hidden');
+      applyInviteUrgency(panel, []);
       return;
     }
     panel.classList.remove('hidden');
+    applyInviteUrgency(panel, pendingEvents);
 
     var heading = document.createElement('div');
     heading.className = 'calendar-invites-heading';
@@ -2099,6 +2129,7 @@
     openModal: openEventModal,
     openDetails: openEventDetailsModal,
     respond: respondToEvent,
+    applyInviteUrgency: applyInviteUrgency,
     setMode: function (mode) {
       currentCalendarMode = mode === CALENDAR_MODE_ACTIVITY ? CALENDAR_MODE_ACTIVITY : CALENDAR_MODE_EVENTS;
       renderCalendar(currentViewDate);
