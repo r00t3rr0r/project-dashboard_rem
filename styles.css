@@ -1281,6 +1281,21 @@ textarea#retro-notes {
   box-shadow: 0 8px 24px var(--shadow-color);
 }
 
+.kanban-touch-ghost {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  opacity: 0.92;
+  transform: rotate(2deg) scale(1.02);
+  box-shadow: 0 12px 32px var(--shadow-color);
+}
+
+body.kanban-touch-dragging {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
 /* Priority border colors */
 .kanban-card.priority-high   { border-left-color: var(--accent-red); }
 .kanban-card.priority-medium { border-left-color: var(--accent-yellow); }

@@ -2207,26 +2207,138 @@
         e.preventDefault();
         container.classList.remove('drag-over');
 
-        var taskId = e.dataTransfer.getData('text/plain');
-        if (!taskId || !taskId.trim()) return;
-
-        // WIP-Limit prüfen
-        checkWipLimit(status, function(canDrop, msg) {
-          if (!canDrop) {
-            alert(msg);
-            return;
-          }
-
-          var task = window.DataLayer.getTaskById(taskId);
-          if (task && task.status !== status) {
-            var auth = getAuthManager();
-            if (auth && typeof auth.canMoveTask === 'function' && !auth.canMoveTask(task)) return;
-            applyTaskStatusTransition(task, status, { at: getNowIsoString() });
-            window.DataLayer.updateTask(task);
-            renderAllColumns();
-          }
-        });
+        moveTaskToStatus(e.dataTransfer.getData('text/plain'), status);
       });
+    });
+
+    setupTouchDrag();
+  }
+
+  function moveTaskToStatus(taskId, status) {
+    if (!taskId || !String(taskId).trim()) return;
+    checkWipLimit(status, function(canDrop, msg) {
+      if (!canDrop) {
+        alert(msg);
+        return;
+      }
+      var task = window.DataLayer.getTaskById(taskId);
+      if (task && task.status !== status) {
+        var auth = getAuthManager();
+        if (auth && typeof auth.canMoveTask === 'function' && !auth.canMoveTask(task)) return;
+        applyTaskStatusTransition(task, status, { at: getNowIsoString() });
+        window.DataLayer.updateTask(task);
+        renderAllColumns();
+      }
+    });
+  }
+
+  // Touch: Karte lange gedrückt halten, dann in eine Spalte ziehen
+  function setupTouchDrag() {
+    var LONG_PRESS_MS = 350;
+    var MOVE_TOLERANCE = 10;
+    var EDGE = 60;
+    var timer = null;
+    var drag = null;
+    var pending = null;
+
+    function columnAt(x, y) {
+      var el = document.elementFromPoint(x, y);
+      var col = el && el.closest('.kanban-column');
+      return col ? col.querySelector('[id^="kanban-"]') : null;
+    }
+
+    function statusOf(container) {
+      return container ? container.id.replace('kanban-', '') : null;
+    }
+
+    function clearHighlight() {
+      document.querySelectorAll('.kanban-column .drag-over').forEach(function(el) { el.classList.remove('drag-over'); });
+    }
+
+    function autoScroll(x, y) {
+      var board = document.querySelector('.kanban-board') || document.scrollingElement;
+      var w = window.innerWidth;
+      var h = window.innerHeight;
+      if (x < EDGE) { if (board) board.scrollLeft -= 14; }
+      else if (x > w - EDGE) { if (board) board.scrollLeft += 14; }
+      if (y < EDGE) window.scrollBy(0, -14);
+      else if (y > h - EDGE) window.scrollBy(0, 14);
+    }
+
+    function endDrag(cancelled, x, y) {
+      clearTimeout(timer);
+      timer = null;
+      pending = null;
+      if (!drag) return;
+      var d = drag;
+      drag = null;
+      d.card.classList.remove('dragging');
+      d.ghost.remove();
+      clearHighlight();
+      document.body.classList.remove('kanban-touch-dragging');
+      if (!cancelled) {
+        var status = statusOf(columnAt(x, y));
+        if (status) moveTaskToStatus(d.taskId, status);
+      }
+    }
+
+    document.addEventListener('touchstart', function(e) {
+      if (e.touches.length !== 1 || drag) return;
+      var target = e.target;
+      var card = target.closest && target.closest('.kanban-card');
+      if (!card || target.closest('button, a, input, select, textarea, .kanban-progress-block')) return;
+      var task = window.DataLayer.getTaskById(card.dataset.taskId);
+      var auth = getAuthManager();
+      if (!task || (auth && typeof auth.canMoveTask === 'function' && !auth.canMoveTask(task))) return;
+      var t = e.touches[0];
+      pending = { x: t.clientX, y: t.clientY };
+      clearTimeout(timer);
+      timer = setTimeout(function() {
+        if (!pending) return;
+        var rect = card.getBoundingClientRect();
+        var ghost = card.cloneNode(true);
+        ghost.classList.add('kanban-touch-ghost');
+        ghost.style.width = rect.width + 'px';
+        document.body.appendChild(ghost);
+        drag = { card: card, ghost: ghost, taskId: card.dataset.taskId, offX: pending.x - rect.left, offY: pending.y - rect.top, x: pending.x, y: pending.y };
+        ghost.style.left = (pending.x - drag.offX) + 'px';
+        ghost.style.top = (pending.y - drag.offY) + 'px';
+        card.classList.add('dragging');
+        document.body.classList.add('kanban-touch-dragging');
+        if (navigator.vibrate) navigator.vibrate(20);
+        pending = null;
+      }, LONG_PRESS_MS);
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function(e) {
+      var t = e.touches[0];
+      if (!drag) {
+        if (pending && Math.abs(t.clientX - pending.x) + Math.abs(t.clientY - pending.y) > MOVE_TOLERANCE) {
+          clearTimeout(timer);
+          pending = null;
+        }
+        return;
+      }
+      e.preventDefault();
+      drag.x = t.clientX;
+      drag.y = t.clientY;
+      drag.ghost.style.left = (t.clientX - drag.offX) + 'px';
+      drag.ghost.style.top = (t.clientY - drag.offY) + 'px';
+      clearHighlight();
+      var col = columnAt(t.clientX, t.clientY);
+      if (col) col.classList.add('drag-over');
+      autoScroll(t.clientX, t.clientY);
+    }, { passive: false });
+
+    document.addEventListener('touchend', function(e) {
+      var t = e.changedTouches[0];
+      if (drag) e.preventDefault();
+      endDrag(false, t.clientX, t.clientY);
+    }, { passive: false });
+
+    document.addEventListener('touchcancel', function() { endDrag(true); });
+    document.addEventListener('contextmenu', function(e) {
+      if (drag || pending) e.preventDefault();
     });
   }
 
