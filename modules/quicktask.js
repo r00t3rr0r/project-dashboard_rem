@@ -471,6 +471,7 @@ function openQuickTaskModal(prefill){
     var aiToolsHtml=adminMode
       ? '<div class="task-ai-panel">'
         +'<div class="task-ai-head"><strong>KI-Assistent (Admin)</strong><small>Aus Titel und Beschreibung automatisch Entwurf und Verteilung erzeugen</small></div>'
+        +(window.LocalOllama&&window.LocalOllama.providerSelectHtml?window.LocalOllama.providerSelectHtml('qtm-ai-provider'):'')
         +'<div class="task-ai-actions">'
           +'<button type="button" class="btn btn-secondary" id="qtm-ai-fill">KI-Entwurf aus Titel + Beschreibung</button>'
           +'<button type="button" class="btn btn-secondary" id="qtm-ai-assign">KI-Zuweisung</button>'
@@ -1010,6 +1011,7 @@ function openQuickTaskModal(prefill){
     }
 
     if(adminMode){
+      if(window.LocalOllama&&window.LocalOllama.bindProviderSelect)window.LocalOllama.bindProviderSelect(document.getElementById('modal-content'));
       var aiFillBtn=document.getElementById('qtm-ai-fill');
       if(aiFillBtn)aiFillBtn.addEventListener('click',runAiDraftFromTitle);
 

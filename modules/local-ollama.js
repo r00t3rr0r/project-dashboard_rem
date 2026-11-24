@@ -5,6 +5,12 @@
 (function(){'use strict';
 
 var OLLAMA_BASES=['http://127.0.0.1:11434','http://localhost:11434','http://178.105.213.50/11434'];
+var PROVIDER_KEY='pd_ai_provider';
+var PROVIDERS={
+  ollama:{label:'Ollama (lokal)'},
+  claude:{label:'Claude',keyField:'claude',model:'claude-sonnet-4-5'},
+  openai:{label:'ChatGPT',keyField:'openai',model:'gpt-4o-mini'}
+};
 var discoveredModels=[];
 var activeOperations=[];
 var operationSequence=0;
@@ -185,6 +191,8 @@ function localFetch(path,options){
 }
 
 function health(){
+  var provider=getProvider();
+  if(isCloudProvider(provider))return cloudHealth(provider);
   if(isRemoteProxyMode()){
     return remoteFetch('/api/ai/health','GET').then(function(result){
       var body=Object.assign({},result.body||{status:'error'});
@@ -285,7 +293,115 @@ function requestGeneration(requestBody,options){
   });
 }
 
+function currentEmployee(){
+  try{
+    var auth=window.AuthManager||window.AuthModule;
+    return auth&&typeof auth.getCurrentUser==='function'?auth.getCurrentUser():null;
+  }catch(_err){return null;}
+}
+
+function getProvider(){
+  var value='ollama';
+  try{value=window.localStorage.getItem(PROVIDER_KEY)||'ollama';}catch(_err){}
+  return PROVIDERS[value]?value:'ollama';
+}
+
+function setProvider(provider){
+  if(!PROVIDERS[provider])return;
+  try{window.localStorage.setItem(PROVIDER_KEY,provider);}catch(_err){}
+  window.dispatchEvent(new CustomEvent('aiProviderChanged',{detail:{provider:provider}}));
+}
+
+function isCloudProvider(provider){return !!(PROVIDERS[provider]&&PROVIDERS[provider].keyField);}
+
+function providerKey(provider){
+  var user=currentEmployee();
+  var keys=user&&user.aiKeys&&typeof user.aiKeys==='object'?user.aiKeys:{};
+  return String(keys[PROVIDERS[provider].keyField]||'').trim();
+}
+
+function providerSelectHtml(id){
+  var current=getProvider();
+  return '<label class="form-group ai-provider-select"><span>KI-Schnittstelle</span><select id="'+id+'" data-ai-provider-select>'
+    +Object.keys(PROVIDERS).map(function(key){return '<option value="'+key+'"'+(key===current?' selected':'')+'>'+PROVIDERS[key].label+'</option>';}).join('')
+    +'</select></label>';
+}
+
+function bindProviderSelect(root){
+  Array.prototype.forEach.call((root||document).querySelectorAll('[data-ai-provider-select]'),function(select){
+    select.value=getProvider();
+  });
+}
+
+if(typeof document!=='undefined')document.addEventListener('change',function(event){
+  var target=event.target;
+  if(target&&target.hasAttribute&&target.hasAttribute('data-ai-provider-select'))setProvider(target.value);
+});
+
+if(typeof document!=='undefined'&&window.addEventListener)window.addEventListener('aiProviderChanged',function(event){
+  var provider=event&&event.detail&&event.detail.provider;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-ai-provider-select]'),function(select){select.value=provider;});
+});
+
+function missingKeyError(provider){
+  return new Error('Fuer '+PROVIDERS[provider].label+' ist im Mitarbeiterprofil kein API-Schluessel hinterlegt. Bitte unter Mitarbeiter > KI-Schluessel eintragen oder eine andere KI-Schnittstelle waehlen.');
+}
+
+function cloudComplete(provider,requestBody,options){
+  var key=providerKey(provider);
+  if(!key)return Promise.reject(missingKeyError(provider));
+  var url,headers,body;
+  if(provider==='claude'){
+    url='https://api.anthropic.com/v1/messages';
+    headers={'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'};
+    body={model:requestBody.model,max_tokens:requestBody.maxTokens,temperature:requestBody.temperature,messages:[{role:'user',content:requestBody.prompt}]};
+  }else{
+    url='https://api.openai.com/v1/chat/completions';
+    headers={'Content-Type':'application/json','Authorization':'Bearer '+key};
+    body={model:requestBody.model,max_tokens:requestBody.maxTokens,temperature:requestBody.temperature,messages:[{role:'user',content:requestBody.prompt}]};
+    if(requestBody.json)body.response_format={type:'json_object'};
+  }
+  return fetch(url,{method:'POST',headers:headers,body:JSON.stringify(body),signal:options&&options.signal?options.signal:undefined}).then(function(response){
+    return response.json().catch(function(){return {};}).then(function(data){
+      if(!response.ok){
+        var message=data&&data.error&&(data.error.message||data.error)||'HTTP '+response.status;
+        throw new Error(PROVIDERS[provider].label+': '+(typeof message==='string'?message:JSON.stringify(message)));
+      }
+      if(provider==='claude')return (Array.isArray(data.content)?data.content:[]).map(function(part){return part&&part.text||'';}).join('');
+      return String(data&&data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content||'');
+    });
+  },function(error){
+    if(error&&error.name==='AbortError')throw error;
+    throw new Error(PROVIDERS[provider].label+' nicht erreichbar: '+String(error&&error.message||error));
+  });
+}
+
+function cloudHealth(provider){
+  var model=PROVIDERS[provider].model;
+  discoveredModels=[model];
+  if(!providerKey(provider))return Promise.resolve({endpoint:provider,body:{status:'error',error:missingKeyError(provider).message,models:[{name:model}]}});
+  return Promise.resolve({endpoint:provider,body:{status:'ok',provider:provider,models:[{name:model}]}});
+}
+
+function generateCloud(provider,path,payload,options){
+  payload=resolvedPayload(payload);
+  var config=configFrom(payload);
+  var model=PROVIDERS[provider].model;
+  applyModel(payload,model);
+  var requestBody={model:model,prompt:buildPrompt(path,payload),temperature:config.temperature,maxTokens:config.maxTokens,json:isJsonPath(path)};
+  return cloudComplete(provider,requestBody,options).then(function(text){
+    try{return wrapResult(path,payload,text);}catch(firstError){
+      if(!isJsonPath(path))throw firstError;
+      var retry=Object.assign({},requestBody,{temperature:0,maxTokens:Math.min(6000,Math.max(3600,config.maxTokens*2))});
+      retry.prompt+='\n\nDie vorige Ausgabe war unvollstaendig oder syntaktisch ungueltig. Gib ausschliesslich ein einziges gueltiges JSON-Objekt aus.';
+      return cloudComplete(provider,retry,options).then(function(retryText){return wrapResult(path,payload,retryText);});
+    }
+  });
+}
+
 function generateCore(path,payload,options){
+  var provider=getProvider();
+  if(isCloudProvider(provider))return generateCloud(provider,path,payload,options);
   payload=resolvedPayload(payload);
   var config=configFrom(payload||{});
   return resolveModels().then(function(models){
@@ -352,6 +468,10 @@ function generate(path,payload,options){
 
 function request(path,method,payload,options){
   if(path==='/api/ai/health'&&method==='GET')return health();
+  if(isCloudProvider(getProvider())){
+    if(method!=='POST')return Promise.reject(new Error('Nicht unterstuetzte KI-Methode: '+method));
+    return generate(path,payload||{},options||{}).then(function(body){return {endpoint:getProvider(),body:body};});
+  }
   if(isRemoteProxyMode()){
     if(method!=='POST')return Promise.reject(new Error('Nicht unterstuetzte remote Ollama-Methode: '+method));
     return remoteFetch(path,method,payload||{},options||{}).then(function(result){
@@ -367,6 +487,11 @@ window.LocalOllama={
   request:request,
   generate:function(path,payload,options){return generate(path,payload||{},options||{});},
   health:health,
+  getProvider:getProvider,
+  setProvider:setProvider,
+  providers:function(){return Object.keys(PROVIDERS).map(function(key){return {id:key,label:PROVIDERS[key].label};});},
+  providerSelectHtml:providerSelectHtml,
+  bindProviderSelect:bindProviderSelect,
   getStatus:function(){return Object.assign({},activityState);},
   stopAll:stopAll
 };

@@ -663,6 +663,7 @@ function renderWorkspace(root,config,models,error,checking){
     +'<div class="ai-conf-layout">'
       +'<section class="ai-conf-panel ai-conf-runtime"><div class="ai-conf-panel-head"><div><p class="section-kicker">Modellrouting</p><h2>Auswahl &amp; Fallback</h2></div><span class="material-symbols-rounded" aria-hidden="true">account_tree</span></div>'
         +'<div class="ai-conf-fields">'
+          +(window.LocalOllama&&window.LocalOllama.providerSelectHtml?window.LocalOllama.providerSelectHtml('ai-provider'):'')
           +'<label class="form-group"><span>Routing-Modus</span><select id="ai-routing"><option value="auto"'+(config.routing==='auto'?' selected':'')+'>Automatisch nach Aufgabe</option><option value="fixed"'+(config.routing==='fixed'?' selected':'')+'>Primärmodell erzwingen</option><option value="fallback"'+(config.routing==='fallback'?' selected':'')+'>Primärmodell mit Fallback</option></select></label>'
           +'<label class="form-group"><span>Primärmodell</span><select id="ai-primary-model">'+modelOptions(models,selectedPrimary)+'</select></label>'
           +'<label class="form-group"><span>Fallback-Modell</span><select id="ai-fallback-model">'+modelOptions(models,selectedFallback)+'</select></label>'
@@ -692,6 +693,11 @@ function navigate(page){
 }
 function bindEvents(root,config,models){
   root.querySelector('#ai-conf-refresh').addEventListener('click',function(){refreshModels(root,config,true);});
+  if(window.LocalOllama&&window.LocalOllama.bindProviderSelect){
+    window.LocalOllama.bindProviderSelect(root);
+    var providerSelect=root.querySelector('#ai-provider');
+    if(providerSelect)providerSelect.addEventListener('change',function(){refreshModels(root,config,true);});
+  }
   root.querySelector('#ai-conf-stop').addEventListener('click',function(){if(window.LocalOllama&&window.LocalOllama.stopAll)window.LocalOllama.stopAll();});
   root.querySelector('#ai-assistant-project').addEventListener('change',function(){config.assistantProjectId=this.value;saveConfig(config);assistantDraft={projectId:'',mode:'',items:[]};renderAssistantDraft(root);});
   root.querySelectorAll('[data-assistant]').forEach(function(button){button.addEventListener('click',function(){var mode=this.getAttribute('data-assistant');if(mode==='githubCommits')runCommitAssistant(root);else if(mode==='githubE2E'||mode==='routine')runSpecialAssistant(root,mode);else runAssistant(root,mode);});});

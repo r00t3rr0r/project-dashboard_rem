@@ -3277,6 +3277,7 @@ function renderInfoHub(project,flow){
     +(hasGithubLink
       ?'<p class="text-muted">Mit einem Klick werden Projektdaten lokal an Ollama gesendet und als Wissensdatei abgelegt.</p>'
       :'<p class="text-muted">Fuer KI-Aufbereitung bitte zuerst GitHub-Repository am Projekt hinterlegen.</p>')
+    +(window.LocalOllama&&window.LocalOllama.providerSelectHtml?window.LocalOllama.providerSelectHtml('ai-provider-'+project.id):'')
     +'<div class="ai-health-grid">'
     +'<p>Backend: <span class="ai-health-pill '+statusClassFromState(AI_HEALTH_STATE.backendStatus)+'">'+statusTextFromState(AI_HEALTH_STATE.backendStatus)+'</span></p>'
     +'<p>Ollama: <span class="ai-health-pill '+statusClassFromState(AI_HEALTH_STATE.ollamaStatus)+'">'+statusTextFromState(AI_HEALTH_STATE.ollamaStatus)+'</span></p>'
