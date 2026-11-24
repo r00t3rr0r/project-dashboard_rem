@@ -607,6 +607,7 @@
         '<div class="employee-github-actions">' +
           (profileLink ? '<a class="btn btn-secondary employee-github-link" href="' + escapeHtml(profileLink) + '" target="_blank" rel="noopener noreferrer">Profil</a>' : '') +
           '<button type="button" class="btn btn-secondary employee-github-token-btn" data-action="edit-github-token" data-emp-id="' + escapeHtml(employee.id) + '"' + disabledAttr + '>PAT hinterlegen</button>' +
+          '<button type="button" class="btn btn-secondary employee-ai-keys-btn" data-action="edit-ai-keys" data-emp-id="' + escapeHtml(employee.id) + '"' + disabledAttr + '>KI-Schluessel</button>' +
           '<button type="button" class="btn btn-secondary employee-github-sync-btn" data-action="github-sync" data-emp-id="' + escapeHtml(employee.id) + '"' + (username && canEditProfile ? '' : ' disabled') + '>' + syncLabel + '</button>' +
         '</div>' +
       '</div>' +
@@ -878,6 +879,14 @@
     return githubSyncRequests[employeeId];
   }
 
+  function normalizeAiKeys(keys) {
+    keys = keys && typeof keys === 'object' ? keys : {};
+    return {
+      claude: typeof keys.claude === 'string' ? keys.claude.trim() : '',
+      openai: typeof keys.openai === 'string' ? keys.openai.trim() : ''
+    };
+  }
+
   function normalizeEmployee(raw) {
     var emp = raw && typeof raw === 'object' ? Object.assign({}, raw) : {};
     if (!emp.id) emp.id = generateId('emp');
@@ -899,6 +908,7 @@
     }
 
     emp.github = normalizeGitHubProfile(emp.github, emp.name);
+    emp.aiKeys = normalizeAiKeys(emp.aiKeys);
     if (getAuthManager() && typeof getAuthManager().normalizeEmployee === 'function') {
       emp = getAuthManager().normalizeEmployee(emp);
     }
@@ -1733,6 +1743,10 @@
       if (!target.github.username) target.github.syncError = '';
     }
 
+    if (patch && Object.prototype.hasOwnProperty.call(patch, 'aiKeys')) {
+      target.aiKeys = normalizeAiKeys(Object.assign({}, target.aiKeys || {}, patch.aiKeys || {}));
+    }
+
     if (patch && Object.prototype.hasOwnProperty.call(patch, 'auth') && patch.auth) {
       if (adminMode) {
         target.auth = patch.auth;
@@ -2208,6 +2222,59 @@
     }
   }
 
+  function showAiKeysModal(employeeId) {
+    if (!canEditPrivateEmployeeProfile(employeeId)) {
+      alert('KI-Schluessel duerfen nur im eigenen Profil bearbeitet werden.');
+      return;
+    }
+
+    var employee = getEmployees().find(function(item) { return item.id === employeeId; });
+    if (!employee) {
+      alert('Mitarbeiter nicht gefunden.');
+      return;
+    }
+
+    var keys = normalizeAiKeys(employee.aiKeys);
+    var inputStyle = 'width:100%;padding:8px 12px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-secondary);color:var(--text-primary);font-size:14px;';
+
+    showConfirmModal(
+      'KI-Schluessel hinterlegen: ' + (employee.name || 'Mitarbeiter'),
+      '<div class="modal-form-stack">' +
+        '<p class="modal-hint"><small>Private API-Schluessel fuer Claude (Anthropic) und ChatGPT (OpenAI). Sie werden nur genutzt, wenn du als KI-Schnittstelle Claude bzw. ChatGPT auswaehlst, und direkt aus deinem Browser an den Anbieter gesendet.</small></p>' +
+        '<label style="font-size:13px;font-weight:500;color:var(--text-secondary);">Claude API Key<br>' +
+          '<input id="emp_ai_key_claude" type="password" value="' + escapeHtml(keys.claude) + '" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" style="' + inputStyle + '"></label>' +
+        '<label style="font-size:13px;font-weight:500;color:var(--text-secondary);">ChatGPT (OpenAI) API Key<br>' +
+          '<input id="emp_ai_key_openai" type="password" value="' + escapeHtml(keys.openai) + '" placeholder="sk-..." autocomplete="off" spellcheck="false" style="' + inputStyle + '"></label>' +
+        '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary);">' +
+          '<input id="emp_ai_keys_toggle" type="checkbox"> Schluessel anzeigen' +
+        '</label>' +
+      '</div>',
+      function() {
+        updateEmployeeProfile(employeeId, {
+          aiKeys: {
+            claude: String(document.getElementById('emp_ai_key_claude').value || '').trim(),
+            openai: String(document.getElementById('emp_ai_key_openai').value || '').trim()
+          }
+        });
+        createNotification('KI-Schluessel wurden gespeichert.');
+        closeModal();
+        renderEmployeeList('employee-list');
+      },
+      ['Speichern']
+    );
+
+    var toggle = document.getElementById('emp_ai_keys_toggle');
+    if (toggle) {
+      toggle.addEventListener('change', function() {
+        var type = this.checked ? 'text' : 'password';
+        ['emp_ai_key_claude', 'emp_ai_key_openai'].forEach(function(id) {
+          var input = document.getElementById(id);
+          if (input) input.type = type;
+        });
+      });
+    }
+  }
+
   function getAvailableEmployees(role) {
     return getEmployees().filter(function(emp) {
       if (role && emp.role !== role) return false;
@@ -2488,6 +2555,10 @@
 
       if (action === 'edit-github-token') {
         showGitHubTokenModal(empId);
+      }
+
+      if (action === 'edit-ai-keys') {
+        showAiKeysModal(empId);
       }
 
       if (action === 'remove-employee') {

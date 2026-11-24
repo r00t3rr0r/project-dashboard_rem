@@ -618,6 +618,12 @@
         if (Object.prototype.hasOwnProperty.call(incoming.github, key)) next.github[key] = incoming.github[key];
       });
     }
+    if (isOwnProfile && incoming.aiKeys && typeof incoming.aiKeys === 'object') {
+      next.aiKeys = Object.assign({}, next.aiKeys || {});
+      ['claude', 'openai'].forEach(function (key) {
+        if (Object.prototype.hasOwnProperty.call(incoming.aiKeys, key)) next.aiKeys[key] = String(incoming.aiKeys[key] || '').trim();
+      });
+    }
     if (isOwnProfile && incoming.auth && incoming.auth.login && typeof incoming.auth.login === 'object') {
       next.auth.login = next.auth.login && typeof next.auth.login === 'object' ? next.auth.login : {};
       if (Object.prototype.hasOwnProperty.call(incoming.auth.login, 'username')) {
