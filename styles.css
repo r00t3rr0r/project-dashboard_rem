@@ -2058,6 +2058,22 @@ textarea#retro-notes {
   padding: 0.2rem 0.1rem;
 }
 
+@media (max-width: 640px) {
+  .calendar-invite-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .calendar-invite-actions {
+    justify-content: flex-start;
+  }
+
+  .calendar-invite-actions .calendar-rsvp-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
+
 /* ========================================
    CALENDAR — RSVP Buttons, Badges & Pills
    ======================================== */
@@ -5917,10 +5933,8 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
   border: 0;
 }
 
-/* Live Region für dynamisches Feedback */
-[aria-live="polite"] {
-  position: absolute;
-}
+/* Live Regions bleiben im normalen Layoutfluss;
+   visuell versteckte Live-Regionen nutzen .aria-live-region bzw. .sr-only */
 
 /* ========================================
    QUICKTASK SECTION STYLES
