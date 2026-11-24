@@ -318,6 +318,100 @@ function startStorageStatusMonitor(){
   });
 }
 
+function setupDashboardUpdate(){
+  var btn=document.getElementById('db-update-btn');
+  if(!btn)return;
+  var overlay=null,body=null,checkBtn=null,applyBtn=null,busy=false;
+
+  function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function fmtDate(v){var d=v?new Date(v):null;return d&&!isNaN(d)?d.toLocaleString('de-DE'):'-';}
+  function fmtSize(n){return typeof n==='number'?(n/1048576).toFixed(2)+' MB':'-';}
+  function row(k,v){return '<tr><th style="text-align:left;padding:2px 12px 2px 0;white-space:nowrap">'+k+'</th><td>'+v+'</td></tr>';}
+
+  function api(path,method){
+    return fetch(path,{method:method||'GET',cache:'no-store',credentials:'same-origin'}).then(function(r){
+      return r.json().catch(function(){return {};}).then(function(data){
+        if(!r.ok&&!data.update)throw new Error(data.error||('HTTP '+r.status));
+        return data;
+      });
+    });
+  }
+
+  function render(version,check,message){
+    var v=version||{};
+    var html='<table style="border-collapse:collapse;font-size:13px">'
+      +row('Version',esc(v.version?'v'+v.version+(v.date?' ('+v.date+')':''):'-'))
+      +row('Build',esc(v.describe||v.shortCommit||'-')+(v.dirty?' <strong>(lokale Aenderungen)</strong>':''))
+      +row('Commit',esc(v.shortCommit||'-')+' &ndash; '+esc(v.commitSubject||''))
+      +row('Autor / Datum',esc(v.commitAuthor||'-')+' / '+fmtDate(v.commitDate))
+      +row('Branch',esc(v.currentBranch||'-')+' (Update-Quelle: '+esc(v.remote||'')+'/'+esc(v.branch||'')+')')
+      +row('Repository',esc(v.remoteUrl||'-'))
+      +row('Datenbank',esc(v.db||'-')+' ('+fmtSize(v.dbSizeBytes)+')')
+      +row('Server gestartet',fmtDate(v.startedAt)+' &middot; Python '+esc(v.python||'-'));
+    if(v.lastCheck)html+=row('Letzte Pruefung',fmtDate(v.lastCheck.checkedAt));
+    if(v.lastUpdate)html+=row('Letztes Update',fmtDate(v.lastUpdate.finishedAt||v.lastUpdate.startedAt)+' &ndash; '+(v.lastUpdate.ok?'erfolgreich':'fehlgeschlagen'+(v.lastUpdate.rolledBack?' (zurueckgerollt)':''))+': '+esc(v.lastUpdate.message));
+    html+='</table>';
+    if(check){
+      if(check.diverged)html+='<p><strong>Lokale Commits weichen vom Repository ab.</strong> Automatisches Update nicht moeglich.</p>';
+      else if(check.updateAvailable)html+='<p><strong>Update verfuegbar:</strong> '+check.behind+' neue(r) Commit(s) bis '+esc(check.remoteShortCommit)+'</p><ul style="margin:0;padding-left:18px;font-size:12px">'
+        +check.commits.map(function(c){return '<li>'+esc(c.sha)+' '+esc(c.subject)+' <em>('+esc(c.author)+', '+fmtDate(c.date)+')</em></li>';}).join('')+'</ul>';
+      else html+='<p>Das Dashboard ist auf dem neuesten Stand.</p>';
+      applyBtn.disabled=!check.updateAvailable||!!v.dirty;
+    }else applyBtn.disabled=true;
+    if(message)html+='<p>'+esc(message)+'</p>';
+    body.innerHTML=html;
+  }
+
+  function load(check,message){
+    return api('/api/system/version').then(function(v){render(v,check,message);}).catch(function(e){body.textContent='Fehler: '+e.message;});
+  }
+
+  function run(fn){
+    if(busy)return;busy=true;checkBtn.disabled=applyBtn.disabled=true;body.insertAdjacentHTML('beforeend','<p>Bitte warten...</p>');
+    fn().catch(function(e){body.textContent='Fehler: '+e.message;}).then(function(){busy=false;checkBtn.disabled=false;});
+  }
+
+  function waitForRestart(tries){
+    api('/api/system/version').then(function(){window.location.reload();}).catch(function(){
+      if(tries>0)window.setTimeout(function(){waitForRestart(tries-1);},1500);
+      else body.textContent='Server antwortet nicht. Bitte Seite manuell neu laden.';
+    });
+  }
+
+  function build(){
+    overlay=document.createElement('div');
+    overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center';
+    overlay.innerHTML='<div role="dialog" aria-label="Dashboard-Version" style="background:var(--surface,#fff);color:var(--text,#111);max-width:720px;width:92%;max-height:85vh;overflow:auto;padding:20px;border-radius:12px">'
+      +'<h3 style="margin-top:0">Dashboard-Version &amp; Update</h3><div class="update-body"></div>'
+      +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="update-check">Nach Updates suchen</button><button class="update-apply" disabled>Jetzt aktualisieren</button><button class="update-close">Schliessen</button></div></div>';
+    body=overlay.querySelector('.update-body');
+    checkBtn=overlay.querySelector('.update-check');
+    applyBtn=overlay.querySelector('.update-apply');
+    overlay.querySelector('.update-close').addEventListener('click',function(){overlay.style.display='none';});
+    overlay.addEventListener('click',function(e){if(e.target===overlay)overlay.style.display='none';});
+    checkBtn.addEventListener('click',function(){
+      run(function(){return api('/api/system/update/check','POST').then(function(d){render(d.version,d.check);});});
+    });
+    applyBtn.addEventListener('click',function(){
+      if(!confirm('Dashboard jetzt aktualisieren? Vor dem Update wird ein Datenbank-Backup erstellt und der Server neu gestartet.'))return;
+      run(function(){return api('/api/system/update/apply','POST').then(function(d){
+        var u=d.update||{};
+        if(u.ok&&u.commits){render(d.version,null,u.message);waitForRestart(20);}
+        else render(d.version,null,u.message);
+      });});
+    });
+    document.body.appendChild(overlay);
+  }
+
+  btn.addEventListener('click',function(){
+    if(!overlay)build();
+    overlay.style.display='flex';
+    body.textContent='Lade Versionsinformationen...';
+    applyBtn.disabled=true;
+    load();
+  });
+}
+
 function setupExportImport(){
   var newDbBtn=document.getElementById('db-new-btn');
   if(newDbBtn){
@@ -575,6 +669,7 @@ function init(){
     setupNavigation();
     setupThemeToggle();
     setupExportImport();
+    setupDashboardUpdate();
     writeSidebarExpandedState(true);
     setupMobileMenu();
     setupProjectControlActions();
