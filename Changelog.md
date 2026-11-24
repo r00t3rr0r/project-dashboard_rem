@@ -20,6 +20,7 @@ die Versionierung folgt [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Public API Referenz in `API.md` — alle `window.DataLayer`-Funktionen dokumentiert
 
 ### Fixed
+- QuickTask "Neue GitHub-Commits abrufen" und AI-Conf-Commit-Import: Bei ungueltigem/abgelaufenem GitHub-Token wird jetzt automatisch auf den zentralen Token und zuletzt auf einen unauthentifizierten Abruf (oeffentliche Repositories) zurueckgefallen statt mit 401 abzubrechen; fehlende Dashboard-Anmeldung wird klar gemeldet
 - Batch 3b: Leichte Fallback-Struktur für die Sprint-Seite implementiert
 
 ### Improved
