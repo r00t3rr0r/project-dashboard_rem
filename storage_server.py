@@ -398,6 +398,125 @@ def _unregister_kv_stream_subscriber(subscriber):
         KV_STREAM_SUBSCRIBERS.discard(subscriber)
 
 
+UPDATE_LOCK = threading.Lock()
+UPDATE_STATE = {'lastCheck': None, 'lastUpdate': None}
+UPDATE_REMOTE = os.environ.get('PROJECT_DASHBOARD_UPDATE_REMOTE', 'origin')
+UPDATE_BRANCH = os.environ.get('PROJECT_DASHBOARD_UPDATE_BRANCH', 'main')
+STARTED_AT = utc_now_iso_z()
+
+
+def _git(*args, timeout=60):
+    result = subprocess.run(['git', '-C', ROOT] + list(args), capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout or 'git ' + ' '.join(args) + ' fehlgeschlagen').strip())
+    return result.stdout.strip()
+
+
+def _changelog_version():
+    try:
+        with open(os.path.join(ROOT, 'Changelog.md'), encoding='utf-8') as handle:
+            match = re.search(r'^## \[(\d[^\]]*)\](?:\s*-\s*(\S+))?', handle.read(), re.M)
+        return {'version': match.group(1), 'date': match.group(2) or ''} if match else {'version': '', 'date': ''}
+    except OSError:
+        return {'version': '', 'date': ''}
+
+
+def get_version_info():
+    info = {'startedAt': STARTED_AT, 'remote': UPDATE_REMOTE, 'branch': UPDATE_BRANCH,
+            'python': sys.version.split()[0], 'db': DB_PATH, 'gitAvailable': True}
+    info.update(_changelog_version())
+    try:
+        info['commit'] = _git('rev-parse', 'HEAD')
+        info['shortCommit'] = info['commit'][:7]
+        info['currentBranch'] = _git('rev-parse', '--abbrev-ref', 'HEAD')
+        info['commitDate'], info['commitAuthor'], info['commitSubject'] = _git('log', '-1', '--format=%cI%x1f%an%x1f%s').split('\x1f')
+        info['dirty'] = bool(_git('status', '--porcelain', '--untracked-files=no'))
+        try:
+            info['describe'] = _git('describe', '--tags', '--always')
+            info['remoteUrl'] = re.sub(r'//[^/@]+@', '//', _git('remote', 'get-url', UPDATE_REMOTE))
+        except RuntimeError:
+            info.setdefault('describe', info['shortCommit'])
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        info['gitAvailable'] = False
+        info['error'] = str(exc)
+    try:
+        info['dbSizeBytes'] = os.path.getsize(DB_PATH)
+    except OSError:
+        info['dbSizeBytes'] = None
+    info['lastCheck'] = UPDATE_STATE['lastCheck']
+    info['lastUpdate'] = UPDATE_STATE['lastUpdate']
+    return info
+
+
+def check_for_update():
+    _git('fetch', '--quiet', UPDATE_REMOTE, UPDATE_BRANCH, timeout=120)
+    remote_ref = 'FETCH_HEAD'
+    remote_commit = _git('rev-parse', remote_ref)
+    head = _git('rev-parse', 'HEAD')
+    behind = int(_git('rev-list', '--count', 'HEAD..' + remote_ref))
+    ahead = int(_git('rev-list', '--count', remote_ref + '..HEAD'))
+    commits = []
+    if behind:
+        for line in _git('log', '--max-count=30', '--format=%h%x1f%an%x1f%cI%x1f%s', 'HEAD..' + remote_ref).splitlines():
+            sha, author, when, subject = line.split('\x1f', 3)
+            commits.append({'sha': sha, 'author': author, 'date': when, 'subject': subject})
+    result = {'checkedAt': utc_now_iso_z(), 'remoteCommit': remote_commit, 'remoteShortCommit': remote_commit[:7],
+              'behind': behind, 'ahead': ahead, 'updateAvailable': behind > 0 and ahead == 0,
+              'diverged': behind > 0 and ahead > 0, 'upToDate': remote_commit == head or (behind == 0), 'commits': commits}
+    UPDATE_STATE['lastCheck'] = result
+    return result
+
+
+def apply_update():
+    """Fast-forward to the remote branch; roll back on any failure. Returns (result, restart_needed)."""
+    started = utc_now_iso_z()
+    previous = _git('rev-parse', 'HEAD')
+    result = {'startedAt': started, 'from': previous[:7], 'to': '', 'ok': False, 'rolledBack': False, 'message': ''}
+    try:
+        if _git('status', '--porcelain', '--untracked-files=no'):
+            raise RuntimeError('Lokale Aenderungen an versionierten Dateien vorhanden - Update abgebrochen.')
+        check = check_for_update()
+        if check['diverged']:
+            raise RuntimeError('Lokale Commits weichen vom Repository ab - automatisches Update nicht moeglich.')
+        if not check['behind']:
+            result.update(ok=True, to=previous[:7], message='Bereits auf dem neuesten Stand.')
+            UPDATE_STATE['lastUpdate'] = result
+            return result, False
+        try:
+            ensure_daily_backup(force=True)
+        except Exception as exc:
+            raise RuntimeError('Datenbank-Backup vor dem Update fehlgeschlagen: ' + str(exc))
+        _git('merge', '--ff-only', 'FETCH_HEAD', timeout=120)
+        try:
+            compiled = subprocess.run([sys.executable, '-m', 'py_compile', os.path.join(ROOT, 'storage_server.py')],
+                                      capture_output=True, text=True, timeout=60)
+            if compiled.returncode != 0:
+                raise RuntimeError('Syntaxpruefung des neuen Servers fehlgeschlagen: ' + compiled.stderr.strip()[-300:])
+        except Exception:
+            _git('reset', '--hard', previous)
+            result['rolledBack'] = True
+            raise
+        result.update(ok=True, to=_git('rev-parse', '--short', 'HEAD'), commits=check['behind'],
+                      message='Update installiert. Server wird neu gestartet.')
+        UPDATE_STATE['lastUpdate'] = result
+        return result, True
+    except Exception as exc:
+        result['message'] = str(exc)
+        result['finishedAt'] = utc_now_iso_z()
+        UPDATE_STATE['lastUpdate'] = result
+        return result, False
+
+
+def _restart_server_later():
+    def restart():
+        time.sleep(1.0)
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except OSError:
+            os._exit(3)
+    threading.Thread(target=restart, daemon=True).start()
+
+
 class StorageHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         ensure_daily_backup()
@@ -442,6 +561,10 @@ class StorageHandler(BaseHTTPRequestHandler):
         if parsed.path == '/api/github/commits':
             self._handle_github_commits_get(parsed)
             return
+        if parsed.path == '/api/system/version':
+            if self._require_admin():
+                self._send_json(get_version_info())
+            return
         if parsed.path == '/api/ai/health':
             self._send_json(self._check_ai_health())
             return
@@ -478,6 +601,9 @@ class StorageHandler(BaseHTTPRequestHandler):
         meeting_project_id = self._extract_meeting_project_id(parsed.path)
         if meeting_project_id:
             self._handle_meetings_post(meeting_project_id)
+            return
+        if parsed.path in ('/api/system/update/check', '/api/system/update/apply'):
+            self._handle_system_update(parsed.path.endswith('/apply'))
             return
         if parsed.path == '/api/kv':
             self._handle_kv_post()
@@ -2275,6 +2401,38 @@ class StorageHandler(BaseHTTPRequestHandler):
                     if str(employee.get('id')) == row[0] and login.get('enabled') and hmac.compare_digest(tag, row[2]):
                         return row
         return None
+
+    def _require_admin(self):
+        session = getattr(self, '_verified_session', None)
+        if session:
+            with self._auth_connection() as connection:
+                for employee in self._auth_employees(connection):
+                    if str(employee.get('id')) == session[0] and employee.get('auth', {}).get('accessLevel') == 'admin':
+                        return True
+        self._send_json({'error': 'Nur Administratoren duerfen das Dashboard aktualisieren.'}, status=403)
+        return False
+
+    def _handle_system_update(self, apply):
+        if not self._require_admin():
+            return
+        if not UPDATE_LOCK.acquire(blocking=False):
+            self._send_json({'error': 'Es laeuft bereits ein Update.'}, status=409)
+            return
+        restart = False
+        try:
+            if apply:
+                result, restart = apply_update()
+                payload = {'update': result, 'version': get_version_info()}
+                status = 200 if result['ok'] else 500
+            else:
+                payload, status = {'check': check_for_update(), 'version': get_version_info()}, 200
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            payload, status = {'error': 'Pruefung fehlgeschlagen: ' + str(exc)}, 502
+        finally:
+            UPDATE_LOCK.release()
+        self._send_json(payload, status=status)
+        if restart:
+            _restart_server_later()
 
     def _require_session(self, path):
         if not path.startswith('/api/') or path == '/api/health':
