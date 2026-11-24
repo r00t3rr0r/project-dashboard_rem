@@ -43,7 +43,7 @@ function makeHarness() {
   const sandbox = {
     window,URLSearchParams,Set,console,
     CustomEvent:function(){},
-    document:{createTextNode:value=>value,createElement:()=>({appendChild(value){this.innerHTML=value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}})},
+    document:{addEventListener(){},createTextNode:value=>value,createElement:()=>({appendChild(value){this.innerHTML=value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}})},
     fetch:async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>[]};}
   };
   const source = fs.readFileSync(path.join(__dirname,'../modules/ai-conf.js'),'utf8').replace(
