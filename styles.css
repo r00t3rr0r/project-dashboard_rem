@@ -1964,6 +1964,55 @@ textarea#retro-notes {
   border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, var(--border-color));
   border-radius: 12px;
   background: linear-gradient(145deg, rgba(74, 158, 255, 0.1), rgba(255, 255, 255, 0.02));
+  animation:
+    invites-attention-nudge 5s ease-in-out infinite,
+    invites-attention-glow 2.5s ease-in-out infinite;
+  will-change: transform, box-shadow;
+}
+
+/* Periodisches Anstupsen: kurzes Hin-und-her-Wackeln, dann Ruhephase */
+@keyframes invites-attention-nudge {
+  0%, 72%, 100% { transform: translateX(0); }
+  76% { transform: translateX(-5px); }
+  80% { transform: translateX(5px); }
+  84% { transform: translateX(-4px); }
+  88% { transform: translateX(3px); }
+  92% { transform: translateX(-2px); }
+  96% { transform: translateX(1px); }
+}
+
+/* Pulsierender Leuchtrahmen */
+@keyframes invites-attention-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(94, 162, 255, 0);
+    border-color: color-mix(in srgb, var(--accent-blue) 35%, var(--border-color));
+  }
+  50% {
+    box-shadow: 0 0 16px 2px rgba(94, 162, 255, 0.35);
+    border-color: color-mix(in srgb, var(--accent-blue) 75%, var(--border-color));
+  }
+}
+
+/* Wippendes Brief-Icon in der Überschrift */
+.calendar-invites-heading > .material-symbols-rounded {
+  animation: invites-icon-ring 2.5s ease-in-out infinite;
+  transform-origin: top center;
+}
+
+@keyframes invites-icon-ring {
+  0%, 60%, 100% { transform: rotate(0deg); }
+  68% { transform: rotate(-14deg); }
+  76% { transform: rotate(12deg); }
+  84% { transform: rotate(-8deg); }
+  92% { transform: rotate(4deg); }
+}
+
+/* Ruhige Darstellung für Nutzer mit reduzierter Bewegung */
+@media (prefers-reduced-motion: reduce) {
+  .calendar-pending-invites,
+  .calendar-invites-heading > .material-symbols-rounded {
+    animation: none;
+  }
 }
 
 .calendar-invites-heading {
