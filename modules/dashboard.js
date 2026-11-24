@@ -2584,6 +2584,108 @@
     return div.innerHTML;
   }
 
+  // --- Termineinladungen (RSVP) ---
+  var INVITE_RSVP = {
+    accepted: { label: 'Zugesagt', icon: 'check_circle' },
+    tentative: { label: 'Vielleicht', icon: 'help' },
+    declined: { label: 'Abgesagt', icon: 'cancel' },
+    pending: { label: 'Ausstehend', icon: 'schedule' }
+  };
+  var INVITE_TYPE_COLORS = {
+    meeting: 'var(--accent-blue)', deadline: 'var(--accent-red)', release: 'var(--accent-green)',
+    holiday: 'var(--accent-purple)', task: 'var(--accent-yellow)', training: 'var(--accent-cyan, #22b8cf)'
+  };
+
+  function buildInviteRow(evt, status) {
+    var color = INVITE_TYPE_COLORS[evt.type] || 'var(--text-muted)';
+    var dateKey = String(evt.date || evt.startDate || '');
+    var when = formatDate(dateKey + 'T12:00:00') + (evt.startTime ? ', ' + evt.startTime + ' Uhr' : '');
+    var html = '<div class="calendar-invite-row" style="--invite-color:' + color + '">' +
+      '<button type="button" class="calendar-invite-info" data-invite-open="' + escapeHtml(evt.id) + '">' +
+      '<strong>' + escapeHtml(evt.title || 'Termin') + '</strong>' +
+      '<span class="calendar-invite-date">' + escapeHtml(when + (evt.location ? ' · ' + evt.location : '')) + '</span></button>' +
+      '<div class="calendar-invite-actions">';
+    [['accepted', 'Zusagen'], ['tentative', 'Vielleicht'], ['declined', 'Absagen']].forEach(function(pair) {
+      html += '<button type="button" class="calendar-rsvp-btn calendar-rsvp-' + pair[0] + (status === pair[0] ? ' selected' : '') +
+        '" data-invite-respond="' + pair[0] + '" data-invite-id="' + escapeHtml(evt.id) + '" title="' + pair[1] + '">' +
+        '<span class="material-symbols-rounded" aria-hidden="true">' + INVITE_RSVP[pair[0]].icon + '</span><span>' + pair[1] + '</span></button>';
+    });
+    return html + '</div></div>';
+  }
+
+  function renderDashboardInvites() {
+    var host = document.getElementById('dashboard-invites');
+    if (!host) return;
+    var auth = getAuthManager();
+    var user = auth && typeof auth.getCurrentUser === 'function' ? auth.getCurrentUser() : null;
+    var events = window.DataLayer && window.DataLayer.getCalendarEvents ? (window.DataLayer.getCalendarEvents() || []) : [];
+    var todayKey = getLocalDateKey(new Date());
+    var pending = [];
+    var answered = [];
+    if (user) {
+      events.forEach(function(evt) {
+        if (!evt || evt.type === 'sick' || evt.type === 'home-office' || (evt.type === 'holiday' && evt.employeeStatus === true)) return;
+        var endKey = String(evt.endDate || evt.date || evt.startDate || '');
+        if (!endKey || endKey < todayKey) return;
+        if (getEventParticipants(evt).indexOf(String(user.id)) === -1) return;
+        var entry = evt.responses && evt.responses[String(user.id)];
+        var status = entry && INVITE_RSVP[entry.status] ? entry.status : 'pending';
+        (status === 'pending' ? pending : answered).push({ evt: evt, status: status });
+      });
+    }
+    var byDate = function(a, b) {
+      var x = String(a.evt.date || a.evt.startDate || '') + String(a.evt.startTime || '');
+      var y = String(b.evt.date || b.evt.startDate || '') + String(b.evt.startTime || '');
+      return x.localeCompare(y);
+    };
+    pending.sort(byDate);
+    answered.sort(byDate);
+    if (!pending.length && !answered.length) {
+      setHtmlIfChanged(host, '');
+      host.classList.add('hidden');
+      return;
+    }
+    host.classList.remove('hidden');
+    var html = '';
+    if (pending.length) {
+      html += '<div class="calendar-invites-heading"><span class="material-symbols-rounded" aria-hidden="true">mark_email_unread</span>' +
+        '<strong>Offene Termineinladungen</strong><span class="calendar-invites-count">' + pending.length + '</span></div>' +
+        '<div class="calendar-invites-list">' +
+        pending.slice(0, 5).map(function(item) { return buildInviteRow(item.evt, item.status); }).join('') +
+        (pending.length > 5 ? '<div class="calendar-invites-more">+' + (pending.length - 5) + ' weitere Einladung(en) im Kalender</div>' : '') +
+        '</div>';
+    }
+    if (answered.length) {
+      var counts = { accepted: 0, tentative: 0, declined: 0 };
+      answered.forEach(function(item) { counts[item.status] += 1; });
+      html += '<div class="calendar-invites-heading dashboard-invites-answered-heading"><span class="material-symbols-rounded" aria-hidden="true">event_available</span>' +
+        '<strong>Deine Antworten</strong>' +
+        '<span class="calendar-rsvp-count-accepted">' + counts.accepted + ' Zusagen</span>' +
+        '<span class="calendar-rsvp-count-tentative">' + counts.tentative + ' Vielleicht</span>' +
+        '<span class="calendar-rsvp-count-declined">' + counts.declined + ' Absagen</span></div>' +
+        '<div class="calendar-invites-list">' +
+        answered.slice(0, 5).map(function(item) { return buildInviteRow(item.evt, item.status); }).join('') +
+        (answered.length > 5 ? '<div class="calendar-invites-more">+' + (answered.length - 5) + ' weitere Termine im Kalender</div>' : '') +
+        '</div>';
+    }
+    setHtmlIfChanged(host, html);
+  }
+
+  function handleInviteClick(event) {
+    var respondBtn = event.target.closest('[data-invite-respond]');
+    if (respondBtn) {
+      if (window.CalendarModule && window.CalendarModule.respond) {
+        window.CalendarModule.respond(respondBtn.getAttribute('data-invite-id'), respondBtn.getAttribute('data-invite-respond'));
+      }
+      renderDashboardInvites();
+      return;
+    }
+    var openBtn = event.target.closest('[data-invite-open]');
+    if (openBtn && window.CalendarModule && window.CalendarModule.openDetails) {
+      window.CalendarModule.openDetails(openBtn.getAttribute('data-invite-open'));
+    }
+  }
+
   // --- Main Render Function ---
   function renderDashboard(context) {
     var eventEntity = context && context.entity ? String(context.entity) : '';
@@ -2592,6 +2694,7 @@
     try {
       renderDashboardBlockers();
       renderDepartmentNotices();
+      renderDashboardInvites();
       renderStatsCards();
       renderProjectProgress();
       renderDashboardProjectOverview();
@@ -2626,6 +2729,8 @@
   // --- Init ---
   document.addEventListener('DOMContentLoaded', function() {
     restoreBlockerFilterState();
+    var invitesHost = document.getElementById('dashboard-invites');
+    if (invitesHost) invitesHost.addEventListener('click', handleInviteClick);
 
     var dashboardPage = document.getElementById('dashboard');
     var teamChatContainer = document.getElementById('chart-task-distribution');

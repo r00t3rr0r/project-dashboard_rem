@@ -6045,3 +6045,13 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
   color: var(--text-muted);
   font-size: 0.9rem;
 }
+
+.dashboard-invites .dashboard-invites-answered-heading {
+  margin-top: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.dashboard-invites .dashboard-invites-answered-heading span[class^="calendar-rsvp-count"] {
+  font-size: 0.74rem;
+  font-weight: 600;
+}
