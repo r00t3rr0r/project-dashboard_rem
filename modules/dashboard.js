@@ -998,6 +998,11 @@
     var container = document.getElementById('chart-progress-bar');
     if (!container) return;
     var expandedSubtaskTaskIds = getExpandedDashboardSubtaskTaskIds(container);
+    var expandedCommitTaskIds = Object.create(null);
+    Array.prototype.forEach.call(container.querySelectorAll('.project-progress-commits-more[open][data-task-id]'), function(details) {
+      var taskId = details.getAttribute('data-task-id');
+      if (taskId) expandedCommitTaskIds[taskId] = true;
+    });
 
     if (!container.dataset.progressCollapsed) {
       container.dataset.progressCollapsed = 'true';
@@ -1071,14 +1076,14 @@
       html += '<article class="project-progress-item' + (entry.crossProject ? ' project-progress-cross-project' : '') + '">';
       html += '<div class="project-progress-head">';
       html += '<div class="project-progress-head-main">';
-      html += '<span class="project-progress-title">' + escapeHtml(project ? (project.title || project.name) : (entry.crossProject ? 'Projektübergreifende Aufgaben' : 'Ohne Projekt')) + '</span>';
+      html += '<div class="project-progress-identity"><span class="project-progress-kind"><span class="material-symbols-rounded" aria-hidden="true">folder</span>' + (project ? 'Projekt' : 'Aufgabengruppe') + '</span>';
+      html += '<span class="project-progress-title">' + escapeHtml(project ? (project.title || project.name) : (entry.crossProject ? 'Projektübergreifende Aufgaben' : 'Ohne Projekt')) + '</span></div>';
       html += renderProjectProgressEmployees(getProjectProgressEmployees(tasks, false), 'project-progress-active-team');
       html += '</div>';
-      if (project) html += '<span class="project-progress-percent">' + percent + '%</span>';
       html += '</div>';
       if (project) {
         html += '<div class="project-head-progress ' + toneClass + ' is-running">';
-        html += '<span class="project-head-progress-label">Aktueller Fortschritt</span>';
+        html += '<span class="project-head-progress-label">Projektfortschritt</span>';
         html += '<div class="project-head-progress-track" aria-hidden="true"><span class="project-head-progress-fill" style="--project-progress:' + percent + '%;"></span></div>';
         html += '<div class="project-head-progress-meta">';
         html += '<span class="project-head-progress-value">' + percent + '%</span>';
@@ -1099,8 +1104,8 @@
 
         if (minutesToday) activityLabel += ' · ' + minutesToday + ' min heute';
         html += '<div class="project-progress-task" style="--team-progress-accent:' + getTeamLoadProgressAccent(taskProgress) + ';">';
-        html += '<div class="project-progress-task-head"><span class="project-progress-task-title" title="' + escapeHtml(task.title || 'Aufgabe') + '">' + escapeHtml(task.title || 'Aufgabe') + '</span>';
-        if (activityLabel) html += '<span class="project-progress-task-activity">' + escapeHtml(activityLabel) + '</span>';
+        html += '<div class="project-progress-task-head"><div class="project-progress-task-identity"><span class="project-progress-kind"><span class="material-symbols-rounded" aria-hidden="true">task_alt</span>Aufgabe</span><span class="project-progress-task-title" title="' + escapeHtml(task.title || 'Aufgabe') + '">' + escapeHtml(task.title || 'Aufgabe') + '</span></div>';
+        if (activityLabel) html += '<span class="project-progress-task-activity' + (taskIsRunning ? ' is-tracking' : '') + '">' + escapeHtml(activityLabel) + '</span>';
         html += '</div>';
         if (entry.crossProject) {
           html += '<div class="project-progress-task-projects"><span class="project-progress-task-projects-label">Projekte:</span>';
@@ -1117,6 +1122,7 @@
         html += '</div>';
         html += '<span class="project-progress-task-value"><span>' + taskProgress + '%</span><small>+' + taskProgressToday + '% heute</small></span>';
         html += buildDashboardSubtasksHtml(task, expandedSubtaskTaskIds);
+        html += buildProjectProgressCommitsHtml(task, expandedCommitTaskIds);
         html += '</div>';
       });
       html += '</div>';
@@ -2324,6 +2330,30 @@
       if (taskId) expandedTaskIds[taskId] = true;
     });
     return expandedTaskIds;
+  }
+
+  function buildProjectProgressCommitsHtml(task, expandedTaskIds) {
+    var commits = getTaskImportedCommits(task).slice().sort(function(a, b) {
+      return parseCompletionTimestamp(b.date) - parseCompletionTimestamp(a.date);
+    });
+    if (!commits.length) return '';
+
+    var taskId = String(task.id || '');
+    function renderCommit(commit) {
+      var sha = String(commit.sha || '');
+      var title = getCommitStepTitle(commit);
+      return '<li><span class="material-symbols-rounded" aria-hidden="true">commit</span>' +
+        '<button type="button" class="project-progress-commit-title" data-open-done-task="' + escapeHtml(taskId) + '" data-focus-sha="' + escapeHtml(sha) + '" title="' + escapeHtml(title) + '">' +
+        escapeHtml(title) + '</button>' + (sha ? '<span class="project-progress-commit-sha">' + escapeHtml(sha.slice(0, 7)) + '</span>' : '') + '</li>';
+    }
+
+    var html = '<div class="project-progress-commits"><span class="project-progress-commits-label">Zugeordnete Commits · ' + commits.length + '</span>';
+    html += '<ul>' + commits.slice(0, 2).map(renderCommit).join('') + '</ul>';
+    if (commits.length > 2) {
+      html += '<details class="project-progress-commits-more" data-task-id="' + escapeHtml(taskId) + '"' + (taskId && expandedTaskIds[taskId] ? ' open' : '') + '>';
+      html += '<summary>Weitere Commits (' + (commits.length - 2) + ')</summary><ul>' + commits.slice(2).map(renderCommit).join('') + '</ul></details>';
+    }
+    return html + '</div>';
   }
 
   function buildDashboardSubtasksHtml(task, expandedSubtaskTaskIds) {

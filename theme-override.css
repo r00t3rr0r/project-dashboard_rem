@@ -1398,155 +1398,54 @@ button:active {
 
 .project-card-active-work {
   position: relative;
-  border-color: rgba(99, 226, 255, 0.62);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(99, 226, 255, 0.42), 0 0 32px rgba(99, 226, 255, 0.52);
+  border-color: rgba(99, 226, 255, 0.36);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28), 0 0 12px rgba(99, 226, 255, 0.12);
   overflow: hidden;
-  animation: project-active-work-shell 1.1s steps(1, end) infinite;
-}
-
-.project-card-active-work::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  border: 3px solid rgba(99, 226, 255, 0.34);
-  background:
-    repeating-conic-gradient(
-      from calc(var(--trace-angle, 0deg) * -1),
-      rgba(99, 226, 255, 0) 0deg,
-      rgba(99, 226, 255, 0) 10deg,
-      rgba(99, 226, 255, 0.28) 12deg,
-      rgba(99, 226, 255, 0) 16deg
-    ) border-box;
-  -webkit-mask:
-    linear-gradient(#000 0 0) padding-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
-.project-card-active-work::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  border: 3px solid transparent;
-  background:
-    repeating-conic-gradient(
-      from var(--trace-angle, 0deg),
-      rgba(99, 226, 255, 0) 0deg,
-      rgba(99, 226, 255, 0) 5deg,
-      rgba(99, 226, 255, 0.62) 7deg,
-      rgba(99, 226, 255, 0) 11deg
-    ) border-box,
-    repeating-conic-gradient(
-      from calc(var(--trace-angle, 0deg) + 44deg),
-      rgba(64, 217, 140, 0) 0deg,
-      rgba(64, 217, 140, 0) 16deg,
-      rgba(64, 217, 140, 0.58) 18deg,
-      rgba(64, 217, 140, 0) 22deg
-    ) border-box,
-    conic-gradient(
-      from var(--trace-angle, 0deg),
-      rgba(99, 226, 255, 0.22) 0deg,
-      rgba(99, 226, 255, 0.22) 360deg
-    ) border-box,
-    conic-gradient(
-      from var(--trace-angle, 0deg),
-      rgba(99, 226, 255, 0) 0deg,
-      rgba(99, 226, 255, 0) 292deg,
-      rgba(99, 226, 255, 0.4) 306deg,
-      rgba(94, 162, 255, 1) 322deg,
-      rgba(64, 217, 140, 1) 338deg,
-      rgba(99, 226, 255, 1) 350deg,
-      rgba(99, 226, 255, 0) 360deg
-    ) border-box;
-  -webkit-mask:
-    linear-gradient(#000 0 0) padding-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-  filter: drop-shadow(0 0 13px rgba(99, 226, 255, 0.68));
-  animation: project-active-work-trace 0.95s linear infinite, project-active-work-trace-flicker 0.62s steps(1, end) infinite;
 }
 
 .project-head-progress.is-running {
   position: relative;
-  border-color: rgba(99, 226, 255, 0.58);
-  box-shadow: 0 0 0 1px rgba(99, 226, 255, 0.36), 0 0 22px rgba(99, 226, 255, 0.42);
-  animation: project-active-work-shell 1.1s steps(1, end) infinite;
+  border-color: rgba(99, 226, 255, 0.36);
+  box-shadow: 0 0 8px rgba(99, 226, 255, 0.12);
 }
 
-.project-head-progress.is-running::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  border: 2px solid rgba(99, 226, 255, 0.3);
-  background:
-    repeating-conic-gradient(
-      from calc(var(--trace-angle, 0deg) * -1),
-      rgba(99, 226, 255, 0) 0deg,
-      rgba(99, 226, 255, 0) 11deg,
-      rgba(99, 226, 255, 0.24) 13deg,
-      rgba(99, 226, 255, 0) 17deg
-    ) border-box;
-  -webkit-mask:
-    linear-gradient(#000 0 0) padding-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
+.project-card-active-work::after,
 .project-head-progress.is-running::after {
   content: '';
   position: absolute;
-  inset: -1px;
+  inset: 0;
   width: auto;
   height: auto;
   border-radius: inherit;
   border: 2px solid transparent;
-  background:
-    repeating-conic-gradient(
-      from var(--trace-angle, 0deg),
-      rgba(99, 226, 255, 0) 0deg,
-      rgba(99, 226, 255, 0) 5deg,
-      rgba(99, 226, 255, 0.52) 7deg,
-      rgba(99, 226, 255, 0) 12deg
-    ) border-box,
-    repeating-conic-gradient(
-      from calc(var(--trace-angle, 0deg) + 44deg),
-      rgba(64, 217, 140, 0) 0deg,
-      rgba(64, 217, 140, 0) 15deg,
-      rgba(64, 217, 140, 0.5) 17deg,
-      rgba(64, 217, 140, 0) 22deg
-    ) border-box,
-    conic-gradient(
-      from var(--trace-angle, 0deg),
-      rgba(99, 226, 255, 0.2) 0deg,
-      rgba(99, 226, 255, 0.2) 360deg
-    ) border-box,
-    conic-gradient(
-      from var(--trace-angle, 0deg),
-      rgba(99, 226, 255, 0) 0deg,
-      rgba(99, 226, 255, 0) 292deg,
-      rgba(99, 226, 255, 0.34) 306deg,
-      rgba(94, 162, 255, 1) 322deg,
-      rgba(64, 217, 140, 1) 338deg,
-      rgba(99, 226, 255, 1) 350deg,
-      rgba(99, 226, 255, 0) 360deg
-    ) border-box;
+  background: conic-gradient(
+    from var(--trace-angle, 0deg),
+    transparent 0deg,
+    transparent 190deg,
+    var(--project-trace-faint, rgba(99, 226, 255, 0.06)) 230deg,
+    var(--project-trace-tail, rgba(99, 226, 255, 0.42)) 320deg,
+    var(--project-trace-head, rgba(220, 251, 255, 0.98)) 356deg,
+    transparent 360deg
+  ) border-box;
   -webkit-mask:
     linear-gradient(#000 0 0) padding-box,
     linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   pointer-events: none;
-  filter: drop-shadow(0 0 11px rgba(99, 226, 255, 0.62));
-  animation: project-active-work-trace 0.95s linear infinite, project-active-work-trace-flicker 0.62s steps(1, end) infinite;
+  filter: drop-shadow(0 0 5px var(--project-trace-glow, rgba(99, 226, 255, 0.75)));
+  animation: project-active-work-trace 6s linear infinite;
+}
+
+.project-head-progress.is-running::after {
+  animation-duration: 4.5s;
+}
+
+.project-head-progress.is-running .project-head-progress-fill,
+.project-head-progress.is-running .project-head-progress-live-dot,
+.project-card-active-work .project-head-task-row.is-active-task .project-head-task-title,
+.project-card-active-work .project-head-task-row.is-active-task .project-head-task-title::before {
+  animation: none;
 }
 
 .project-active-work-note {
@@ -1569,8 +1468,6 @@ button:active {
   height: 0.48rem;
   border-radius: 50%;
   background: var(--accent-green);
-  box-shadow: 0 0 0 0 rgba(64, 217, 140, 0.55);
-  animation: project-active-work-pulse 1.8s ease-out infinite;
 }
 
 .project-meta-block,
@@ -1732,28 +1629,20 @@ body.light-mode .kanban-card {
 
 body.light-mode .project-card-active-work {
   border-color: rgba(56, 121, 201, 0.55);
-  box-shadow: 0 14px 36px rgba(80, 105, 142, 0.14), 0 0 0 1px rgba(56, 121, 201, 0.34), 0 0 22px rgba(94, 162, 255, 0.44);
+  box-shadow: 0 14px 36px rgba(80, 105, 142, 0.14), 0 0 8px rgba(56, 121, 201, 0.12);
 }
 
-body.light-mode .project-card-active-work::before {
-  border-color: rgba(56, 121, 201, 0.34);
-}
-
-body.light-mode .project-card-active-work::after {
-  filter: drop-shadow(0 0 12px rgba(56, 121, 201, 0.58));
+body.light-mode .project-card-active-work,
+body.light-mode .project-head-progress.is-running {
+  --project-trace-faint: rgba(9, 105, 218, 0.05);
+  --project-trace-tail: rgba(9, 105, 218, 0.38);
+  --project-trace-head: rgba(9, 105, 218, 0.95);
+  --project-trace-glow: rgba(9, 105, 218, 0.6);
 }
 
 body.light-mode .project-head-progress.is-running {
   border-color: rgba(56, 121, 201, 0.5);
-  box-shadow: 0 0 0 1px rgba(56, 121, 201, 0.34), 0 0 18px rgba(94, 162, 255, 0.34);
-}
-
-body.light-mode .project-head-progress.is-running::before {
-  border-color: rgba(56, 121, 201, 0.3);
-}
-
-body.light-mode .project-head-progress.is-running::after {
-  filter: drop-shadow(0 0 10px rgba(56, 121, 201, 0.52));
+  box-shadow: 0 0 8px rgba(56, 121, 201, 0.12);
 }
 
 body.light-mode .project-active-work-note {
@@ -1777,58 +1666,11 @@ body.light-mode .project-active-work-note {
   }
 }
 
-@keyframes project-active-work-trace-flicker {
-  0%,
-  12%,
-  19%,
-  44%,
-  63% {
-    filter: drop-shadow(0 0 10px rgba(99, 226, 255, 0.52));
-  }
-  13%,
-  18% {
-    filter: drop-shadow(0 0 22px rgba(99, 226, 255, 1));
-  }
-  26%,
-  28% {
-    filter: drop-shadow(0 0 24px rgba(64, 217, 140, 0.95));
-  }
-  45%,
-  50% {
-    filter: drop-shadow(0 0 26px rgba(94, 162, 255, 1));
-  }
-  64%,
-  68%,
-  100% {
-    filter: drop-shadow(0 0 18px rgba(99, 226, 255, 0.86));
-  }
-}
-
-@keyframes project-active-work-shell {
-  0%,
-  12%,
-  32%,
-  52%,
-  100% {
-    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(99, 226, 255, 0.42), 0 0 28px rgba(99, 226, 255, 0.5);
-  }
-  13%,
-  15%,
-  53%,
-  56% {
-    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(99, 226, 255, 0.56), 0 0 44px rgba(99, 226, 255, 0.84);
-  }
-}
-
-@keyframes project-active-work-pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(64, 217, 140, 0.55);
-  }
-  70% {
-    box-shadow: 0 0 0 0.5rem rgba(64, 217, 140, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(64, 217, 140, 0);
+@media (prefers-reduced-motion: reduce) {
+  .project-card-active-work::after,
+  .project-head-progress.is-running::after {
+    content: none;
+    animation: none;
   }
 }
 
@@ -2317,6 +2159,301 @@ body.light-mode .nav-menu li a:hover {
 
 .project-progress-item .project-head-progress-meta {
   gap: 0.28rem;
+}
+
+#chart-progress-bar .project-progress-list {
+  gap: 0.8rem;
+}
+
+#chart-progress-bar .project-progress-item {
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem;
+  gap: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 24%, var(--border-color));
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--accent-blue) 5%, transparent);
+}
+
+#chart-progress-bar .project-progress-head-main {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+#chart-progress-bar .project-progress-identity,
+#chart-progress-bar .project-progress-task-identity {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+#chart-progress-bar .project-progress-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--accent-blue);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#chart-progress-bar .project-progress-kind .material-symbols-rounded {
+  font-size: 0.9rem;
+}
+
+#chart-progress-bar .project-progress-title,
+#chart-progress-bar.project-progress-compact .project-progress-title {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+#chart-progress-bar .project-head-progress.is-running {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.3rem 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-color: var(--border-color);
+  background: color-mix(in srgb, var(--accent-blue) 7%, transparent);
+  box-shadow: none;
+  animation: none;
+}
+
+#chart-progress-bar .project-head-progress.is-running::before,
+#chart-progress-bar .project-head-progress.is-running::after,
+#chart-progress-bar .project-progress-task-fill.is-running::after,
+#chart-progress-bar .project-progress-task-track.is-running.is-empty::after {
+  content: none;
+}
+
+#chart-progress-bar.project-progress-compact .project-head-progress-label,
+#chart-progress-bar .project-head-progress-label {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+#chart-progress-bar .project-head-progress-track {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  height: 0.35rem;
+  background: var(--progress-bg);
+}
+
+#chart-progress-bar .project-head-progress-fill {
+  width: var(--project-progress, 0%);
+  box-shadow: none;
+  animation: none;
+}
+
+#chart-progress-bar .project-head-progress-meta {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+#chart-progress-bar .project-head-progress-value {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+#chart-progress-bar .project-head-progress-live-dot {
+  animation: none;
+}
+
+#chart-progress-bar .project-progress-tasks {
+  gap: 0.5rem;
+  margin: 0 0 0 0.35rem;
+  padding-left: 0.65rem;
+  border-left: 1px solid color-mix(in srgb, var(--accent-blue) 28%, transparent);
+}
+
+#chart-progress-bar .project-progress-task {
+  gap: 0.35rem 0.65rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--accent-yellow);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--bg-card) 85%, var(--accent-yellow) 4%);
+}
+
+#chart-progress-bar .project-progress-task-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+#chart-progress-bar .project-progress-task-identity {
+  flex: 1 1 12rem;
+}
+
+#chart-progress-bar .project-progress-task-identity .project-progress-kind {
+  color: var(--accent-yellow);
+}
+
+#chart-progress-bar .project-progress-task-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+#chart-progress-bar .project-progress-task-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--accent-green);
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: normal;
+}
+
+#chart-progress-bar .project-progress-task-activity::before {
+  content: '';
+  width: 0.45rem;
+  height: 0.45rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+#chart-progress-bar .project-progress-task-activity.is-tracking::before {
+  animation: project-progress-activity-breathe 3s ease-in-out infinite;
+}
+
+@keyframes project-progress-activity-breathe {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
+#chart-progress-bar .project-progress-task-track {
+  height: 0.35rem;
+  background: var(--progress-bg);
+}
+
+#chart-progress-bar .dashboard-subtasks,
+#chart-progress-bar .project-progress-commits {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  border-left: 2px solid var(--accent-cyan);
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--accent-cyan) 6%, transparent);
+}
+
+#chart-progress-bar .dashboard-subtasks-count,
+#chart-progress-bar .project-progress-commits-label {
+  color: var(--accent-cyan);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+#chart-progress-bar .dashboard-subtask {
+  align-items: baseline;
+  font-size: 0.73rem;
+  line-height: 1.4;
+}
+
+#chart-progress-bar .dashboard-subtask-title {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+#chart-progress-bar .dashboard-subtask.is-current > .material-symbols-rounded,
+#chart-progress-bar .dashboard-subtask.is-current .dashboard-subtask-prefix {
+  color: var(--accent-cyan);
+}
+
+#chart-progress-bar .dashboard-subtask.is-current .dashboard-subtask-title {
+  font-weight: 600;
+}
+
+#chart-progress-bar .dashboard-subtask.is-next,
+#chart-progress-bar .dashboard-subtask.is-upcoming {
+  color: var(--text-secondary);
+}
+
+#chart-progress-bar .dashboard-subtask.is-next .dashboard-subtask-prefix,
+#chart-progress-bar .dashboard-subtask.is-upcoming .dashboard-subtask-prefix {
+  font-style: italic;
+}
+
+#chart-progress-bar .project-progress-commits {
+  display: grid;
+  gap: 0.3rem;
+  border-left-color: var(--accent-purple);
+  background: color-mix(in srgb, var(--accent-purple) 6%, transparent);
+}
+
+#chart-progress-bar .project-progress-commits-label {
+  color: var(--accent-purple);
+}
+
+#chart-progress-bar .project-progress-commits ul {
+  display: grid;
+  gap: 0.25rem;
+  list-style: none;
+}
+
+#chart-progress-bar .project-progress-commits li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  min-width: 0;
+  font-size: 0.72rem;
+}
+
+#chart-progress-bar .project-progress-commits li > .material-symbols-rounded {
+  flex: 0 0 auto;
+  color: var(--accent-purple);
+  font-size: 0.9rem;
+}
+
+#chart-progress-bar .project-progress-commit-title {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+#chart-progress-bar .project-progress-commit-title:hover {
+  text-decoration: underline;
+}
+
+#chart-progress-bar .project-progress-commit-sha {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+}
+
+#chart-progress-bar .project-progress-commits-more summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.68rem;
+}
+
+#chart-progress-bar .project-progress-commits-more ul {
+  margin-top: 0.3rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #chart-progress-bar .project-progress-task-activity.is-tracking::before {
+    animation: none;
+  }
 }
 
 .dashboard-projects-full {
@@ -7180,7 +7317,6 @@ body.light-mode .project-card-head-matrix-label {
 body.light-mode .project-head-task-row.is-active-task .project-head-task-title {
   color: #0969da;
   text-shadow: none;
-  animation-name: active-task-title-pulse-light;
 }
 
 body.light-mode .project-head-contact-avatar,
@@ -7207,11 +7343,6 @@ body.light-mode .project-head-progress.is-low {
   background: #fff8c5;
   border-color: rgba(154, 103, 0, 0.36);
   color: #7d4e00;
-}
-
-body.light-mode .project-card-active-work,
-body.light-mode .project-head-progress.is-running {
-  animation-name: project-active-work-shell-light;
 }
 
 body.light-mode .project-head-progress.is-running {
@@ -7276,24 +7407,6 @@ body.light-mode .project-head-timeline-week-day-popover-item {
 
 body.light-mode .project-head-timeline-week-day-popover-time {
   color: #59636e;
-}
-
-@keyframes project-active-work-shell-light {
-  0%, 12%, 32%, 52%, 100% {
-    box-shadow: var(--surface-shadow), 0 0 0 1px rgba(26, 127, 55, 0.22), 0 0 12px rgba(26, 127, 55, 0.12);
-  }
-  13%, 15%, 53%, 56% {
-    box-shadow: var(--surface-shadow), 0 0 0 1px rgba(26, 127, 55, 0.32), 0 0 18px rgba(26, 127, 55, 0.2);
-  }
-}
-
-@keyframes active-task-title-pulse-light {
-  0%, 100% {
-    color: #0969da;
-  }
-  50% {
-    color: #0550ae;
-  }
 }
 
 body.light-mode .employee-work-card,

@@ -29,10 +29,11 @@ function makeDashboard(data) {
     dataset:{},
     innerHTML:'',
     expandedSubtaskTaskIds:[],
+    expandedCommitTaskIds:[],
     addEventListener(){},
     classList:{toggle(){}}
   };
-  container.querySelectorAll = ()=>container.expandedSubtaskTaskIds.map(taskId=>({
+  container.querySelectorAll = selector=>(selector.includes('commits-more')?container.expandedCommitTaskIds:container.expandedSubtaskTaskIds).map(taskId=>({
     getAttribute:()=>taskId
   }));
   const teamLoadContainer = {innerHTML:'',expandedSubtaskTaskIds:[]};
@@ -160,6 +161,38 @@ test('project progress uses the shared current-and-next subtask display and refr
   assert.match(container.innerHTML,/Teilaufgaben 3\/4/);
   assert.match(container.innerHTML,/Aktuell:<\/span><span class="dashboard-subtask-title">&lt;Erster&gt;/);
   assert.doesNotMatch(container.innerHTML,/Als Nächstes:/);
+});
+
+test('project progress identifies task commits and preserves expanded commit lists',()=>{
+  const data = makeDataLayer();
+  data.createProject({id:'project',title:'Projekt'});
+  const task = data.createTask({
+    id:'task',title:'Aufgabe',projectId:'project',status:'in-progress',
+    githubCommitImport:{commits:[
+      {sha:'111111111',title:'Ältester',date:'2020-01-01T10:00:00Z',calendarDate:'2020-01-01',calendarTime:'10:00'},
+      {sha:'222222222',title:'Mittlerer',date:'2020-01-02T10:00:00Z',calendarDate:'2020-01-02',calendarTime:'10:00'},
+      {sha:'333333333',title:'<Neuester>',date:'2020-01-03T10:00:00Z',calendarDate:'2020-01-03',calendarTime:'10:00'}
+    ]}
+  });
+  const {dashboard,container} = makeDashboard(data);
+  dashboard.renderProjectProgress();
+  assert.match(container.innerHTML,/folder<\/span>Projekt/);
+  assert.match(container.innerHTML,/task_alt<\/span>Aufgabe/);
+  assert.match(container.innerHTML,/Zugeordnete Commits · 3/);
+  assert.match(container.innerHTML,/data-open-done-task="task" data-focus-sha="333333333"/);
+  assert.match(container.innerHTML,/&lt;Neuester&gt;/);
+  assert.ok(container.innerHTML.indexOf('&lt;Neuester&gt;') < container.innerHTML.indexOf('Mittlerer'));
+  assert.match(container.innerHTML,/<details class="project-progress-commits-more" data-task-id="task">/);
+
+  container.expandedCommitTaskIds = ['task'];
+  dashboard.renderProjectProgress();
+  assert.match(container.innerHTML,/<details class="project-progress-commits-more" data-task-id="task" open>/);
+  task.timeTracking = {isPaused:true};
+  task.githubCommitImport.commits = [];
+  dashboard.renderProjectProgress();
+  assert.doesNotMatch(container.innerHTML,/project-progress-commits/);
+  assert.match(container.innerHTML,/class="project-progress-task-activity">In Arbeit/);
+  assert.doesNotMatch(container.innerHTML,/project-progress-task-activity is-tracking/);
 });
 
 test('project progress groups cross-project tasks once and identifies their projects',()=>{
