@@ -225,32 +225,39 @@ test('creates a completed task per local commit day and linked chronological cal
     await new Promise(resolve=>setImmediate(resolve));
     element('qtm-github-commit-review').querySelectorAll=()=>items.slice(0,3).map(item=>({getAttribute:()=>item.sha}));
     element('qtm-github-create').click();
-    element('qtm-github-assignee-'+items[0].sha).value='alice';
-    element('qtm-github-assignee-'+items[1].sha).value='alice';
-    element('qtm-github-assignee-'+items[2].sha).value='bob';
+    const assign=(sha,employeeId)=>{
+      const select=element('qtm-github-assignee-'+sha);
+      select.value=employeeId;
+      if(select.listeners.change)select.listeners.change({target:select});
+    };
+    assign(items[0].sha,'alice');
+    assign(items[1].sha,'alice');
+    assign(items[2].sha,'bob');
     assert.match(element('qtm-title').value,/2020-01-01/);
-    assert.match(element('qtm-github-daily-drafts').innerHTML,/2020-01-02/);
-    const translated=items.slice(0,3).map(item=>({
-      sha:item.sha,date:item.commit.committer.date,author:'Alice',message:item.commit.message,
-      title:'Anmeldung korrigiert',titleEn:'Fixed login',descriptionDe:'Deutsche Nachricht',descriptionEn:'English message',
-      url:item.html_url
-    }));
-    const second=h.api.groupGitHubCommitsByDay(translated)[1];
+    assert.match(element('qtm-title').value,/Alice/);
+    assert.match(element('qtm-github-daily-drafts').innerHTML,/2020-01-02 · Alice/);
+    assert.match(element('qtm-github-daily-drafts').innerHTML,/2020-01-02 · Bob/);
     element('qtm-github-title-1').value='Bearbeiteter Titel';
-    element('qtm-github-desc-1').value=second.draft.description;
-    element('qtm-github-subtasks-1').value=second.draft.subtasks.join('\n');
+    element('qtm-github-desc-1').value='Beschreibung Alice';
+    element('qtm-github-subtasks-1').value='Commit '+items[1].sha;
+    element('qtm-github-title-2').value='Bob Tagesaufgabe';
+    element('qtm-github-desc-2').value='Beschreibung Bob';
+    element('qtm-github-subtasks-2').value='Commit '+items[2].sha;
     element('qt-submit').click();
     await new Promise(resolve=>setImmediate(resolve));
-    assert.equal(created.length,2);
+    assert.equal(created.length,3);
     assert.equal(created[0].githubCommitImport.dailyTaskDate,'2020-01-01');
     assert.equal(created[1].githubCommitImport.dailyTaskDate,'2020-01-02');
+    assert.equal(created[2].githubCommitImport.dailyTaskDate,'2020-01-02');
     assert.equal(created[1].title,'Bearbeiteter Titel');
     assert.equal(created[0].sourceCommitShas.join(','),items[0].sha);
-    assert.equal(created[1].sourceCommitShas.join(','),[items[1].sha,items[2].sha].join(','));
+    assert.equal(created[1].sourceCommitShas.join(','),items[1].sha);
+    assert.equal(created[2].sourceCommitShas.join(','),items[2].sha);
     assert.equal(created[0].assigneeIds.join(','),'alice');
-    assert.equal(created[1].assigneeIds.join(','),'alice,bob');
-    assert.equal(created[1].subtasks[1].assigneeId,'bob');
-    assert.equal(created[1].subtasks[1].sourceCommitSha,items[2].sha);
+    assert.equal(created[1].assigneeIds.join(','),'alice');
+    assert.equal(created[2].assigneeIds.join(','),'bob');
+    assert.equal(created[2].subtasks[0].assigneeId,'bob');
+    assert.equal(created[2].subtasks[0].sourceCommitSha,items[2].sha);
     assert(created.every(task=>task.status==='done'&&task.subtasks.every(subtask=>subtask.completed)));
     assert(created.every(task=>Date.parse(task.createdAt)>Date.parse('2020-01-03')));
 
@@ -286,13 +293,15 @@ test('creates a completed task per local commit day and linked chronological cal
       .replace('window.CalendarModule = {','window.testActivities = buildTaskActivityEntries; window.testFilters={eventMatchesEmployeeFilter,taskMatchesEmployeeFilter,getEventParticipants}; window.CalendarModule = {');
     vm.runInNewContext(calendarSource,{window:calendarWindow,document:{addEventListener(){}},console});
     const activities=calendarWindow.testActivities();
-    assert.equal(activities.length,2);
+    assert.equal(activities.length,3);
     assert.equal(activities[0].date,'2020-01-01');
     assert.equal(activities[1].date,'2020-01-02');
+    assert.equal(activities[2].date,'2020-01-02');
     assert(activities.every(activity=>activity.type==='github-commit'&&activity.dayProgressGain===0));
-    assert.equal(activities[1].calendarTime,'09:30');
-    assert.equal(activities[1].assigneeIds.join(','),'alice,bob');
-    assert(calendarWindow.testFilters.taskMatchesEmployeeFilter(created[1],'bob'));
+    assert.equal(activities[1].assigneeIds.join(','),'alice');
+    assert.equal(activities[2].assigneeIds.join(','),'bob');
+    assert(calendarWindow.testFilters.taskMatchesEmployeeFilter(created[2],'bob'));
+    assert(!calendarWindow.testFilters.taskMatchesEmployeeFilter(created[1],'bob'));
     assert(calendarWindow.testFilters.eventMatchesEmployeeFilter(events[2],'bob'));
     assert(!calendarWindow.testFilters.eventMatchesEmployeeFilter(events[2],'alice'));
     assert(!calendarWindow.testFilters.eventMatchesEmployeeFilter(events[2],'__unassigned__'));
@@ -304,8 +313,8 @@ test('creates a completed task per local commit day and linked chronological cal
     const updatedActivities=calendarWindow.testActivities();
     assert(updatedActivities.some(activity=>activity.date==='2020-01-01'&&activity.type==='github-commit'));
     assert(updatedActivities.some(activity=>activity.date!=='2020-01-01'&&activity.type==='updated'));
-    const updatedSecond=data.getTaskById(created[1].id);
-    updatedSecond.githubCommitImport.commits[1].employeeId='alice';
+    const updatedSecond=data.getTaskById(created[2].id);
+    updatedSecond.githubCommitImport.commits[0].employeeId='alice';
     data.updateTask(updatedSecond);
     assert.equal(data.getCalendarEvents()[2].commitEmployeeId,'alice');
     data.tasks.length=0;data.calendarEvents.length=0;data.rehydrate();
@@ -468,4 +477,37 @@ test('reports a clear error when the dashboard session is missing',async()=>{
   const h=harness();
   h.sandbox.fetch=async()=>({ok:false,status:401,json:async()=>({error:'Anmeldung erforderlich.',authRequired:true})});
   await assert.rejects(h.api.fetchQuickTaskGitHubCommits(h.project),/Anmeldung erforderlich/);
+});
+
+test('commits with known GitHub logins are grouped into one task per employee per day automatically',async()=>{
+  const {h,element,created}=modalHarness();
+  const items=[commit(1),commit(2),commit(3)];
+  items[0].author={login:'alice'};
+  items[1].author={login:'bob'};
+  items[2].author={login:'alice'};
+  items[0].commit.committer.date='2020-06-01T10:00:00Z';
+  items[1].commit.committer.date='2020-06-01T12:00:00Z';
+  items[2].commit.committer.date='2020-06-01T14:00:00Z';
+  h.sandbox.fetch=async()=>({ok:true,json:async()=>items});
+  h.window.QuickTaskModule.open();
+  element('qtm-project').value='p1';
+  element('qtm-github-commits').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  element('qtm-github-commit-review').querySelectorAll=()=>items.map(item=>({getAttribute:()=>item.sha}));
+  element('qtm-github-create').click();
+  // Vorschlaege sind bereits gesetzt: alice-Gruppe (2 Commits) + bob-Gruppe (1 Commit) am selben Tag
+  assert.match(element('qtm-title').value,/Alice/);
+  assert.match(element('qtm-github-daily-drafts').innerHTML,/2020-06-01 · Bob/);
+  assert.equal(element('qtm-github-assignee-'+items[1].sha).value,'bob');
+  element('qtm-github-title-1').value='Bob Tagesaufgabe';
+  element('qtm-github-desc-1').value='Beschreibung Bob';
+  element('qtm-github-subtasks-1').value='Commit '+items[1].sha;
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,2);
+  assert.equal(created[0].assigneeIds.join(','),'alice');
+  assert.equal(created[0].sourceCommitShas.join(','),[items[0].sha,items[2].sha].join(','));
+  assert.equal(created[1].assigneeIds.join(','),'bob');
+  assert.equal(created[1].sourceCommitShas.join(','),items[1].sha);
+  assert(created.every(task=>task.status==='done'));
 });

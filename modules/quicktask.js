@@ -125,16 +125,21 @@ function formatGitHubCommitDraft(commits){
 
 function groupGitHubCommitsByDay(commits){
   if(!window.AIConfModule||typeof window.AIConfModule.commitCalendarData!=='function')throw new Error('GitHub-Kalenderdaten sind nicht verfuegbar.');
-  var byDay=Object.create(null);
+  var byKey=Object.create(null);
   commits.forEach(function(commit){
     var entry=commit.calendarDate&&commit.calendarTime?commit:window.AIConfModule.commitCalendarData(commit);
+    // commitCalendarData kennt employeeId nicht: Zuordnung des Quell-Commits erhalten
+    if(commit.employeeId!==undefined&&entry.employeeId===undefined)entry=Object.assign({},entry,{employeeId:commit.employeeId});
     if(!/^\d{4}-\d{2}-\d{2}$/.test(entry.calendarDate)||!/^\d{2}:\d{2}$/.test(entry.calendarTime)||!isFinite(Date.parse(entry.date)))throw new Error('Ungueltiger Commit-Zeitpunkt: '+entry.sha);
-    if(!byDay[entry.calendarDate])byDay[entry.calendarDate]=[];
-    byDay[entry.calendarDate].push(entry);
+    var employeeId=String(entry.employeeId||'');
+    var key=entry.calendarDate+'::'+employeeId;
+    if(!byKey[key])byKey[key]={date:entry.calendarDate,employeeId:employeeId,commits:[]};
+    byKey[key].commits.push(entry);
   });
-  return Object.keys(byDay).sort().map(function(day){
-    var entries=byDay[day].sort(function(a,b){return Date.parse(a.date)-Date.parse(b.date)||a.sha.localeCompare(b.sha);});
-    return {date:day,commits:entries,draft:formatGitHubCommitDraft(entries)};
+  return Object.keys(byKey).sort().map(function(key){
+    var group=byKey[key];
+    var entries=group.commits.sort(function(a,b){return Date.parse(a.date)-Date.parse(b.date)||a.sha.localeCompare(b.sha);});
+    return {date:group.date,employeeId:group.employeeId,commits:entries,draft:formatGitHubCommitDraft(entries)};
   });
 }
 
@@ -520,6 +525,7 @@ function openQuickTaskModal(prefill){
 
     var aiState={loading:false,draft:null,suggestions:[]};
     var githubDraftGroups=[];
+    var githubDraftSourceCommits=[];
     var githubDraftProjectId='';
     var selectedAssigneeIds=[];
     var pendingFiles=[];
@@ -916,40 +922,72 @@ function openQuickTaskModal(prefill){
     resizeQuickTaskTextareas();
 
     function applyGitHubCommitDrafts(commits,project){
-      var groups=groupGitHubCommitsByDay(commits);
+      // Zuordnung je Commit: explizite Auswahl oder Vorschlag aus GitHub-Konto/Aliasen
+      githubDraftSourceCommits=commits.map(function(commit){
+        var employeeId=commit.employeeId!==undefined&&commit.employeeId!==null
+          ?String(commit.employeeId)
+          :findGitHubCommitEmployee(commit,window.DataLayer.getEmployees()||[]);
+        return Object.assign({},commit,{employeeId:employeeId});
+      });
+      var groups=groupGitHubCommitsByDay(githubDraftSourceCommits);
       if(!groups.length)throw new Error('Keine Commits ausgewaehlt.');
       githubDraftGroups=groups;
       githubDraftProjectId=String(project.id);
+      function groupEmployeeName(group){
+        var employee=employees.find(function(item){return String(item&&item.id||'')===String(group.employeeId||'');});
+        return employee?String(employee.name||employee.id):'';
+      }
+      function groupHeading(group){
+        return group.date+' · '+(groupEmployeeName(group)||'Nicht zugeordnet');
+      }
+      function groupTitle(group){
+        var name=groupEmployeeName(group);
+        return group.draft.title+' - '+group.date+(name?' · '+name:'');
+      }
       document.getElementById('qtm-assignee-picker').classList.add('hidden');
       document.getElementById('qtm-assignee-help').textContent='Mitarbeiter werden unten pro Commit zugeordnet.';
       var first=groups[0];
-      document.getElementById('qtm-title').value=first.draft.title+' - '+first.date;
+      document.getElementById('qtm-title').value=groupTitle(first);
       document.getElementById('qtm-desc').value=first.draft.description;
       document.getElementById('qtm-subtasks').value=first.draft.subtasks.join('\n');
       document.getElementById('qtm-attachments').value=first.commits.filter(function(commit){return commit.url;}).map(function(commit){return 'GitHub Commit '+commit.sha+'|'+commit.url;}).join('\n');
       var host=document.getElementById('qtm-github-daily-drafts');
-      host.innerHTML='<h3>GitHub-Tagesaufgaben</h3><p>Die Felder oben gelten fuer '+escapeHtml(first.date)+'. Pro weiterem Tag wird eine eigene erledigte Aufgabe erstellt. Planung, Aufwand, Labels und Dateien gelten fuer jede Tagesaufgabe.</p><p id="qtm-github-daily-status" role="status" aria-live="polite"></p>'
+      host.innerHTML='<h3>GitHub-Tagesaufgaben</h3><p>Die Felder oben gelten fuer '+escapeHtml(groupHeading(first))+'. Pro Mitarbeiter und Tag wird eine eigene erledigte Aufgabe erstellt und dem jeweiligen Mitarbeiter zugewiesen. Planung, Aufwand, Labels und Dateien gelten fuer jede Tagesaufgabe.</p><p id="qtm-github-daily-status" role="status" aria-live="polite"></p>'
         +groups.slice(1).map(function(group,index){
           var key=String(index+1);
-          return '<section class="qtm-new-section"><h3>'+escapeHtml(group.date)+'</h3>'
-            +'<div class="form-group"><label for="qtm-github-title-'+key+'">Titel</label><input id="qtm-github-title-'+key+'" value="'+escapeAttr(group.draft.title+' - '+group.date)+'"></div>'
+          return '<section class="qtm-new-section"><h3>'+escapeHtml(groupHeading(group))+'</h3>'
+            +'<div class="form-group"><label for="qtm-github-title-'+key+'">Titel</label><input id="qtm-github-title-'+key+'" value="'+escapeAttr(groupTitle(group))+'"></div>'
             +'<div class="form-group"><label for="qtm-github-desc-'+key+'">Beschreibung</label><textarea id="qtm-github-desc-'+key+'" rows="6">'+escapeHtml(group.draft.description)+'</textarea></div>'
             +'<div class="form-group"><label for="qtm-github-subtasks-'+key+'">Teilaufgaben (eine pro Zeile)</label><textarea id="qtm-github-subtasks-'+key+'" rows="4">'+escapeHtml(group.draft.subtasks.join('\n'))+'</textarea></div></section>';
         }).join('')
-        +'<h3>Commit-Autoren zuordnen</h3><p>GitHub-Konten und hinterlegte Commit-Aliase werden vorgeschlagen. Bitte jede Zuordnung pruefen; unbekannte Autoren muessen manuell zugewiesen werden.</p>'
+        +'<h3>Commit-Autoren zuordnen</h3><p>GitHub-Konten und hinterlegte Commit-Aliase werden vorgeschlagen. Bitte jede Zuordnung pruefen; unbekannte Autoren muessen manuell zugewiesen werden. Beim Aendern einer Zuordnung werden die Tagesaufgaben pro Mitarbeiter neu gruppiert.</p>'
         +groups.map(function(group){
-          return '<section class="qtm-new-section"><h3>'+escapeHtml(group.date)+'</h3>'+group.commits.map(function(commit){
-            var suggested=findGitHubCommitEmployee(commit,window.DataLayer.getEmployees()||[]);
+          return '<section class="qtm-new-section"><h3>'+escapeHtml(groupHeading(group))+'</h3>'+group.commits.map(function(commit){
             var id='qtm-github-assignee-'+commit.sha;
             return '<div class="form-group"><label for="'+escapeAttr(id)+'">'+escapeHtml(commit.title)+' · '+escapeHtml(commit.author)+(commit.authorLogin?' (@'+escapeHtml(commit.authorLogin)+')':'')+' ['+escapeHtml(commit.sha.slice(0,7))+']</label>'
               +'<select id="'+escapeAttr(id)+'" required><option value="">-- Mitarbeiter auswaehlen --</option>'
               +employees.map(function(employee){
                 var employeeId=String(employee&&employee.id||'');
-                return '<option value="'+escapeAttr(employeeId)+'"'+(employeeId===suggested?' selected':'')+'>'+escapeHtml(employee.name||employeeId)+'</option>';
+                return '<option value="'+escapeAttr(employeeId)+'"'+(employeeId===String(commit.employeeId||'')?' selected':'')+'>'+escapeHtml(employee.name||employeeId)+'</option>';
               }).join('')+'</select></div>';
           }).join('')+'</section>';
         }).join('');
       host.classList.remove('hidden');
+      groups.forEach(function(group){
+        group.commits.forEach(function(commit){
+          var select=document.getElementById('qtm-github-assignee-'+commit.sha);
+          if(!select)return;
+          select.value=String(commit.employeeId||'');
+          select.addEventListener('change',function(){
+            var nextEmployeeId=String(select.value||'');
+            githubDraftSourceCommits=githubDraftSourceCommits.map(function(item){
+              return item.sha===commit.sha?Object.assign({},item,{employeeId:nextEmployeeId}):item;
+            });
+            applyGitHubCommitDrafts(githubDraftSourceCommits,project);
+            updateAiStatus('Zuordnung aktualisiert: Tagesaufgaben wurden pro Mitarbeiter neu gruppiert.',false);
+          });
+        });
+      });
       toggleAiButtons(false);
       resizeQuickTaskTextareas();
     }
@@ -987,6 +1025,7 @@ function openQuickTaskModal(prefill){
         if(review)review.classList.add('hidden');
         if(githubDraftGroups.length&&githubDraftProjectId!==getProjectSelection().projectId){
           githubDraftGroups=[];
+          githubDraftSourceCommits=[];
           githubDraftProjectId='';
           document.getElementById('qtm-github-daily-drafts').classList.add('hidden');
           document.getElementById('qtm-assignee-picker').classList.remove('hidden');
