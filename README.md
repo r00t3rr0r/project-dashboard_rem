@@ -30,6 +30,8 @@ Die Projekte-Seite ist die zentrale Stelle zum Administrieren der Projekte und i
 
 Token-Auflösung bei GitHub-Abrufen: Formularfeld → Session → Token des angemeldeten Mitarbeiters → zentraler Token.
 
+Beim Import von GitHub-Commits wird ein vorhandener GitHub-Login zugeordnet. Fehlt der Login, wird ein eindeutiger Commit-Alias vorgeschlagen; dieser darf auch dem Mitarbeiternamen entsprechen. Mehrdeutige oder unbekannte Autoren müssen manuell zugewiesen werden.
+
 ## Quickstart
 
 ### Empfohlen: Storage-Server (All-in-One)

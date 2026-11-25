@@ -159,7 +159,7 @@ function findGitHubCommitEmployee(commit,employees){
     var name=String(employee.name||'').trim().toLowerCase();
     return Array.isArray(github.aliases)&&github.aliases.some(function(alias){
       var value=String(alias||'').trim().toLowerCase();
-      return value&&value!==name&&value!==username.toLowerCase()&&value===author;
+      return value&&value===author&&(value===name||value!==username.toLowerCase());
     });
   });
   return matches.length===1?String(matches[0].id):'';
