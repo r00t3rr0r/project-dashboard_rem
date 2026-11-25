@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {test} = require('node:test');
 
-function harness(){
+function harness(updates){
   const source=fs.readFileSync(path.join(__dirname,'../modules/app.js'),'utf8');
   const setup=source.slice(source.indexOf('function setupDashboardUpdate(){'),source.indexOf('function setupExportImport(){'));
   const nodes={};
@@ -17,7 +17,7 @@ function harness(){
   const timers=[],requests=[];
   let reloaded=false,versionCalls=0,resolveApply;
   const oldVersion={startedAt:'old',shortCommit:'old1234'};
-  const window={location:{reload(){reloaded=true;}},setTimeout(fn){timers.push(fn);}};
+  const window={location:{reload(){reloaded=true;}},setTimeout(fn){timers.push(fn);},DashboardUpdates:updates};
   const document={getElementById:()=>node('open'),createElement:()=>overlay,body:{appendChild(){}}};
   const fetch=async(url,options)=>{
     requests.push({url,options});
@@ -83,4 +83,25 @@ test('update failures show the server error without reporting success',async()=>
   assert.match(h.node('.update-console').textContent,/Backup fehlgeschlagen/);
   assert.equal(h.node('.update-close').disabled,false);
   assert.equal(h.reloaded,false);
+});
+
+test('generation button reports publication success and restores controls',async()=>{
+  const h=harness({generate:async()=>({count:3})});
+  h.node('open').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  h.node('.update-generate').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(h.node('.update-ai-status').textContent,/3 Neuerungen/);
+  assert.equal(h.node('.update-generate').disabled,false);
+  assert.equal(h.node('.update-close').disabled,false);
+});
+
+test('generation errors are visible without affecting update controls',async()=>{
+  const h=harness({generate:async()=>{throw new Error('Keine Commits');}});
+  h.node('open').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  h.node('.update-generate').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(h.node('.update-ai-status').textContent,/Keine Commits/);
+  assert.equal(h.node('.update-check').disabled,false);
 });

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from datetime import date, datetime, time as datetime_time, timedelta
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -191,6 +192,65 @@ class SelfUpdateTest(unittest.TestCase):
         with mock.patch.object(storage, 'ensure_daily_backup'), mock.patch.object(handler, '_send_json') as send:
             handler.do_GET()
         self.assertEqual(send.call_args.kwargs['status'], 403)
+
+    def test_daily_commits_use_server_calendar_day_and_exclude_future(self):
+        today = date.today()
+        start = datetime.combine(today, datetime_time.min).astimezone()
+        end = datetime.combine(today + timedelta(days=1), datetime_time.min).astimezone()
+        entries = '\n'.join([
+            str(int(end.timestamp())) + '\x1ffuture',
+            str(int(start.timestamp())) + '\x1ftoday',
+            str(int(start.timestamp()) - 1) + '\x1fyesterday',
+        ])
+        with mock.patch.object(storage, '_git', return_value=entries) as git:
+            result = storage.get_today_dashboard_commits()
+        self.assertEqual(result, {'date': today.isoformat(), 'commits': ['today']})
+        self.assertIn('--no-merges', git.call_args.args)
+        self.assertIn('--since-as-filter=' + start.isoformat(), git.call_args.args)
+
+    def test_new_update_endpoints_require_admin_for_generation_and_publication(self):
+        handler = object.__new__(storage.StorageHandler)
+        handler._require_admin = lambda: False
+        with mock.patch.object(handler, '_read_json_payload') as read:
+            handler._generate_dashboard_updates()
+            handler._save_dashboard_updates()
+        read.assert_not_called()
+
+    def test_dashboard_updates_are_saved_and_read_from_shared_storage(self):
+        handler = object.__new__(storage.StorageHandler)
+        handler._require_admin = lambda: True
+        handler._read_json_payload = lambda: ({'date': '2026-11-25', 'features': [
+            {'title': ' Übersicht ', 'description': ' Einfacher Einstieg '}]}, '')
+        with mock.patch.object(storage, 'schedule_full_backup'), mock.patch.object(handler, '_send_json') as send:
+            handler._save_dashboard_updates()
+            saved = send.call_args.args[0]['update']
+            handler._send_dashboard_updates()
+            loaded = send.call_args.args[0]['update']
+        self.assertEqual(saved, loaded)
+        self.assertEqual(saved['features'], [{'title': 'Übersicht', 'description': 'Einfacher Einstieg'}])
+
+    def test_invalid_dashboard_update_does_not_replace_published_data(self):
+        handler = object.__new__(storage.StorageHandler)
+        handler._require_admin = lambda: True
+        handler._read_json_payload = lambda: ({'date': '2026-11-25', 'features': [
+            {'title': ' ', 'description': 'Beschreibung'}]}, '')
+        with mock.patch.object(handler, '_send_json') as send, mock.patch.object(handler, '_write_value') as write:
+            handler._save_dashboard_updates()
+        self.assertEqual(send.call_args.kwargs['status'], 400)
+        write.assert_not_called()
+
+    def test_remote_ai_receives_selected_model_and_returns_structured_features(self):
+        handler = object.__new__(storage.StorageHandler)
+        handler._require_admin = lambda: True
+        handler._read_json_payload = lambda: ({'promptConfig': {
+            'model': 'test-model', 'prompt': 'Commit-Nachrichten', 'maxTokens': 1000}}, '')
+        with mock.patch.object(handler, '_send_json') as send, \
+             mock.patch.object(handler, '_call_ollama', return_value=(
+                 '{"features":[{"title":"Neu","description":"Mehr Übersicht"}]}', [])) as ollama:
+            handler._generate_dashboard_updates()
+        self.assertEqual(send.call_args.args[0]['features'][0]['title'], 'Neu')
+        self.assertEqual(ollama.call_args.args, ('test-model', 'Commit-Nachrichten'))
+        self.assertEqual(ollama.call_args.kwargs['response_format'], 'json')
 
     def test_only_admin_can_check_or_apply_updates(self):
         handler = object.__new__(storage.StorageHandler)

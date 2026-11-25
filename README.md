@@ -281,6 +281,12 @@ Datei [app.html](app.html) kann direkt geoeffnet werden, aber bei manchen Browse
 
 Unter `#page=tasks` wechselt der Ansichtsumschalter zwischen allen Aufgaben, der Review-Warteschlange und erledigten Aufgaben. Die Karten zeigen Projekt, Zuweisung und Abschluss auf einen Blick. Über den Pfeil lassen sich Details und Verlauf öffnen; Review, Nacharbeit und Wiedereröffnung werden direkt in der Karte bestätigt.
 
+### Dashboard-Neuerungen
+
+Administratoren können unter „Version / Update“ eine KI-Schnittstelle auswählen und mit „Neuerungen erstellen“ eine Übersicht für das Team veröffentlichen. Grundlage sind die Commit-Nachrichten des aktuellen Kalendertags in der Zeitzone des Servers, aus dem aktuell ausgecheckten Dashboard-Repository; Merge-Commits werden ausgelassen. Es werden keine Quellcode-Diffs verwendet. Bei Claude oder ChatGPT werden die Commit-Nachrichten an den ausgewählten Anbieter übermittelt.
+
+Die letzte erfolgreich gespeicherte Übersicht erscheint für angemeldete Mitarbeitende auf dem Dashboard und bleibt auch an späteren Tagen sichtbar. Bei fehlenden Commits oder einem Fehler bleibt die vorherige Übersicht erhalten. KI-Ergebnisse können ungenau sein und sollten vor der Weiterverwendung geprüft werden.
+
 ### Team-Kalender
 
 Über „Eintrag anlegen“ oder einen Doppelklick auf einen Kalendertag lassen sich Termine sowie Urlaub, Krankmeldungen und Homeoffice für ausgewählte Mitarbeiter erfassen. Ein optionales Enddatum ist einschließlich; mehrtägige Einträge sind ganztägig. Mitarbeiterstatus benötigen keine Teilnahmebestätigung und erscheinen an jedem Tag des Zeitraums sowie im iCal-Export. Bestehende Urlaubstermine ohne Statuskennzeichnung behalten ihre Einladungen.

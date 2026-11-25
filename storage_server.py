@@ -22,7 +22,7 @@ import time
 import urllib.request
 import hosting_monitor
 import screenshot_capture
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse, quote
 
@@ -435,6 +435,20 @@ def _git(*args, timeout=60):
     return result.stdout.strip()
 
 
+def get_today_dashboard_commits():
+    today = date.today()
+    start = datetime.combine(today, datetime_time.min).astimezone()
+    end = datetime.combine(today + timedelta(days=1), datetime_time.min).astimezone()
+    output = _git('log', '--no-merges', '--since-as-filter=' + start.isoformat(),
+                  '--format=%ct%x1f%s', 'HEAD')
+    commits = []
+    for line in output.splitlines():
+        timestamp, subject = line.split('\x1f', 1)
+        if start.timestamp() <= int(timestamp) < end.timestamp():
+            commits.append(subject)
+    return {'date': today.isoformat(), 'commits': commits}
+
+
 def _changelog_version():
     try:
         with open(os.path.join(ROOT, 'Changelog.md'), encoding='utf-8') as handle:
@@ -603,6 +617,16 @@ class StorageHandler(BaseHTTPRequestHandler):
             if self._require_admin():
                 self._send_json(get_version_info())
             return
+        if parsed.path == '/api/system/daily-commits':
+            if self._require_admin():
+                try:
+                    self._send_json(get_today_dashboard_commits())
+                except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as exc:
+                    self._send_json({'error': 'Commits konnten nicht geladen werden: ' + str(exc)}, status=502)
+            return
+        if parsed.path == '/api/dashboard/updates':
+            self._send_dashboard_updates()
+            return
         if parsed.path == '/api/system/update/progress':
             if self._require_admin():
                 self._send_json(_update_progress_snapshot())
@@ -663,6 +687,12 @@ class StorageHandler(BaseHTTPRequestHandler):
             return
         if parsed.path in ('/api/system/update/check', '/api/system/update/apply'):
             self._handle_system_update(parsed.path.endswith('/apply'))
+            return
+        if parsed.path == '/api/dashboard/updates':
+            self._save_dashboard_updates()
+            return
+        if parsed.path == '/api/ai/dashboard-updates':
+            self._generate_dashboard_updates()
             return
         if parsed.path == '/api/kv':
             self._handle_kv_post()
@@ -919,6 +949,74 @@ class StorageHandler(BaseHTTPRequestHandler):
             return
         _next_kv_stream_event('delete' if value is None else 'set', key)
         self._send_json({'ok': True, 'key': key})
+
+    def _send_dashboard_updates(self):
+        try:
+            conn = open_db_connection()
+            try:
+                row = conn.execute('SELECT value FROM kv_store WHERE key = ?', ('dashboard_updates',)).fetchone()
+            finally:
+                conn.close()
+            self._send_json({'update': json.loads(row[0]) if row else None})
+        except (sqlite3.Error, ValueError) as exc:
+            self._send_json({'error': 'Neuerungen konnten nicht geladen werden: ' + str(exc)}, status=500)
+
+    def _save_dashboard_updates(self):
+        if not self._require_admin():
+            return
+        payload, error = self._read_json_payload()
+        if error:
+            self._send_json({'error': error}, status=400)
+            return
+        features = payload.get('features')
+        day = payload.get('date')
+        if (not isinstance(day, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day)
+                or not isinstance(features, list) or not 1 <= len(features) <= 12
+                or any(not isinstance(item, dict)
+                       or not isinstance(item.get('title'), str) or not 1 <= len(item['title'].strip()) <= 120
+                       or not isinstance(item.get('description'), str) or not 1 <= len(item['description'].strip()) <= 500
+                       for item in features)):
+            self._send_json({'error': 'Ungueltige Zusammenfassung.'}, status=400)
+            return
+        try:
+            date.fromisoformat(day)
+        except ValueError:
+            self._send_json({'error': 'Ungueltiges Datum.'}, status=400)
+            return
+        update = {'date': day, 'generatedAt': utc_now_iso_z(),
+                  'features': [{'title': item['title'].strip(), 'description': item['description'].strip()}
+                               for item in features]}
+        try:
+            self._write_value('dashboard_updates', json.dumps(update, ensure_ascii=False))
+        except (sqlite3.Error, OSError) as exc:
+            self._send_json({'error': 'Neuerungen konnten nicht gespeichert werden: ' + str(exc)}, status=500)
+            return
+        _next_kv_stream_event('set', 'dashboard_updates')
+        self._send_json({'update': update})
+
+    def _generate_dashboard_updates(self):
+        if not self._require_admin():
+            return
+        payload, error = self._read_json_payload()
+        if error:
+            self._send_json({'error': error}, status=400)
+            return
+        config = payload.get('promptConfig') if isinstance(payload.get('promptConfig'), dict) else {}
+        prompt = config.get('prompt')
+        if not isinstance(prompt, str) or not prompt.strip():
+            self._send_json({'error': 'KI-Auftrag fehlt.'}, status=400)
+            return
+        model = str(config.get('model') or payload.get('model') or OLLAMA_DEFAULT_MODEL).strip()
+        try:
+            text, _ = self._call_ollama(model, prompt, temperature=self._read_temperature(config),
+                                        max_tokens=self._read_max_tokens(config), response_format='json')
+            parsed = self._extract_json_object(text)
+            if not isinstance(parsed, dict) or not isinstance(parsed.get('features'), list):
+                raise ValueError('Die KI hat keine gueltige Featureliste geliefert.')
+        except (RuntimeError, ValueError) as exc:
+            self._send_json({'error': str(exc)}, status=502)
+            return
+        self._send_json(parsed)
 
     def _handle_kv_stream(self):
         subscriber = queue.Queue(maxsize=256)

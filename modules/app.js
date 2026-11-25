@@ -321,7 +321,7 @@ function startStorageStatusMonitor(){
 function setupDashboardUpdate(){
   var btn=document.getElementById('db-update-btn');
   if(!btn)return;
-  var overlay=null,body=null,checkBtn=null,applyBtn=null,closeBtn=null,busy=false,reloadReady=false;
+  var overlay=null,body=null,checkBtn=null,applyBtn=null,closeBtn=null,generateBtn=null,busy=false,reloadReady=false;
   var progressPanel=null,progressLabel=null,progressValue=null,progressBar=null,progressFill=null,progressLog=null;
   var lastProgress=null;
 
@@ -371,8 +371,8 @@ function setupDashboardUpdate(){
   }
 
   function run(fn){
-    if(busy)return;busy=true;checkBtn.disabled=applyBtn.disabled=closeBtn.disabled=true;body.insertAdjacentHTML('beforeend','<p>Bitte warten...</p>');
-    fn().catch(function(e){body.textContent='Fehler: '+e.message;}).then(function(){busy=false;checkBtn.disabled=false;closeBtn.disabled=false;});
+    if(busy)return;busy=true;generateBtn.disabled=checkBtn.disabled=applyBtn.disabled=closeBtn.disabled=true;body.insertAdjacentHTML('beforeend','<p>Bitte warten...</p>');
+    fn().catch(function(e){body.textContent='Fehler: '+e.message;}).then(function(){busy=false;generateBtn.disabled=false;checkBtn.disabled=false;closeBtn.disabled=false;});
   }
 
   function showProgress(progress){
@@ -393,7 +393,7 @@ function setupDashboardUpdate(){
     function retry(){
       if(tries>0)window.setTimeout(function(){waitForRestart(tries-1,startedAt,target,progress);},1500);
       else {
-        busy=false;closeBtn.disabled=false;
+        busy=false;generateBtn.disabled=false;closeBtn.disabled=false;
         progress.status='error';
         progress.logs.push('Neustart oder neue Version nicht bestaetigt. Bitte Server pruefen und Seite manuell neu laden.');
         showProgress(progress);
@@ -404,7 +404,7 @@ function setupDashboardUpdate(){
         progress.status='complete';progress.percent=100;
         progress.logs.push('Neustart bestaetigt. Commit '+target+' ist aktiv.');
         showProgress(progress);
-        busy=false;reloadReady=true;closeBtn.disabled=false;
+        busy=false;reloadReady=true;generateBtn.disabled=false;closeBtn.disabled=false;
         applyBtn.disabled=false;applyBtn.textContent='Dashboard neu laden';
       }
       else retry();
@@ -415,7 +415,7 @@ function setupDashboardUpdate(){
     if(busy)return;
     if(reloadReady){window.location.reload();return;}
     if(!confirm('Dashboard jetzt aktualisieren? Vor dem Update wird ein Datenbank-Backup erstellt und der Server neu gestartet.'))return;
-    busy=true;checkBtn.disabled=applyBtn.disabled=closeBtn.disabled=true;
+    busy=true;generateBtn.disabled=checkBtn.disabled=applyBtn.disabled=closeBtn.disabled=true;
     var runId='update-'+Date.now()+'-'+Math.random().toString(36).slice(2);
     var polling=true;
     showProgress({status:'running',percent:0,logs:['Update wird angefordert ...']});
@@ -434,7 +434,7 @@ function setupDashboardUpdate(){
       var update=data.update||{},progress=data.progress;
       if(progress)showProgress(progress);
       if(!update.ok){
-        busy=false;checkBtn.disabled=false;closeBtn.disabled=false;
+        busy=false;generateBtn.disabled=false;checkBtn.disabled=false;closeBtn.disabled=false;
         if(!progress)showProgress({status:'error',percent:0,logs:[update.message||'Update fehlgeschlagen.']});
         return;
       }
@@ -442,10 +442,10 @@ function setupDashboardUpdate(){
       if(update.commits){
         waitForRestart(20,data.version.startedAt,update.to,progress||{status:'restarting',percent:90,logs:[update.message]});
       }else{
-        busy=false;checkBtn.disabled=false;closeBtn.disabled=false;
+        busy=false;generateBtn.disabled=false;checkBtn.disabled=false;closeBtn.disabled=false;
       }
     }).catch(function(error){
-      polling=false;busy=false;checkBtn.disabled=false;closeBtn.disabled=false;
+      polling=false;busy=false;generateBtn.disabled=false;checkBtn.disabled=false;closeBtn.disabled=false;
       var progress=lastProgress||{percent:0,logs:[]};
       progress.status='error';
       progress.logs=(progress.logs||[]).concat('Verbindung zur Update-Anfrage verloren: '+error.message+'. Bitte Serverstatus pruefen; das Update kann noch laufen.');
@@ -459,12 +459,16 @@ function setupDashboardUpdate(){
     overlay.innerHTML='<div class="modal update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-title">'
       +'<header class="update-header"><span class="material-symbols-rounded" aria-hidden="true">system_update</span><div><h2 id="update-title">Dashboard-Version &amp; Update</h2><p>Installation und Update-Quelle verwalten</p></div></header>'
       +'<div class="update-body"></div>'
+      +'<section class="update-ai"><div><h3>Neuerungen für das Team</h3><p>Erstellt aus den Commit-Nachrichten des heutigen Tages eine verständliche Übersicht. Bei Claude oder ChatGPT werden diese Nachrichten an den gewählten Anbieter übermittelt.</p></div>'
+      +(window.LocalOllama&&window.LocalOllama.providerSelectHtml?window.LocalOllama.providerSelectHtml('update-ai-provider'):'')
+      +'<button class="btn btn-secondary update-generate" type="button"><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span> Neuerungen erstellen</button><p class="update-ai-status" role="status" aria-live="polite"></p></section>'
       +'<section class="update-progress" hidden aria-label="Update-Fortschritt"><div class="update-progress-head"><strong class="update-progress-label"></strong><output class="update-progress-value"></output></div><div class="update-progress-track" role="progressbar" aria-label="Update-Fortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="update-progress-fill"></span></div><div class="update-console-title"><span class="material-symbols-rounded" aria-hidden="true">terminal</span>Aktionsprotokoll</div><pre class="update-console" role="log" aria-live="polite"></pre></section>'
       +'<div class="update-actions"><button class="btn btn-secondary update-close" type="button">Schliessen</button><button class="btn btn-secondary update-check" type="button">Nach Updates suchen</button><button class="btn btn-primary update-apply" type="button" disabled>Jetzt aktualisieren</button></div></div>';
     body=overlay.querySelector('.update-body');
     checkBtn=overlay.querySelector('.update-check');
     applyBtn=overlay.querySelector('.update-apply');
     closeBtn=overlay.querySelector('.update-close');
+    generateBtn=overlay.querySelector('.update-generate');
     progressPanel=overlay.querySelector('.update-progress');
     progressLabel=overlay.querySelector('.update-progress-label');
     progressValue=overlay.querySelector('.update-progress-value');
@@ -479,6 +483,22 @@ function setupDashboardUpdate(){
       run(function(){return api('/api/system/update/check','POST').then(function(d){render(d.version,d.check);});});
     });
     applyBtn.addEventListener('click',startUpdate);
+    generateBtn.addEventListener('click',function(){
+      if(busy)return;
+      var status=overlay.querySelector('.update-ai-status');
+      if(!window.DashboardUpdates){status.textContent='Die Funktion für Neuerungen ist nicht verfügbar.';return;}
+      var applyWasDisabled=applyBtn.disabled;
+      busy=true;generateBtn.disabled=checkBtn.disabled=applyBtn.disabled=closeBtn.disabled=true;
+      status.textContent='Neuerungen werden erstellt und veröffentlicht …';
+      window.DashboardUpdates.generate().then(function(result){
+        status.textContent=result.count+' Neuerungen wurden auf dem Dashboard veröffentlicht.';
+      }).catch(function(error){
+        status.textContent='Neuerungen konnten nicht erstellt werden: '+error.message;
+      }).then(function(){
+        busy=false;generateBtn.disabled=checkBtn.disabled=closeBtn.disabled=false;applyBtn.disabled=applyWasDisabled;
+      });
+    });
+    if(window.LocalOllama&&window.LocalOllama.bindProviderSelect)window.LocalOllama.bindProviderSelect(overlay);
     document.body.appendChild(overlay);
   }
 

@@ -83,3 +83,32 @@ test('routing waits for stored selection to finish hydration',async()=>{
   await pending;
   assert.equal(client.calls[0].body.model,'text-b');
 });
+
+test('local dashboard updates request structured JSON with the supplied prompt',async()=>{
+  const client=makeClient('127.0.0.1',{routing:'fixed',primaryModel:'text-a'});
+  let request;
+  client.sandbox.fetch=async(url,init)=>{
+    request=JSON.parse(init.body);
+    return {ok:true,json:async()=>({response:'{"features":[{"title":"Neu","description":"Einfacher"}]}'})};
+  };
+  const result=await client.api.generate('/api/ai/dashboard-updates',{promptConfig:{prompt:'Commit-Nachrichten'}});
+  assert.equal(request.format,'json');
+  assert.match(request.prompt,/Commit-Nachrichten/);
+  assert.equal(result.features[0].title,'Neu');
+});
+
+test('selected cloud provider generates dashboard updates as JSON',async()=>{
+  const client=makeClient('127.0.0.1');
+  client.window.localStorage={getItem:()=> 'openai'};
+  client.window.AuthManager={getCurrentUser:()=>({aiKeys:{openai:'test-key'}})};
+  let url,request;
+  client.sandbox.fetch=async(target,init)=>{
+    url=target;
+    request=JSON.parse(init.body);
+    return {ok:true,json:async()=>({choices:[{message:{content:'{"features":[{"title":"Neu","description":"Einfacher"}]}'}}]})};
+  };
+  const result=await client.api.generate('/api/ai/dashboard-updates',{promptConfig:{prompt:'Commit-Nachrichten'}});
+  assert.equal(url,'https://api.openai.com/v1/chat/completions');
+  assert.equal(request.response_format.type,'json_object');
+  assert.equal(result.features[0].title,'Neu');
+});

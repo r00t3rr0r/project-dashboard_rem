@@ -23,6 +23,7 @@ function operationLabel(path){
     '/api/ai/concept-to-plan':'Projektplan erstellen',
     '/api/ai/plan-to-tasks':'Aufgaben erzeugen',
     '/api/ai/meeting-task-draft':'Aufgabenentwurf erstellen',
+    '/api/ai/dashboard-updates':'Dashboard-Neuerungen erstellen',
     '/api/ai/project-milestones-draft':'Meilensteine erstellen',
     '/api/ai/project-knowledge':'Projektwissen aufbereiten'
   };
@@ -162,7 +163,7 @@ function parseJson(text){
 }
 
 function isJsonPath(path){
-  return path==='/api/ai/plan-to-tasks'||path==='/api/ai/meeting-task-draft'||path==='/api/ai/project-milestones-draft';
+  return path==='/api/ai/plan-to-tasks'||path==='/api/ai/meeting-task-draft'||path==='/api/ai/project-milestones-draft'||path==='/api/ai/dashboard-updates';
 }
 
 function generationModels(models){
