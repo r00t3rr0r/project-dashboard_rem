@@ -3395,7 +3395,7 @@ function renderInfoHub(project,flow){
     +'</details>';
 }
 
-function renderHostingStatus(project){
+function renderHostingStatus(project,dashboard){
   var hosting=project.hosting||{};
   if(!hosting.url)return '<span class="hosting-status is-unknown">Keine Live-URL hinterlegt</span>';
   if(HOSTING_CHECKS_ERROR)return '<span class="hosting-status is-down">Überwachung nicht verfügbar</span><p>'+escapeHtml(HOSTING_CHECKS_ERROR)+'</p>';
@@ -3403,15 +3403,16 @@ function renderHostingStatus(project){
   if(!history.length)return '<span class="hosting-status is-unknown">Noch nicht geprüft</span><p>Automatische Prüfung alle 5 Minuten.</p>';
   var latest=history[0];
   var age=Date.now()-Date.parse(latest.checkedAt);
-  if(!isFinite(age)||age>12*60*1000)return '<span class="hosting-status is-warning">Prüfung veraltet</span><p>Letzte Prüfung: '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>'+renderHostingCheckDetails(latest);
+  if(!isFinite(age)||age>12*60*1000)return '<span class="hosting-status is-warning">Prüfung veraltet</span><p>Letzte Prüfung: '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>'+(dashboard?'':renderHostingCheckDetails(latest));
   var label=latest.status==='up'?'Erreichbar':(latest.status==='redirect'?'Weiterleitung ungeprüft':'Nicht erreichbar');
   var html='<span class="hosting-status '+(latest.status==='up'?'is-up':(latest.status==='redirect'?'is-warning':'is-down'))+'">'+label+'</span>'
     +'<p>HTTP '+escapeHtml(latest.httpStatus||'–')+' · '+escapeHtml(latest.responseMs)+' ms · '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>';
   if(latest.error)html+='<p>'+escapeHtml(latest.error)+'</p>';
   if(latest.status==='redirect')html+='<p>Das Weiterleitungsziel wird nicht geprüft.</p>';
-  html+=renderHostingCheckDetails(latest);
-  html+='<details><summary>Prüfverlauf ('+history.length+')</summary><ul class="hosting-history">'
-    +history.slice(0,10).map(function(item){
+  if(!dashboard)html+=renderHostingCheckDetails(latest);
+  var previous=dashboard?history.slice(1):history;
+  if(previous.length)html+='<details><summary>Prüfverlauf ('+previous.length+')</summary><ul class="hosting-history">'
+    +previous.slice(0,10).map(function(item){
       return '<li>'+escapeHtml(formatDateTime(item.checkedAt))+' · '+escapeHtml(item.status==='up'?'OK':(item.status==='redirect'?'Weiterleitung':'Fehler'))
         +' · '+escapeHtml(item.httpStatus||'–')+' · '+escapeHtml(item.responseMs)+' ms</li>';
     }).join('')+'</ul></details>';
@@ -3535,29 +3536,38 @@ function renderHostingEditorGroup(group,hosting,canEdit){
     }).join('')+'</div></details>';
 }
 
-function renderHostingSummary(title,icon,items){
+function renderHostingSummary(title,icon,items,note){
   var rows=items.filter(function(item){return item[1]!==undefined&&item[1]!==null&&String(item[1]).trim()!=='';});
   return '<section class="hosting-summary-card"><h5><span class="material-symbols-rounded" aria-hidden="true">'+icon+'</span>'+title+'</h5>'
-    +(rows.length?'<dl>'+rows.map(function(item){return '<div><dt>'+escapeHtml(item[0])+'</dt><dd>'+escapeHtml(item[1])+'</dd></div>';}).join('')+'</dl>':'<p>Noch keine Angaben hinterlegt.</p>')+'</section>';
+    +(rows.length?'<dl>'+rows.map(function(item){return '<div><dt>'+escapeHtml(item[0])+'</dt><dd>'+escapeHtml(item[1])+'</dd></div>';}).join('')+'</dl>':'<p>Noch keine Angaben hinterlegt.</p>')
+    +(note?'<p class="hosting-auto-note">'+escapeHtml(note)+'</p>':'')+'</section>';
 }
 
 function hostingYesNo(value){
   return value==='yes'?'Ja':(value==='no'?'Nein':'');
 }
 
-function renderHostingServerSummary(project){
+function renderHostingServerSummary(project,dashboard){
   var hosting=project.hosting||{};
   var check=getLatestHostingCheck(project);
   var addresses=check&&check.dns&&Array.isArray(check.dns.addresses)?check.dns.addresses:[];
+  var sameServer=dashboard&&hosting.server&&addresses.some(function(address){return hosting.server.trim().toLowerCase()===String(address).trim().toLowerCase();});
+  var addressText=addresses.map(function(address){
+    return sameServer&&addresses.length>1&&hosting.server.trim().toLowerCase()===String(address).trim().toLowerCase()?address+' (Server manuell)':address;
+  }).join(', ');
+  var host=dashboard&&check&&check.dns&&check.dns.host||'';
+  if(host&&(addresses.some(function(address){return String(address).toLowerCase()===host.toLowerCase();})||(hosting.server&&hosting.server.toLowerCase()===host.toLowerCase())||(hosting.domain&&hosting.domain.toLowerCase()===host.toLowerCase())))host='';
+  var note='DNS kann die Adresse eines Proxys oder CDN statt des Ursprungsservers liefern.';
   return renderHostingSummary('Hosting & Server','dns',[
-    ['IP der Live-URL (DNS)',addresses.length?addresses.join(', '):(check?'Nicht verfügbar':hostingCheckState(project,check))],
-    ['DNS-Prüfung',check?hostingCheckState(project,check):''],
-    ['Servername / IP (manuell)',hosting.server],['Anbieter',hosting.provider],['Tarif',hosting.plan],
-    ['Umgebung',hosting.environment],['Region',hosting.region],['Plattform',hosting.runtime],['Kontakt',hosting.contact]])
-    +'<p class="hosting-auto-note">DNS kann die Adresse eines Proxys oder CDN statt des Ursprungsservers liefern.</p>';
+    ['Geprüfter Host',host],
+    [sameServer&&addresses.length===1?'IP der Live-URL (DNS) / Server (manuell)':'IP der Live-URL (DNS)',addresses.length?addressText:(check?'Nicht verfügbar':(dashboard?'':hostingCheckState(project,check)))],
+    ['DNS-Prüfung',!dashboard&&check?hostingCheckState(project,check):''],
+    ['Servername / IP (manuell)',sameServer?'':hosting.server],['Anbieter',hosting.provider],['Tarif',hosting.plan],
+    ['Umgebung',hosting.environment],['Region',hosting.region],['Plattform',hosting.runtime],['Kontakt',hosting.contact]],dashboard?note:'')
+    +(dashboard?'':'<p class="hosting-auto-note">'+escapeHtml(note)+'</p>');
 }
 
-function renderHostingCertificateSummary(project){
+function renderHostingCertificateSummary(project,dashboard){
   var hosting=project.hosting||{};
   var check=getLatestHostingCheck(project);
   var certificate=check&&check.certificate;
@@ -3565,8 +3575,12 @@ function renderHostingCertificateSummary(project){
   var expiry=certificate&&certificate.notAfter?renderAutomaticCertificateExpiry(certificate.notAfter):escapeHtml(check?(/^http:\/\//i.test(hosting.url)?'Kein HTTPS':'Nicht verfügbar'):status);
   return '<section class="hosting-summary-card"><h5><span class="material-symbols-rounded" aria-hidden="true">verified_user</span>SSL / TLS</h5><dl>'
     +'<div><dt>SSL-Ablauf (automatisch)</dt><dd>'+expiry+'</dd></div>'
-    +(check?'<div><dt>Prüfung</dt><dd>'+escapeHtml(status)+'</dd></div>':'')
-    +(hosting.certificateExpiry?'<div><dt>SSL-Ablauf (manuell)</dt><dd>'+escapeHtml(formatDate(hosting.certificateExpiry))+'</dd></div>':'')
+    +(!dashboard&&check?'<div><dt>Prüfung</dt><dd>'+escapeHtml(status)+'</dd></div>':'')
+    +(!dashboard&&hosting.certificateExpiry?'<div><dt>SSL-Ablauf (manuell)</dt><dd>'+escapeHtml(formatDate(hosting.certificateExpiry))+'</dd></div>':'')
+    +(dashboard&&certificate&&certificate.issuer?'<div><dt>Aussteller</dt><dd>'+escapeHtml(certificate.issuer)+'</dd></div>':'')
+    +(dashboard&&certificate&&certificate.subject&&(!check.dns||certificate.subject!==check.dns.host)?'<div><dt>Zertifikat für</dt><dd>'+escapeHtml(certificate.subject)+'</dd></div>':'')
+    +(dashboard&&certificate&&certificate.tlsVersion?'<div><dt>Protokoll</dt><dd>'+escapeHtml(certificate.tlsVersion)+'</dd></div>':'')
+    +(dashboard&&certificate&&certificate.notBefore?'<div><dt>Gültig ab</dt><dd>'+escapeHtml(formatDate(certificate.notBefore))+'</dd></div>':'')
     +(hosting.certificateProvider?'<div><dt>Anbieter</dt><dd>'+escapeHtml(hosting.certificateProvider)+'</dd></div>':'')
     +(hostingYesNo(hosting.certificateRenewal)?'<div><dt>Autom. Verlängerung</dt><dd>'+hostingYesNo(hosting.certificateRenewal)+'</dd></div>':'')
     +(hosting.certificateNotes?'<div><dt>Hinweise</dt><dd>'+escapeHtml(hosting.certificateNotes)+'</dd></div>':'')
@@ -3727,15 +3741,15 @@ function refreshHostingChecks(){
   }).then(function(){
     document.querySelectorAll('[data-hosting-status]').forEach(function(element){
       var project=window.DataLayer.getProjectById(element.getAttribute('data-hosting-status'));
-      if(project)element.innerHTML=renderHostingStatus(project);
+      if(project)element.innerHTML=renderHostingStatus(project,!!element.closest('#dashboard-projects-full'));
     });
     document.querySelectorAll('[data-hosting-server-summary]').forEach(function(element){
       var project=window.DataLayer.getProjectById(element.getAttribute('data-hosting-server-summary'));
-      if(project)element.innerHTML=renderHostingServerSummary(project);
+      if(project)element.innerHTML=renderHostingServerSummary(project,!!element.closest('#dashboard-projects-full'));
     });
     document.querySelectorAll('[data-hosting-certificate-summary]').forEach(function(element){
       var project=window.DataLayer.getProjectById(element.getAttribute('data-hosting-certificate-summary'));
-      if(project)element.innerHTML=renderHostingCertificateSummary(project);
+      if(project)element.innerHTML=renderHostingCertificateSummary(project,!!element.closest('#dashboard-projects-full'));
     });
   });
 }
@@ -6210,6 +6224,9 @@ if(document.readyState==='loading'){
 
 window[NAMESPACE]={
   render:render,
+  renderDashboardHostingStatus:function(project){return renderHostingStatus(project,true);},
+  renderDashboardHostingServer:function(project){return renderHostingServerSummary(project,true);},
+  renderDashboardHostingCertificate:function(project){return renderHostingCertificateSummary(project,true);},
   openCreateDialog:openProjectCreateDialog,
   closeCreateDialog:closeProjectCreateDialog,
   openImportDialog:openProjectImportDialog,

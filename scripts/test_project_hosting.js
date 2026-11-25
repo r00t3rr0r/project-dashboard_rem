@@ -199,10 +199,59 @@ test('automatic certificate expiry uses the exact timestamp', () => {
   assert.equal(api.renderAutomaticCertificateExpiry('invalid'), 'Nicht verfügbar');
 });
 
+test('dashboard hosting separates monitoring, server and certificate without repeating values', () => {
+  const api = harness();
+  const project = {id:'p1', hosting:{url:'https://example.com/',server:'8.8.8.8',provider:'Hetzner',certificateExpiry:'2031-02-01'}};
+  const checkedAt = new Date().toISOString();
+  api.setChecks({p1:[{
+    url:project.hosting.url,status:'up',checkedAt,httpStatus:200,responseMs:12,
+    dns:{host:'example.com',addresses:['8.8.8.8']},
+    certificate:{issuer:'Test CA',subject:'example.com',tlsVersion:'TLSv1.3',notAfter:'2030-04-01T00:00:00Z'}
+  }]});
+  const status = api.renderHostingStatus(project, true);
+  const server = api.renderHostingServerSummary(project, true);
+  const certificate = api.renderHostingCertificateSummary(project, true);
+  assert.match(status, /Erreichbar/);
+  assert.doesNotMatch(status, /8\.8\.8\.8|Test CA|Prüfverlauf/);
+  assert.equal((server.match(/8\.8\.8\.8/g) || []).length, 1);
+  assert.match(server, /DNS\) \/ Server \(manuell/);
+  assert.match(server, /example\.com/);
+  assert.doesNotMatch(server, /DNS-Prüfung/);
+  assert.match(certificate, /Test CA/);
+  assert.match(certificate, /TLSv1\.3/);
+  assert.doesNotMatch(certificate, /example\.com|SSL-Ablauf \(manuell\)|<dt>Prüfung/);
+  api.setChecks({p1:[{url:project.hosting.url,checkedAt,dns:{host:'example.com',addresses:['8.8.8.8','8.8.4.4']}}]});
+  const multiple = api.renderHostingServerSummary(project, true);
+  assert.equal((multiple.match(/8\.8\.8\.8/g) || []).length, 1);
+  assert.match(multiple, /8\.8\.8\.8 \(Server manuell\), 8\.8\.4\.4/);
+  project.hosting.server = 'internal-host';
+  assert.match(api.renderHostingServerSummary(project, true), /internal-host/);
+});
+
+test('dashboard polling retains its compact layout and the projects view retains details', async () => {
+  const api = harness();
+  const project = {id:'p1',hosting:{url:'https://example.com/',server:'8.8.8.8'}};
+  const node = dashboard => ({innerHTML:'',getAttribute:()=>project.id,closest:()=>dashboard});
+  const dashboardStatus = node(true), projectStatus = node(false), dashboardServer = node(true), dashboardCertificate = node(true);
+  api.configureRefresh(project, {checks:{p1:[{
+    url:project.hosting.url,status:'up',checkedAt:new Date().toISOString(),httpStatus:200,responseMs:12,
+    dns:{host:'example.com',addresses:['8.8.8.8']},certificate:{issuer:'Test CA'}
+  }]}}, {
+    '[data-hosting-status]':[dashboardStatus,projectStatus],
+    '[data-hosting-server-summary]':[dashboardServer],
+    '[data-hosting-certificate-summary]':[dashboardCertificate]
+  });
+  await api.refreshHostingChecks();
+  assert.doesNotMatch(dashboardStatus.innerHTML, /8\.8\.8\.8|Test CA/);
+  assert.match(projectStatus.innerHTML, /8\.8\.8\.8/);
+  assert.equal((dashboardServer.innerHTML.match(/8\.8\.8\.8/g) || []).length, 1);
+  assert.match(dashboardCertificate.innerHTML, /Test CA/);
+});
+
 test('polling refreshes IP and certificate summaries without rerendering the editor', async () => {
   const api = harness();
   const project = {id:'p1', hosting:{url:'https://example.com/'}};
-  const node = () => ({innerHTML:'', getAttribute:()=>project.id});
+  const node = () => ({innerHTML:'', getAttribute:()=>project.id, closest:()=>false});
   const status = node(), server = node(), certificate = node();
   api.configureRefresh(project, {checks:{p1:[{
     url:project.hosting.url,status:'up',checkedAt:new Date().toISOString(),httpStatus:200,responseMs:12,

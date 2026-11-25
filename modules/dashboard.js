@@ -426,13 +426,34 @@
       var panel = card.querySelector('.hosting-live-panel');
       var server = card.querySelector('[data-hosting-server-summary]');
       if (!panel || !server) return;
-      var group = document.createElement('section');
-      group.className = 'hosting-summary-card dashboard-hosting-server';
-      server.parentNode.insertBefore(group, server);
-      group.appendChild(server);
-      while (panel.firstChild) group.appendChild(panel.firstChild);
+      var grid = server.parentNode;
+      var status = panel.querySelector('[data-hosting-status]');
+      var screenshot = panel.querySelector('.hosting-screenshot');
+      var links = panel.querySelector('.hosting-quick-links');
+      var certificate = card.querySelector('[data-hosting-certificate-summary]');
+      var project = window.DataLayer.getProjectById(server.getAttribute('data-hosting-server-summary'));
+      var projects = window.ProjectsModule;
+      if (project && projects) {
+        if (status) status.innerHTML = projects.renderDashboardHostingStatus(project);
+        server.innerHTML = projects.renderDashboardHostingServer(project);
+        if (certificate) certificate.innerHTML = projects.renderDashboardHostingCertificate(project);
+      }
+      if (status) {
+        var monitoring = document.createElement('section');
+        monitoring.className = 'hosting-summary-card dashboard-hosting-monitoring';
+        monitoring.innerHTML = '<h5><span class="material-symbols-rounded" aria-hidden="true">monitor_heart</span>Live-Überwachung</h5>';
+        monitoring.appendChild(status);
+        if (links) monitoring.appendChild(links);
+        grid.insertBefore(monitoring, server);
+      }
+      if (screenshot) {
+        screenshot.className = 'hosting-summary-card dashboard-hosting-screenshot';
+        var heading = screenshot.querySelector('.hosting-panel-kicker');
+        if (heading) heading.outerHTML = '<h5><span class="material-symbols-rounded" aria-hidden="true">image</span>Live-URL Screenshot</h5>';
+        grid.appendChild(screenshot);
+      }
       panel.remove();
-      group.querySelectorAll('[data-action="refresh-hosting-screenshot"]').forEach(function(button) {
+      grid.querySelectorAll('[data-action="refresh-hosting-screenshot"]').forEach(function(button) {
         button.remove();
       });
     });
