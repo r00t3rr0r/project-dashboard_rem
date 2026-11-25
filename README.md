@@ -207,7 +207,13 @@ Commits, eine ungueltige Serverdatei oder ein fehlgeschlagenes
 Datenbank-Backup verhindern die Installation. Vor dem Fast-Forward wird die
 Serverdatei des Ziel-Commits auf Syntax geprueft und ein Datenbank-Backup
 erstellt; danach startet der Server neu. Der Browser wartet auf den Neustart
-mit dem neuen Commit. Konfiguration: `PROJECT_DASHBOARD_UPDATE_REMOTE`
+mit dem neuen Commit. Der Admin-Dialog zeigt den Fortschritt anhand
+abgeschlossener Schritte und ein Aktionsprotokoll; 100 % werden erst nach dem
+bestaetigten Neustart erreicht. Danach kann das Dashboard neu geladen werden.
+Der Fortschritt ist waehrend des Updates ueber den nur fuer Admins zugaenglichen
+Endpunkt `GET /api/system/update/progress` abrufbar und bleibt bis zum Neustart
+im Serverspeicher; der geoeffnete Dialog behaelt sein Protokoll anschliessend bei.
+Konfiguration: `PROJECT_DASHBOARD_UPDATE_REMOTE`
 (Standard `origin`) und `PROJECT_DASHBOARD_UPDATE_BRANCH` (Standard `main`).
 
 ### Sicherheits-Gate beim Oeffnen

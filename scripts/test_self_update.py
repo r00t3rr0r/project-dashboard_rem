@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -40,6 +41,7 @@ class SelfUpdateTest(unittest.TestCase):
             BACKUP_STAMP_PATH=str(data / 'backup.stamp'),
             UPDATE_REMOTE='origin', UPDATE_BRANCH='main',
             UPDATE_STATE={'lastCheck': None, 'lastUpdate': None},
+            UPDATE_PROGRESS={'runId': '', 'status': 'idle', 'percent': 0, 'logs': []},
         )
         self.patch.start()
         self.addCleanup(self.patch.stop)
@@ -88,6 +90,44 @@ class SelfUpdateTest(unittest.TestCase):
         self.assertFalse(restart)
         self.assertIn('Backup', result['message'])
         self.assertEqual(self.git(self.checkout, 'rev-parse', 'HEAD'), original)
+        progress = storage._update_progress_snapshot()
+        self.assertEqual(progress['status'], 'error')
+        self.assertLess(progress['percent'], 100)
+        self.assertIn('Backup', progress['logs'][-1])
+
+    def test_progress_reports_live_steps_and_merge_output(self):
+        self.commit('print("updated")\n')
+        backup_started = threading.Event()
+        release_backup = threading.Event()
+        real_backup = storage.ensure_daily_backup
+        outcome = []
+
+        def delayed_backup(force=False):
+            backup_started.set()
+            if not release_backup.wait(10):
+                raise RuntimeError('Test-Backup nicht freigegeben')
+            return real_backup(force=force)
+
+        storage._update_progress('running', 0, 'Update wird gestartet.', 'run-test')
+        with mock.patch.object(storage, 'ensure_daily_backup', side_effect=delayed_backup):
+            worker = threading.Thread(target=lambda: outcome.append(storage.apply_update()))
+            worker.start()
+            try:
+                self.assertTrue(backup_started.wait(10))
+                progress = storage._update_progress_snapshot()
+                self.assertEqual(progress['runId'], 'run-test')
+                self.assertEqual(progress['status'], 'running')
+                self.assertEqual(progress['percent'], 55)
+                self.assertIn('Datenbank-Backup', progress['logs'][-1])
+            finally:
+                release_backup.set()
+                worker.join(10)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(outcome[0][0]['ok'])
+        progress = storage._update_progress_snapshot()
+        self.assertEqual(progress['status'], 'restarting')
+        self.assertEqual(progress['percent'], 90)
+        self.assertTrue(any('Fast-forward' in line for line in progress['logs']))
 
     def test_local_changes_are_not_overwritten(self):
         original = self.git(self.checkout, 'rev-parse', 'HEAD')
@@ -127,10 +167,30 @@ class SelfUpdateTest(unittest.TestCase):
         self.assertIn('Lokale Commits', result['message'])
 
     def test_current_version_needs_no_restart(self):
+        storage._update_progress('running', 0, 'Start', 'run-current')
         result, restart = storage.apply_update()
         self.assertTrue(result['ok'])
         self.assertFalse(restart)
         self.assertIn('neuesten Stand', result['message'])
+        progress = storage._update_progress_snapshot()
+        self.assertEqual(progress['status'], 'complete')
+        self.assertEqual(progress['percent'], 100)
+
+    def test_progress_redacts_credentials_in_command_output(self):
+        storage._update_progress('error', 5, 'https://user:secret@example.invalid/repository', 'run-redaction')
+        logs = storage._update_progress_snapshot()['logs']
+        self.assertNotIn('secret', logs[0])
+
+    def test_progress_endpoint_rejects_non_admin(self):
+        handler = object.__new__(storage.StorageHandler)
+        handler.path = '/api/system/update/progress'
+        handler._verified_session = ('user', False)
+        handler._require_session = lambda path: True
+        handler._auth_connection = lambda: nullcontext(object())
+        handler._auth_employees = lambda connection: [{'id': 'user', 'auth': {'accessLevel': 'employee'}}]
+        with mock.patch.object(storage, 'ensure_daily_backup'), mock.patch.object(handler, '_send_json') as send:
+            handler.do_GET()
+        self.assertEqual(send.call_args.kwargs['status'], 403)
 
     def test_only_admin_can_check_or_apply_updates(self):
         handler = object.__new__(storage.StorageHandler)

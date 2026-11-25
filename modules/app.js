@@ -321,15 +321,17 @@ function startStorageStatusMonitor(){
 function setupDashboardUpdate(){
   var btn=document.getElementById('db-update-btn');
   if(!btn)return;
-  var overlay=null,body=null,checkBtn=null,applyBtn=null,busy=false;
+  var overlay=null,body=null,checkBtn=null,applyBtn=null,closeBtn=null,busy=false,reloadReady=false;
+  var progressPanel=null,progressLabel=null,progressValue=null,progressBar=null,progressFill=null,progressLog=null;
+  var lastProgress=null;
 
   function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function fmtDate(v){var d=v?new Date(v):null;return d&&!isNaN(d)?d.toLocaleString('de-DE'):'-';}
   function fmtSize(n){return typeof n==='number'?(n/1048576).toFixed(2)+' MB':'-';}
-  function row(k,v){return '<tr><th style="text-align:left;padding:2px 12px 2px 0;white-space:nowrap">'+k+'</th><td>'+v+'</td></tr>';}
+  function row(k,v){return '<tr><th scope="row">'+k+'</th><td>'+v+'</td></tr>';}
 
-  function api(path,method){
-    return fetch(path,{method:method||'GET',cache:'no-store',credentials:'same-origin'}).then(function(r){
+  function api(path,method,headers){
+    return fetch(path,{method:method||'GET',cache:'no-store',credentials:'same-origin',headers:headers}).then(function(r){
       return r.json().catch(function(){return {};}).then(function(data){
         if(!r.ok&&!data.update)throw new Error(data.error||('HTTP '+r.status));
         return data;
@@ -339,7 +341,7 @@ function setupDashboardUpdate(){
 
   function render(version,check,message){
     var v=version||{};
-    var html='<table style="border-collapse:collapse;font-size:13px">'
+    var html='<table class="update-info-table">'
       +row('Version',esc(v.version?'v'+v.version+(v.date?' ('+v.date+')':''):'-'))
       +row('Build',esc(v.describe||v.shortCommit||'-')+(v.dirty?' <strong>(lokale Aenderungen)</strong>':''))
       +row('Commit',esc(v.shortCommit||'-')+' &ndash; '+esc(v.commitSubject||''))
@@ -355,7 +357,7 @@ function setupDashboardUpdate(){
     if(check){
       if(check.diverged)html+='<p><strong>Lokale Commits weichen vom Repository ab.</strong> Automatisches Update nicht moeglich.</p>';
       else if(check.ahead)html+='<p><strong>Lokale Commits sind der Update-Quelle voraus.</strong> Automatisches Update nicht moeglich.</p>';
-      else if(check.updateAvailable)html+='<p><strong>Update verfuegbar:</strong> '+check.behind+' neue(r) Commit(s) bis '+esc(check.remoteShortCommit)+'</p><ul style="margin:0;padding-left:18px;font-size:12px">'
+      else if(check.updateAvailable)html+='<p><strong>Update verfuegbar:</strong> '+check.behind+' neue(r) Commit(s) bis '+esc(check.remoteShortCommit)+'</p><ul class="update-commit-list">'
         +check.commits.map(function(c){return '<li>'+esc(c.sha)+' '+esc(c.subject)+' <em>('+esc(c.author)+', '+fmtDate(c.date)+')</em></li>';}).join('')+'</ul>';
       else html+='<p>Das Dashboard ist auf dem neuesten Stand.</p>';
       applyBtn.disabled=!check.updateAvailable||!!v.dirty;
@@ -369,43 +371,114 @@ function setupDashboardUpdate(){
   }
 
   function run(fn){
-    if(busy)return;busy=true;checkBtn.disabled=applyBtn.disabled=true;body.insertAdjacentHTML('beforeend','<p>Bitte warten...</p>');
-    fn().catch(function(e){body.textContent='Fehler: '+e.message;}).then(function(){busy=false;checkBtn.disabled=false;});
+    if(busy)return;busy=true;checkBtn.disabled=applyBtn.disabled=closeBtn.disabled=true;body.insertAdjacentHTML('beforeend','<p>Bitte warten...</p>');
+    fn().catch(function(e){body.textContent='Fehler: '+e.message;}).then(function(){busy=false;checkBtn.disabled=false;closeBtn.disabled=false;});
   }
 
-  function waitForRestart(tries,startedAt,target){
+  function showProgress(progress){
+    lastProgress=progress;
+    var percent=Math.max(0,Math.min(100,Number(progress.percent)||0));
+    var labels={running:'Update laeuft',restarting:'Warte auf Neustart',complete:'Update abgeschlossen',error:'Update fehlgeschlagen'};
+    progressPanel.hidden=false;
+    progressPanel.setAttribute('data-state',progress.status||'running');
+    progressLabel.textContent=labels[progress.status]||'Update laeuft';
+    progressValue.textContent=percent+' %';
+    progressBar.setAttribute('aria-valuenow',String(percent));
+    progressFill.style.width=percent+'%';
+    progressLog.textContent=(progress.logs||[]).join('\n');
+    progressLog.scrollTop=progressLog.scrollHeight;
+  }
+
+  function waitForRestart(tries,startedAt,target,progress){
     function retry(){
-      if(tries>0)window.setTimeout(function(){waitForRestart(tries-1,startedAt,target);},1500);
-      else body.textContent='Neustart oder neue Version nicht bestaetigt. Bitte Server pruefen und Seite manuell neu laden.';
+      if(tries>0)window.setTimeout(function(){waitForRestart(tries-1,startedAt,target,progress);},1500);
+      else {
+        busy=false;closeBtn.disabled=false;
+        progress.status='error';
+        progress.logs.push('Neustart oder neue Version nicht bestaetigt. Bitte Server pruefen und Seite manuell neu laden.');
+        showProgress(progress);
+      }
     }
     api('/api/system/version').then(function(version){
-      if(version.startedAt!==startedAt&&version.shortCommit===target)window.location.reload();
+      if(version.startedAt!==startedAt&&version.shortCommit===target){
+        progress.status='complete';progress.percent=100;
+        progress.logs.push('Neustart bestaetigt. Commit '+target+' ist aktiv.');
+        showProgress(progress);
+        busy=false;reloadReady=true;closeBtn.disabled=false;
+        applyBtn.disabled=false;applyBtn.textContent='Dashboard neu laden';
+      }
       else retry();
     }).catch(retry);
   }
 
+  function startUpdate(){
+    if(busy)return;
+    if(reloadReady){window.location.reload();return;}
+    if(!confirm('Dashboard jetzt aktualisieren? Vor dem Update wird ein Datenbank-Backup erstellt und der Server neu gestartet.'))return;
+    busy=true;checkBtn.disabled=applyBtn.disabled=closeBtn.disabled=true;
+    var runId='update-'+Date.now()+'-'+Math.random().toString(36).slice(2);
+    var polling=true;
+    showProgress({status:'running',percent:0,logs:['Update wird angefordert ...']});
+    function poll(){
+      if(!polling)return;
+      api('/api/system/update/progress').then(function(progress){
+        if(polling&&progress.runId===runId)showProgress(progress);
+      }).catch(function(){
+        if(polling)progressLabel.textContent='Fortschritt wird erneut abgefragt ...';
+      }).then(function(){if(polling)window.setTimeout(poll,700);});
+    }
+    var request=api('/api/system/update/apply','POST',{'X-Update-Run-Id':runId});
+    poll();
+    request.then(function(data){
+      polling=false;
+      var update=data.update||{},progress=data.progress;
+      if(progress)showProgress(progress);
+      if(!update.ok){
+        busy=false;checkBtn.disabled=false;closeBtn.disabled=false;
+        if(!progress)showProgress({status:'error',percent:0,logs:[update.message||'Update fehlgeschlagen.']});
+        return;
+      }
+      render(data.version,null,update.message);
+      if(update.commits){
+        waitForRestart(20,data.version.startedAt,update.to,progress||{status:'restarting',percent:90,logs:[update.message]});
+      }else{
+        busy=false;checkBtn.disabled=false;closeBtn.disabled=false;
+      }
+    }).catch(function(error){
+      polling=false;busy=false;checkBtn.disabled=false;closeBtn.disabled=false;
+      var progress=lastProgress||{percent:0,logs:[]};
+      progress.status='error';
+      progress.logs=(progress.logs||[]).concat('Verbindung zur Update-Anfrage verloren: '+error.message+'. Bitte Serverstatus pruefen; das Update kann noch laufen.');
+      showProgress(progress);
+    });
+  }
+
   function build(){
     overlay=document.createElement('div');
-    overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center';
-    overlay.innerHTML='<div role="dialog" aria-label="Dashboard-Version" style="background:var(--surface,#fff);color:var(--text,#111);max-width:720px;width:92%;max-height:85vh;overflow:auto;padding:20px;border-radius:12px">'
-      +'<h3 style="margin-top:0">Dashboard-Version &amp; Update</h3><div class="update-body"></div>'
-      +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px"><button class="update-check">Nach Updates suchen</button><button class="update-apply" disabled>Jetzt aktualisieren</button><button class="update-close">Schliessen</button></div></div>';
+    overlay.className='modal-overlay update-overlay';
+    overlay.innerHTML='<div class="modal update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-title">'
+      +'<header class="update-header"><span class="material-symbols-rounded" aria-hidden="true">system_update</span><div><h2 id="update-title">Dashboard-Version &amp; Update</h2><p>Installation und Update-Quelle verwalten</p></div></header>'
+      +'<div class="update-body"></div>'
+      +'<section class="update-progress" hidden aria-label="Update-Fortschritt"><div class="update-progress-head"><strong class="update-progress-label"></strong><output class="update-progress-value"></output></div><div class="update-progress-track" role="progressbar" aria-label="Update-Fortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="update-progress-fill"></span></div><div class="update-console-title"><span class="material-symbols-rounded" aria-hidden="true">terminal</span>Aktionsprotokoll</div><pre class="update-console" role="log" aria-live="polite"></pre></section>'
+      +'<div class="update-actions"><button class="btn btn-secondary update-close" type="button">Schliessen</button><button class="btn btn-secondary update-check" type="button">Nach Updates suchen</button><button class="btn btn-primary update-apply" type="button" disabled>Jetzt aktualisieren</button></div></div>';
     body=overlay.querySelector('.update-body');
     checkBtn=overlay.querySelector('.update-check');
     applyBtn=overlay.querySelector('.update-apply');
-    overlay.querySelector('.update-close').addEventListener('click',function(){overlay.style.display='none';});
-    overlay.addEventListener('click',function(e){if(e.target===overlay)overlay.style.display='none';});
+    closeBtn=overlay.querySelector('.update-close');
+    progressPanel=overlay.querySelector('.update-progress');
+    progressLabel=overlay.querySelector('.update-progress-label');
+    progressValue=overlay.querySelector('.update-progress-value');
+    progressBar=overlay.querySelector('.update-progress-track');
+    progressFill=overlay.querySelector('.update-progress-fill');
+    progressLog=overlay.querySelector('.update-console');
+    function close(){if(busy)return;if(reloadReady){window.location.reload();return;}overlay.style.display='none';}
+    closeBtn.addEventListener('click',close);
+    overlay.addEventListener('click',function(e){if(e.target===overlay)close();});
+    overlay.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
     checkBtn.addEventListener('click',function(){
       run(function(){return api('/api/system/update/check','POST').then(function(d){render(d.version,d.check);});});
     });
-    applyBtn.addEventListener('click',function(){
-      if(!confirm('Dashboard jetzt aktualisieren? Vor dem Update wird ein Datenbank-Backup erstellt und der Server neu gestartet.'))return;
-      run(function(){return api('/api/system/update/apply','POST').then(function(d){
-        var u=d.update||{};
-        if(u.ok&&u.commits){render(d.version,null,u.message);waitForRestart(20,d.version.startedAt,u.to);}
-        else render(d.version,null,u.message);
-      });});
-    });
+    applyBtn.addEventListener('click',startUpdate);
     document.body.appendChild(overlay);
   }
 
@@ -414,6 +487,7 @@ function setupDashboardUpdate(){
     overlay.style.display='flex';
     body.textContent='Lade Versionsinformationen...';
     applyBtn.disabled=true;
+    closeBtn.focus();
     load();
   });
 }

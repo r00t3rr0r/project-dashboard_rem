@@ -400,9 +400,28 @@ def _unregister_kv_stream_subscriber(subscriber):
 
 UPDATE_LOCK = threading.Lock()
 UPDATE_STATE = {'lastCheck': None, 'lastUpdate': None}
+UPDATE_PROGRESS_LOCK = threading.Lock()
+UPDATE_PROGRESS = {'runId': '', 'status': 'idle', 'percent': 0, 'logs': []}
 UPDATE_REMOTE = os.environ.get('PROJECT_DASHBOARD_UPDATE_REMOTE', 'origin')
 UPDATE_BRANCH = os.environ.get('PROJECT_DASHBOARD_UPDATE_BRANCH', 'main')
 STARTED_AT = utc_now_iso_z()
+
+
+def _update_progress(status, percent, message, run_id=None):
+    with UPDATE_PROGRESS_LOCK:
+        if run_id is not None:
+            UPDATE_PROGRESS.update(runId=run_id, logs=[])
+        UPDATE_PROGRESS['status'] = status
+        UPDATE_PROGRESS['percent'] = percent
+        if message:
+            safe_message = re.sub(r'(https?://)[^/@\s]+@', r'\1[redacted]@', str(message))
+            UPDATE_PROGRESS['logs'].append(safe_message[-4000:])
+            UPDATE_PROGRESS['logs'] = UPDATE_PROGRESS['logs'][-50:]
+
+
+def _update_progress_snapshot():
+    with UPDATE_PROGRESS_LOCK:
+        return {**UPDATE_PROGRESS, 'logs': list(UPDATE_PROGRESS['logs'])}
 
 
 def _git(*args, timeout=60):
@@ -473,18 +492,23 @@ def apply_update():
     started = utc_now_iso_z()
     result = {'startedAt': started, 'from': '', 'to': '', 'ok': False, 'rolledBack': False, 'message': ''}
     try:
+        _update_progress('running', 5, 'Git: Arbeitsverzeichnis und aktuellen Commit pruefen.')
         previous = _git('rev-parse', 'HEAD')
         result['from'] = previous[:7]
         if _git('status', '--porcelain', '--untracked-files=no'):
             raise RuntimeError('Lokale Aenderungen an versionierten Dateien vorhanden - Update abgebrochen.')
+        _update_progress('running', 15, 'Git: Update-Quelle abrufen und Commit-Historie vergleichen.')
         check = check_for_update()
+        _update_progress('running', 35, 'Git: Vergleich abgeschlossen; ' + str(check['behind']) + ' neue Commit(s).')
         if check['ahead']:
             raise RuntimeError('Lokale Commits weichen vom Repository ab - automatisches Update nicht moeglich.')
         if not check['behind']:
             result.update(ok=True, to=previous[:7], finishedAt=utc_now_iso_z(), message='Bereits auf dem neuesten Stand.')
             UPDATE_STATE['lastUpdate'] = result
+            _update_progress('complete', 100, result['message'])
             return result, False
         remote_commit = check['remoteCommit']
+        _update_progress('running', 40, 'Serverdatei des Ziel-Commits auf Syntax pruefen.')
         source = subprocess.run(
             ['git', '-C', ROOT, 'show', remote_commit + ':storage_server.py'],
             capture_output=True, timeout=60, env=dict(os.environ, GIT_TERMINAL_PROMPT='0')
@@ -495,20 +519,26 @@ def apply_update():
             compile(source.stdout, 'storage_server.py', 'exec')
         except (SyntaxError, ValueError) as exc:
             raise RuntimeError('Syntaxpruefung des neuen Servers fehlgeschlagen: ' + str(exc)) from exc
+        _update_progress('running', 55, 'Syntaxpruefung erfolgreich. Datenbank-Backup erstellen.')
         try:
             if not ensure_daily_backup(force=True):
                 raise RuntimeError('Kein Datenbank-Backup erstellt.')
         except Exception as exc:
             raise RuntimeError('Datenbank-Backup vor dem Update fehlgeschlagen: ' + str(exc))
-        _git('merge', '--ff-only', remote_commit, timeout=120)
+        _update_progress('running', 70, 'Datenbank-Backup erstellt. Git-Fast-Forward ausfuehren.')
+        merge_output = _git('merge', '--ff-only', remote_commit, timeout=120)
+        if merge_output:
+            _update_progress('running', 85, merge_output)
         result.update(ok=True, to=remote_commit[:7], commits=check['behind'], finishedAt=utc_now_iso_z(),
                       message='Update installiert. Server wird neu gestartet.')
         UPDATE_STATE['lastUpdate'] = result
+        _update_progress('restarting', 90, result['message'])
         return result, True
     except Exception as exc:
         result['message'] = str(exc)
         result['finishedAt'] = utc_now_iso_z()
         UPDATE_STATE['lastUpdate'] = result
+        _update_progress('error', _update_progress_snapshot()['percent'], 'Fehler: ' + result['message'])
         return result, False
 
 
@@ -569,6 +599,10 @@ class StorageHandler(BaseHTTPRequestHandler):
         if parsed.path == '/api/system/version':
             if self._require_admin():
                 self._send_json(get_version_info())
+            return
+        if parsed.path == '/api/system/update/progress':
+            if self._require_admin():
+                self._send_json(_update_progress_snapshot())
             return
         if parsed.path == '/api/ai/health':
             self._send_json(self._check_ai_health())
@@ -2420,14 +2454,19 @@ class StorageHandler(BaseHTTPRequestHandler):
     def _handle_system_update(self, apply):
         if not self._require_admin():
             return
+        run_id = self.headers.get('X-Update-Run-Id', '') if apply else ''
+        if run_id and not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', run_id):
+            self._send_json({'error': 'Ungueltige Update-Kennung.'}, status=400)
+            return
         if not UPDATE_LOCK.acquire(blocking=False):
             self._send_json({'error': 'Es laeuft bereits ein Update.'}, status=409)
             return
         restart = False
         try:
             if apply:
+                _update_progress('running', 0, 'Update wird gestartet.', run_id or uuid.uuid4().hex)
                 result, restart = apply_update()
-                payload = {'update': result, 'version': get_version_info()}
+                payload = {'update': result, 'version': get_version_info(), 'progress': _update_progress_snapshot()}
                 status = 200 if result['ok'] else 500
             else:
                 payload, status = {'check': check_for_update(), 'version': get_version_info()}, 200

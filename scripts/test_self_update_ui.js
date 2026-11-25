@@ -4,44 +4,83 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {test} = require('node:test');
 
-test('update waits for the restarted server and target commit before reloading', async()=>{
+function harness(){
   const source=fs.readFileSync(path.join(__dirname,'../modules/app.js'),'utf8');
   const setup=source.slice(source.indexOf('function setupDashboardUpdate(){'),source.indexOf('function setupExportImport(){'));
-  const buttons={};
-  function button(id){
-    return buttons[id]||(buttons[id]={disabled:false,addEventListener(event,fn){this[event]=fn;}});
+  const nodes={};
+  function node(id){
+    return nodes[id]||(nodes[id]={disabled:false,hidden:false,textContent:'',innerHTML:'',style:{},attributes:{},
+      addEventListener(event,fn){this[event]=fn;},setAttribute(key,value){this.attributes[key]=value;},
+      insertAdjacentHTML(){},focus(){}});
   }
-  const body={innerHTML:'',textContent:'',insertAdjacentHTML(){}};
-  const overlay={style:{},addEventListener(){},querySelector(selector){return selector==='.update-body'?body:button(selector);}};
+  const overlay={style:{},addEventListener(){},querySelector:node};
   const timers=[],requests=[];
-  let reloaded=false,versionCalls=0;
+  let reloaded=false,versionCalls=0,resolveApply;
   const oldVersion={startedAt:'old',shortCommit:'old1234'};
   const window={location:{reload(){reloaded=true;}},setTimeout(fn){timers.push(fn);}};
-  const document={getElementById:()=>button('open'),createElement:()=>overlay,body:{appendChild(){}}};
-  const fetch=async(url)=>{
-    requests.push(url);
+  const document={getElementById:()=>node('open'),createElement:()=>overlay,body:{appendChild(){}}};
+  const fetch=async(url,options)=>{
+    requests.push({url,options});
     let data;
     if(url.endsWith('/version')){
       versionCalls++;
       data=versionCalls<3?oldVersion:{startedAt:'new',shortCommit:'new1234'};
     }else if(url.endsWith('/check')){
       data={version:oldVersion,check:{updateAvailable:true,behind:1,commits:[]}};
+    }else if(url.endsWith('/progress')){
+      const request=requests.find(item=>item.url.endsWith('/apply'));
+      data={runId:request.options.headers['X-Update-Run-Id'],status:'running',percent:55,logs:['Datenbank-Backup erstellen.']};
     }else{
-      data={version:oldVersion,update:{ok:true,commits:1,to:'new1234',message:'Neustart'}};
+      return new Promise(resolve=>{resolveApply=payload=>resolve({ok:payload.update.ok,json:async()=>payload});});
     }
     return {ok:true,json:async()=>data};
   };
   vm.runInNewContext(setup+';setupDashboardUpdate();',{window,document,fetch,confirm:()=>true});
-  button('open').click();
+  return {node,timers,requests,resolveApply:payload=>resolveApply(payload),get reloaded(){return reloaded;}};
+}
+
+async function openAndStart(h){
+  h.node('open').click();
   await new Promise(resolve=>setImmediate(resolve));
-  button('.update-check').click();
+  h.node('.update-check').click();
   await new Promise(resolve=>setImmediate(resolve));
-  button('.update-apply').click();
+  h.node('.update-apply').click();
   await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(reloaded,false);
-  assert.equal(timers.length,1);
-  timers.shift()();
+}
+
+test('shows live action output and completes only after the new server starts',async()=>{
+  const h=harness();
+  await openAndStart(h);
+  assert.equal(h.node('.update-progress-value').textContent,'55 %');
+  assert.match(h.node('.update-console').textContent,/Datenbank-Backup/);
+  assert.equal(h.node('.update-close').disabled,true);
+  assert.equal(h.reloaded,false);
+  h.resolveApply({
+    version:{startedAt:'old'},update:{ok:true,commits:1,to:'new1234',message:'Neustart'},
+    progress:{status:'restarting',percent:90,logs:['Fast-forward','Neustart']}
+  });
   await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(reloaded,true);
-  assert.equal(requests.filter(url=>url.endsWith('/version')).length,3);
+  assert.equal(h.node('.update-progress-value').textContent,'90 %');
+  assert.equal(h.reloaded,false);
+  while(h.timers.length){
+    h.timers.shift()();
+    await new Promise(resolve=>setImmediate(resolve));
+  }
+  assert.equal(h.node('.update-progress-value').textContent,'100 %');
+  assert.match(h.node('.update-console').textContent,/Neustart bestaetigt/);
+  assert.equal(h.reloaded,false);
+  h.node('.update-apply').click();
+  assert.equal(h.reloaded,true);
+});
+
+test('update failures show the server error without reporting success',async()=>{
+  const h=harness();
+  await openAndStart(h);
+  h.resolveApply({version:{},update:{ok:false,message:'Backup fehlgeschlagen'},
+    progress:{status:'error',percent:55,logs:['Fehler: Backup fehlgeschlagen']}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(h.node('.update-progress-value').textContent,'55 %');
+  assert.match(h.node('.update-console').textContent,/Backup fehlgeschlagen/);
+  assert.equal(h.node('.update-close').disabled,false);
+  assert.equal(h.reloaded,false);
 });

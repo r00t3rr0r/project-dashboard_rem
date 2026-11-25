@@ -120,6 +120,53 @@ class StorageConcurrencyTest(unittest.TestCase):
                 urllib.request.urlopen(request, timeout=10)
             self.assertEqual(caught.exception.code, 401)
 
+    def test_update_progress_requires_admin_session(self):
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(self.base_url + '/api/system/update/progress', timeout=10)
+        self.assertEqual(caught.exception.code, 401)
+        status, progress = self.request_json('GET', '/api/system/update/progress')
+        self.assertEqual(status, 200)
+        self.assertIn(progress['status'], ('idle', 'running', 'restarting', 'complete', 'error'))
+        self.assertIsInstance(progress['logs'], list)
+
+    def test_update_progress_is_available_while_update_request_is_running(self):
+        started = threading.Event()
+        release = threading.Event()
+        responses = []
+
+        def delayed_update():
+            storage._update_progress('running', 55, 'Datenbank-Backup erstellen.')
+            started.set()
+            if not release.wait(10):
+                raise RuntimeError('Test-Update nicht freigegeben')
+            return {'ok': True, 'message': 'Test abgeschlossen.'}, False
+
+        def submit():
+            request = urllib.request.Request(
+                self.base_url + '/api/system/update/apply', data=b'', method='POST',
+                headers={'Cookie': self.cookie.split(';')[0], 'X-Update-Run-Id': 'test-run'}
+            )
+            with urllib.request.urlopen(request, timeout=15) as response:
+                responses.append(json.load(response))
+
+        with mock.patch.object(storage, 'UPDATE_PROGRESS', {'runId': '', 'status': 'idle', 'percent': 0, 'logs': []}), \
+             mock.patch.object(storage, 'apply_update', side_effect=delayed_update), \
+             mock.patch.object(storage, 'get_version_info', return_value={}):
+            worker = threading.Thread(target=submit)
+            worker.start()
+            try:
+                self.assertTrue(started.wait(10))
+                status, progress = self.request_json('GET', '/api/system/update/progress')
+                self.assertEqual(status, 200)
+                self.assertEqual(progress['runId'], 'test-run')
+                self.assertEqual(progress['percent'], 55)
+                self.assertIn('Datenbank-Backup', progress['logs'][-1])
+            finally:
+                release.set()
+                worker.join(15)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(responses[0]['update']['ok'])
+
     def test_task_attachment_upload_and_download(self):
         content = b'\x00\xfftask attachment\n'
         unauthenticated = urllib.request.Request(self.base_url + '/api/task-attachments', data=content, method='POST')

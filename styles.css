@@ -729,6 +729,35 @@ textarea#retro-notes {
   color: var(--text-primary);
 }
 
+.update-overlay { z-index: 10000; padding: 1rem; }
+.update-dialog { width: min(100%, 720px); max-width: 720px; max-height: 90vh; max-height: 90dvh; border: 1px solid var(--border-strong, var(--border-color)); color: var(--text-primary); }
+.update-header { display: flex; align-items: flex-start; gap: .75rem; margin-bottom: 1.25rem; }
+.update-header > .material-symbols-rounded { padding: .6rem; border: 1px solid var(--border-color); border-radius: .65rem; color: var(--accent-cyan); background: var(--progress-bg); }
+.update-header h2 { margin: 0; font-family: var(--font-display, var(--font-body)); font-size: 1.2rem; }
+.update-header p { margin-top: .2rem; color: var(--text-muted); font-size: .8rem; }
+.update-body { color: var(--text-secondary); font-size: .85rem; overflow-wrap: anywhere; }
+.update-body p { margin-top: .75rem; }
+.update-info-table { width: 100%; border-collapse: collapse; }
+.update-info-table th, .update-info-table td { padding: .4rem .5rem; border-bottom: 1px solid var(--border-color); vertical-align: top; }
+.update-info-table th { width: 27%; color: var(--text-muted); text-align: left; font-weight: 500; }
+.update-info-table td { color: var(--text-primary); }
+.update-commit-list { margin-top: .4rem; padding-left: 1.2rem; font-size: .8rem; }
+.update-progress { display: grid; gap: .55rem; margin-top: 1.2rem; padding: .85rem; border: 1px solid var(--border-color); border-radius: .65rem; background: var(--bg-secondary); }
+.update-progress-head { display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }
+.update-progress-value { color: var(--accent-cyan); font-variant-numeric: tabular-nums; }
+.update-progress[data-state="error"] .update-progress-value { color: var(--accent-red); }
+.update-progress-track { height: .45rem; overflow: hidden; border-radius: 1rem; background: var(--progress-bg); }
+.update-progress-fill { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan)); transition: width .3s ease; }
+.update-progress[data-state="error"] .update-progress-fill { background: var(--accent-red); }
+.update-console-title { display: flex; align-items: center; gap: .35rem; margin-top: .25rem; color: var(--text-muted); font-size: .75rem; font-weight: 600; }
+.update-console { min-height: 5rem; max-height: 13rem; overflow: auto; padding: .7rem; border: 1px solid var(--border-color); border-radius: .4rem; background: var(--bg-primary); color: var(--text-secondary); font: .75rem/1.5 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.update-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; margin-top: 1.2rem; }
+@media (max-width: 540px) {
+  .update-dialog { padding: 1rem; }
+  .update-info-table th { width: 34%; }
+  .update-actions .btn { flex: 1 1 auto; }
+}
+
 .modal:has(.kanban-task-detail-header) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); column-gap: 2rem; align-content: start; width: min(96vw, 1800px); max-width: none; max-height: 96vh; max-height: 96dvh; padding: clamp(1rem, 2vw, 2rem); }
 .modal:has(.kanban-task-detail-header) > .kanban-task-detail-header,
 .modal:has(.kanban-task-detail-header) > .kanban-task-detail-status,
