@@ -193,7 +193,7 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `endDate`     | `string` | Optionales inklusives Enddatum (`YYYY-MM-DD`); mehrtaegige Eintraege sind ganztags |
 | `startTime` / `endTime` | `string` | Uhrzeit (`HH:MM`), optional |
 | `allDay`      | `boolean`| Ganztagstermin                        |
-| `type`        | `string` | `meeting`, `deadline`, `release`, `training`, `holiday`, `sick`, `home-office`, `task` oder `other` |
+| `type`        | `string` | `meeting`, `videoconference`, `deadline`, `release`, `training`, `holiday`, `sick`, `home-office`, `task` oder `other` |
 | `employeeStatus` | `boolean` | Mitarbeiterstatus statt Termineinladung; neue Urlaubseintraege verwenden dieses Flag, bestehende Urlaubstermine ohne Flag behalten ihr RSVP-Verhalten |
 | `location`    | `string` | Ort, optional                         |
 | `description` | `string` | Beschreibung, optional                |
@@ -201,6 +201,7 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `taskId` / `source` | `string` | Optional: Aufgabenverknuepfung und Quelle; `github-commit` fuer synchronisierte Commit-Eintraege |
 | `attendeeIds` | `string[]` | Eingeladene Mitarbeiter             |
 | `responses`   | `object` | RSVP-Antworten je Mitarbeiter-ID: `{ status: 'accepted'\|'tentative'\|'declined', respondedAt: string }`; ohne Eintrag gilt `pending` |
+| `videoconf`   | `object` | Nur Typ `videoconference`: `room`, `password`, `topics` (`string[]`), `options` (Flags fuer 1nj3ct0r.com/vide0link, VDO.Ninja-Parameter); Control-Room-Link wird nur dem Ersteller angezeigt |
 | `createdByEmployeeId` | `string` | Organisator (Ersteller)       |
 | `createdAt`   | `string` | ISO-8601 Timestamp                    |
 

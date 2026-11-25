@@ -19,7 +19,7 @@
   var expandAllOverflowDays = false;
   var disabledTypeSet = new Set();
 
-  var EVENT_TYPE_ORDER = ['meeting', 'deadline', 'release', 'training', 'holiday', 'sick', 'home-office', 'task', 'other'];
+  var EVENT_TYPE_ORDER = ['meeting', 'videoconference', 'deadline', 'release', 'training', 'holiday', 'sick', 'home-office', 'task', 'other'];
 
   var RSVP_META = {
     accepted: { label: 'Zugesagt', color: 'var(--accent-green)', icon: 'check_circle' },
@@ -88,6 +88,7 @@
   function getEventTypeMeta(type) {
     var map = {
       meeting: { label: 'Meeting', color: 'var(--accent-blue)', icon: 'groups' },
+      videoconference: { label: 'Videokonferenz', color: 'var(--accent-blue)', icon: 'videocam' },
       deadline: { label: 'Deadline', color: 'var(--accent-red)', icon: 'flag' },
       release: { label: 'Release', color: 'var(--accent-green)', icon: 'rocket_launch' },
       holiday: { label: 'Urlaub', color: 'var(--accent-purple)', icon: 'beach_access' },
@@ -1142,6 +1143,13 @@
       ? '<button type="button" class="btn btn-secondary" id="calendar-modal-remind"><span class="material-symbols-rounded" aria-hidden="true">notifications_active</span><span>Erinnerung senden</span></button>'
       : '';
 
+    var videoconfBlock = '';
+    if (evt.type === 'videoconference' && window.VideoConf) {
+      var vcUser = getCurrentUser();
+      var vcIsCreator = !!(vcUser && evt.createdByEmployeeId && String(vcUser.id) === String(evt.createdByEmployeeId));
+      videoconfBlock = window.VideoConf.buildTopicsHtml(evt) + window.VideoConf.buildLinksHtml(evt, vcIsCreator);
+    }
+
     var descriptionBlock = evt.description
       ? '<div class="calendar-detail-description"><h3>Beschreibung</h3><p>' + escapeHtml(evt.description) + '</p></div>'
       : '<div class="calendar-detail-description calendar-detail-description-muted"><h3>Beschreibung</h3><p>Keine Beschreibung hinterlegt.</p></div>';
@@ -1153,6 +1161,7 @@
       '<h2>' + escapeHtml(evt.title || 'Termin') + '</h2>' +
       '</div>' +
       '<div class="calendar-detail-grid">' + rows.join('') + '</div>' +
+      videoconfBlock +
       participantsBlock +
       rsvpActionsBlock +
       descriptionBlock +
@@ -1225,6 +1234,7 @@
       '<div class="calendar-attendee-list" id="evt-attendee-list">' + (attendeeCheckboxes || '<p class="text-muted">Keine Mitarbeiter angelegt.</p>') + '</div>' +
       '<small class="text-muted" id="evt-attendee-hint">Neue Teilnehmer erhalten den Status "Ausstehend" und koennen den Termin zu- oder absagen.</small>' +
       '</div>' +
+      '<div id="evt-videoconf-wrap" class="hidden">' + (window.VideoConf ? window.VideoConf.buildEditorHtml(event) : '') + '</div>' +
       '<div class="form-group" id="evt-description-group"><label for="evt-description">Beschreibung</label><textarea id="evt-description" rows="3">' + escapeHtml((event && event.description) || '') + '</textarea></div>' +
       '<p class="text-muted hidden" id="evt-sick-notice">Krankmeldungen sind im gemeinsamen Kalender und dessen Daten für alle angemeldeten Nutzer sichtbar. Keine Diagnosen oder medizinischen Details eintragen.</p>' +
       '<div class="form-group"><label><input type="checkbox" id="evt-all-day"' + ((event && event.allDay) ? ' checked' : '') + '> Ganztagstermin</label></div>' +
@@ -1250,6 +1260,7 @@
 
     var closeBtn = document.getElementById('calendar-modal-close');
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (window.VideoConf) window.VideoConf.bindCopyButtons(content);
 
     var editBtn = document.getElementById('calendar-modal-edit');
     if (editBtn) {
@@ -1326,6 +1337,7 @@
     var locationGroup = document.getElementById('evt-location-group');
     var projectGroup = document.getElementById('evt-project-group');
     var projectTeamButton = document.getElementById('evt-attendees-project-team');
+    var videoconfWrap = document.getElementById('evt-videoconf-wrap');
     var startTime = document.getElementById('evt-start-time');
     var endTime = document.getElementById('evt-end-time');
 
@@ -1345,6 +1357,7 @@
       locationGroup.classList.toggle('hidden', sick);
       projectGroup.classList.toggle('hidden', sick);
       projectTeamButton.classList.toggle('hidden', sick);
+      if (videoconfWrap) videoconfWrap.classList.toggle('hidden', type !== 'videoconference');
       titleEl.readOnly = sick;
       if (sick) titleEl.value = 'Krankmeldung';
     }
@@ -2240,6 +2253,7 @@
         employeeStatus: status,
         projectId: type !== 'sick' && projectEl && projectEl.value ? projectEl.value : null,
         location: type !== 'sick' && locationEl ? locationEl.value.trim() : '',
+        videoconf: type === 'videoconference' && window.VideoConf ? window.VideoConf.readEditor() : null,
         description: type !== 'sick' && descriptionEl ? descriptionEl.value.trim() : '',
         startTime: !allDay && startEl ? startEl.value : '',
         endTime: !allDay && endEl ? endEl.value : '',
@@ -2398,6 +2412,10 @@
           exportDescription = 'Mitarbeiter: ' + getEventParticipants(evt).map(getEmployeeName).join(', ') + (exportDescription ? '\n' + exportDescription : '');
         }
         if (exportDescription) lines.push('DESCRIPTION:' + escapeICSText(exportDescription));
+        if (evt.type === 'videoconference' && evt.videoconf && window.VideoConf) {
+          var vcLinks = window.VideoConf.buildLinks(evt.videoconf);
+          if (vcLinks) lines.push('URL:' + escapeICSText(vcLinks.invite));
+        }
         if (evt.type) lines.push('CATEGORIES:' + escapeICSText(getEventTypeMeta(normalizeEventType(evt.type)).label.toUpperCase()));
         if (!isEmployeeStatus(evt)) getEventParticipants(evt).forEach(function (id) {
           lines.push('ATTENDEE;CN=' + escapeICSText(getEmployeeName(id)) + ':MAILTO:noreply@projekt-dashboard.local');

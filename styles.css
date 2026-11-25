@@ -1967,6 +1967,7 @@ body.kanban-touch-dragging {
 }
 
 .calendar-event-chip[data-type="meeting"] { border-left-color: var(--accent-blue); }
+.calendar-event-chip[data-type="videoconference"] { border-left-color: var(--accent-blue); }
 .calendar-event-chip[data-type="deadline"] { border-left-color: var(--accent-red); }
 .calendar-event-chip[data-type="release"] { border-left-color: var(--accent-green); }
 .calendar-event-chip[data-type="holiday"] { border-left-color: var(--accent-purple); }
