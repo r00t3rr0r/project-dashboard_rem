@@ -6800,6 +6800,10 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
   flex-wrap: wrap;
 }
 
+.dashboard-invites .dashboard-invites-answered-heading:first-child {
+  margin-top: 0;
+}
+
 .dashboard-invites .dashboard-invites-answered-heading span[class^="calendar-rsvp-count"] {
   font-size: 0.74rem;
   font-weight: 600;

@@ -480,6 +480,24 @@
     panel.classList.toggle('invite-urgency-high', minHours <= 24);
   }
 
+  function buildCalendarInviteRow(evt, status) {
+    var dateKey = String(evt.date || evt.startDate || '');
+    var when = getDisplayDate(dateKey) + (evt.startTime ? ', ' + evt.startTime + ' Uhr' : '');
+    var color = 'var(--text-muted)';
+    var html = '<div class="calendar-invite-row" style="--invite-color:' + color + '">' +
+      '<button type="button" class="calendar-invite-info" data-invite-open="' + escapeHtml(evt.id) + '">' +
+      '<strong>' + escapeHtml(evt.title || 'Termin') + '</strong>' +
+      '<span class="calendar-invite-date">' + escapeHtml(when + (evt.location ? ' · ' + evt.location : '')) + '</span></button>' +
+      '<div class="calendar-invite-actions">';
+    [['accepted', 'Zusagen'], ['tentative', 'Vielleicht'], ['declined', 'Absagen']].forEach(function (pair) {
+      var rsvp = getRsvpMeta(pair[0]);
+      html += '<button type="button" class="calendar-rsvp-btn calendar-rsvp-' + pair[0] + (status === pair[0] ? ' selected' : '') +
+        '" data-invite-respond="' + pair[0] + '" data-invite-id="' + escapeHtml(evt.id) + '" title="' + pair[1] + '">' +
+        '<span class="material-symbols-rounded" aria-hidden="true">' + rsvp.icon + '</span><span>' + pair[1] + '</span></button>';
+    });
+    return html + '</div></div>';
+  }
+
   function renderPendingInvites() {
     var panel = document.getElementById('calendar-pending-invites');
     if (!panel) return;
@@ -493,76 +511,51 @@
     }
 
     var todayKey = getISODate(new Date());
-    var pendingEvents = getCalendarEvents().filter(function (evt) {
+    var pendingEvents = [];
+    var answeredEvents = [];
+    getCalendarEvents().forEach(function (evt) {
       if (isEmployeeStatus(evt)) return false;
       var dateKey = String(evt.date || evt.startDate || '');
-      if (!dateKey || dateKey < todayKey) return false;
-      if (getEventParticipants(evt).indexOf(String(user.id)) === -1) return false;
+      if (!dateKey || dateKey < todayKey) return;
+      if (getEventParticipants(evt).indexOf(String(user.id)) === -1) return;
       var response = getEventResponses(evt)[String(user.id)];
-      return response && response.status === 'pending';
-    }).sort(sortEvents);
+      var status = response && getRsvpMeta(response.status) ? response.status : 'pending';
+      (status === 'pending' ? pendingEvents : answeredEvents).push({ evt: evt, status: status });
+    });
+    pendingEvents.sort(function (a, b) { return sortEvents(a.evt, b.evt); });
+    answeredEvents.sort(function (a, b) { return sortEvents(a.evt, b.evt); });
 
-    if (!pendingEvents.length) {
+    if (!pendingEvents.length && !answeredEvents.length) {
       panel.classList.add('hidden');
       applyInviteUrgency(panel, []);
       return;
     }
     panel.classList.remove('hidden');
-    applyInviteUrgency(panel, pendingEvents);
+    applyInviteUrgency(panel, pendingEvents.map(function (item) { return item.evt; }));
 
-    var heading = document.createElement('div');
-    heading.className = 'calendar-invites-heading';
-    heading.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">mark_email_unread</span>' +
-      '<strong>Offene Termineinladungen</strong>' +
-      '<span class="calendar-invites-count">' + pendingEvents.length + '</span>';
-    panel.appendChild(heading);
-
-    var list = document.createElement('div');
-    list.className = 'calendar-invites-list';
-
-    pendingEvents.slice(0, 5).forEach(function (evt) {
-      var meta = getEventTypeMeta(normalizeEventType(evt.type || 'meeting'));
-      var row = document.createElement('div');
-      row.className = 'calendar-invite-row';
-      row.style.setProperty('--invite-color', meta.color);
-
-      var info = document.createElement('button');
-      info.type = 'button';
-      info.className = 'calendar-invite-info';
-      info.innerHTML = '' +
-        '<span class="calendar-invite-type"><span class="material-symbols-rounded" aria-hidden="true">' + meta.icon + '</span>' + escapeHtml(meta.label) + '</span>' +
-        '<strong>' + escapeHtml(evt.title || 'Termin') + '</strong>' +
-        '<span class="calendar-invite-date">' + escapeHtml(getDisplayDate(evt.date || evt.startDate) + (evt.startTime ? ', ' + evt.startTime + ' Uhr' : '')) + '</span>';
-      info.addEventListener('click', function () { openEventDetailsModal(evt.id); });
-      row.appendChild(info);
-
-      var actions = document.createElement('div');
-      actions.className = 'calendar-invite-actions';
-      [['accepted', 'Zusagen'], ['tentative', 'Vielleicht'], ['declined', 'Absagen']].forEach(function (pair) {
-        var rsvp = getRsvpMeta(pair[0]);
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'calendar-rsvp-btn calendar-rsvp-' + pair[0];
-        btn.title = pair[1];
-        btn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">' + rsvp.icon + '</span><span>' + pair[1] + '</span>';
-        btn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          respondToEvent(evt.id, pair[0]);
-        });
-        actions.appendChild(btn);
-      });
-      row.appendChild(actions);
-      list.appendChild(row);
-    });
-
-    if (pendingEvents.length > 5) {
-      var moreNote = document.createElement('div');
-      moreNote.className = 'calendar-invites-more';
-      moreNote.textContent = '+' + (pendingEvents.length - 5) + ' weitere Einladung(en) in der Terminliste';
-      list.appendChild(moreNote);
+    var html = '';
+    if (pendingEvents.length) {
+      html += '<div class="calendar-invites-heading"><span class="material-symbols-rounded" aria-hidden="true">mark_email_unread</span>' +
+        '<strong>Offene Termineinladungen</strong><span class="calendar-invites-count">' + pendingEvents.length + '</span></div>' +
+        '<div class="calendar-invites-list">' +
+        pendingEvents.slice(0, 5).map(function (item) { return buildCalendarInviteRow(item.evt, item.status); }).join('') +
+        (pendingEvents.length > 5 ? '<div class="calendar-invites-more">+' + (pendingEvents.length - 5) + ' weitere Einladung(en) in der Terminliste</div>' : '') +
+        '</div>';
     }
-
-    panel.appendChild(list);
+    if (answeredEvents.length) {
+      var counts = { accepted: 0, tentative: 0, declined: 0 };
+      answeredEvents.forEach(function (item) { counts[item.status] += 1; });
+      html += '<div class="calendar-invites-heading dashboard-invites-answered-heading"><span class="material-symbols-rounded" aria-hidden="true">event_available</span>' +
+        '<strong>Deine Antworten</strong>' +
+        '<span class="calendar-rsvp-count-accepted">' + counts.accepted + ' Zusagen</span>' +
+        '<span class="calendar-rsvp-count-tentative">' + counts.tentative + ' Vielleicht</span>' +
+        '<span class="calendar-rsvp-count-declined">' + counts.declined + ' Absagen</span></div>' +
+        '<div class="calendar-invites-list">' +
+        answeredEvents.slice(0, 5).map(function (item) { return buildCalendarInviteRow(item.evt, item.status); }).join('') +
+        (answeredEvents.length > 5 ? '<div class="calendar-invites-more">+' + (answeredEvents.length - 5) + ' weitere Termine im Kalender</div>' : '') +
+        '</div>';
+    }
+    panel.innerHTML = html;
   }
 
   function getTaskHistoryEntries(task) {
@@ -2559,6 +2552,19 @@
 
   document.addEventListener('DOMContentLoaded', function () {
     setupCalendarNav();
+    var invitePanel = document.getElementById('calendar-pending-invites');
+    if (invitePanel) {
+      invitePanel.addEventListener('click', function (event) {
+        var respondBtn = event.target.closest('[data-invite-respond]');
+        if (respondBtn) {
+          respondToEvent(respondBtn.getAttribute('data-invite-id'), respondBtn.getAttribute('data-invite-respond'));
+          renderPendingInvites();
+          return;
+        }
+        var openBtn = event.target.closest('[data-invite-open]');
+        if (openBtn) openEventDetailsModal(openBtn.getAttribute('data-invite-open'));
+      });
+    }
     renderCalendar(currentViewDate);
   });
 
