@@ -768,8 +768,13 @@ textarea#retro-notes {
 .dashboard-updates-heading p, .dashboard-updates-note { margin: 0; color: var(--text-muted); font-size: .8rem; }
 .dashboard-updates-badge { flex: 0 0 auto; padding: .35rem .7rem; border: 1px solid var(--border-color); border-radius: 2rem; color: var(--text-secondary); font-size: .72rem; }
 .dashboard-updates-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: .75rem; margin-top: 1.1rem; }
-.dashboard-update-card { display: flex; gap: .75rem; padding: 1rem; border: 1px solid var(--border-color); border-radius: .75rem; background: var(--bg-primary); }
-.dashboard-update-icon { flex: 0 0 auto; padding: .5rem; align-self: flex-start; border-radius: .6rem; color: var(--accent-cyan); background: var(--progress-bg); font-size: 1.15rem; }
+.dashboard-update-card { --update-color: var(--accent-blue); display: flex; gap: .75rem; padding: 1rem; border: 1px solid color-mix(in srgb, var(--update-color) 55%, var(--border-color)); border-radius: .75rem; background: color-mix(in srgb, var(--update-color) 12%, var(--bg-card)); }
+.dashboard-update-card:nth-child(6n+2) { --update-color: var(--accent-red); }
+.dashboard-update-card:nth-child(6n+3) { --update-color: var(--accent-green); }
+.dashboard-update-card:nth-child(6n+4) { --update-color: var(--accent-purple); }
+.dashboard-update-card:nth-child(6n+5) { --update-color: var(--accent-cyan, #22b8cf); }
+.dashboard-update-card:nth-child(6n+6) { --update-color: var(--accent-yellow); }
+.dashboard-update-icon { flex: 0 0 auto; padding: .5rem; align-self: flex-start; border-radius: .6rem; color: var(--update-color); background: color-mix(in srgb, var(--update-color) 12%, var(--bg-card)); font-size: 1.15rem; }
 .dashboard-update-card h3 { margin: 0 0 .35rem; font-size: .9rem; overflow-wrap: anywhere; }
 .dashboard-update-card p { margin: 0; color: var(--text-secondary); font-size: .82rem; line-height: 1.5; overflow-wrap: anywhere; }
 .dashboard-updates-note { margin-top: .9rem; }
@@ -6836,6 +6841,13 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
   .project-card-head-inline,
   .project-card-head-inline-chips {
     justify-content: flex-start;
+  }
+}
+
+@container project-card (min-width: 66.01rem) {
+  .dashboard-project-row > .project-card .project-card-head .project-card-head-rail {
+    flex-basis: 32rem;
+    width: min(100%, 32rem);
   }
 }
 
