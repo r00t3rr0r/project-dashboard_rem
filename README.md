@@ -336,6 +336,8 @@ Im rechten Bereich der Projektkarte führen Wissensdatei und Verwalten-Schaltfl�
 
 Der Storage-Server prüft hinterlegte Live-URLs automatisch ungefähr alle fünf Minuten, solange er läuft. Angezeigt werden HTTP-Status, Antwortzeit, Zeitpunkt und die letzten Prüfungen; Fehler und veraltete Prüfungen erscheinen als Warnung. Die automatische DNS-Anzeige enthält die vom Server aufgelösten öffentlichen IP-Adressen des Live-Hosts, keine vollständige DNS-Zone oder Nameserver-Abfrage. Bei erfolgreicher HTTPS-Zertifikatsprüfung werden Aussteller, Name, Gültigkeit und TLS-Version angezeigt; bei Prüfungsfehlern sind diese Angaben nicht verfügbar. Nur öffentliche HTTP(S)-Ziele ohne Zugangsdaten sind zulässig; private IP-Adressen und Weiterleitungen werden nicht angefragt. Ein Weiterleitungsstatus bedeutet nicht, dass das Ziel erreichbar ist. Der Verlauf umfasst höchstens 48 Prüfungen je Projekt und wird in SQLite gespeichert; JSON-Exporte und die Wiederherstellung nur des KV-Speichers enthalten diesen Verlauf nicht.
 
+Die Kacheln „Hosting & Server“ und „SSL / TLS“ zeigen die ermittelte IP beziehungsweise den Zertifikatsablauf direkt mit Prüfzeitpunkt an. Die DNS-IP kann zu einem Proxy oder CDN gehören und muss nicht die IP des Ursprungsservers sein. Manuell hinterlegte Server- und Zertifikatsdaten bleiben separat erhalten und werden nicht automatisch überschrieben.
+
 Die bestehende Secret- und .env-Verwaltung speichert Inhalte unverschlüsselt, auch in Backups. Sie ist kein Passworttresor. Passwörter und Zugangsdaten sollten dort oder in URLs nicht hinterlegt werden; ein verschlüsselter Tresor erfordert eine HTTPS-Bereitstellung.
 
 ### 1) Ollama auf jedem Besucher-Rechner

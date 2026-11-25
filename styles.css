@@ -3134,6 +3134,12 @@ body.projects-modal-open {
   margin: 0;
 }
 
+.project-head-resources .hosting-auto-note {
+  margin: 0.3rem 0.15rem 0;
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
 .hosting-summary-card h5 {
   display: flex;
   align-items: center;

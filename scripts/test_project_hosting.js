@@ -5,23 +5,30 @@ const vm = require('node:vm');
 const {test} = require('node:test');
 
 function harness() {
+  const nodes = {};
   const document = {
     readyState:'loading', addEventListener(){}, getElementById(){return null;},
+    querySelectorAll(selector){return nodes[selector] || [];},
     createTextNode(value){return value;},
     createElement(){return {innerHTML:'', appendChild(text){
       this.innerHTML = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }};}
   };
   const window = {location:{origin:'http://localhost'}, DataLayer:{updateProject(){}}, QuickTaskModule:{showToast(){}}};
-  const context = vm.createContext({window, document, console, URL, Date});
+  const context = vm.createContext({window, document, console, URL, Date, fetch:(...args)=>window.testFetch(...args)});
   const source = fs.readFileSync(path.join(__dirname, '../modules/projects.js'), 'utf8').replace(
     'function renderProjectHeadResources(project,flow,canEdit){',
-    'window.hostingTest={renderHostingStatus,renderHostingExpiry,renderProjectHeadResources,safeHostingUrl,saveHosting,setChecks:function(value){HOSTING_CHECKS=value;}};\nfunction renderProjectHeadResources(project,flow,canEdit){'
+    'window.hostingTest={renderHostingStatus,renderHostingExpiry,renderProjectHeadResources,renderHostingServerSummary,renderHostingCertificateSummary,renderAutomaticCertificateExpiry,refreshHostingChecks,safeHostingUrl,saveHosting,setChecks:function(value){HOSTING_CHECKS=value;},setError:function(value){HOSTING_CHECKS_ERROR=value;}};\nfunction renderProjectHeadResources(project,flow,canEdit){'
   ).replace(
     "notify('Hosting-Daten gespeichert. Die automatische Prüfung erfolgt innerhalb von fünf Minuten.','info');\n  render();",
     "notify('Hosting-Daten gespeichert. Die automatische Prüfung erfolgt innerhalb von fünf Minuten.','info');"
   );
   vm.runInContext(source, context);
+  window.hostingTest.configureRefresh = (project, response, targets) => {
+    window.DataLayer.getProjectById = () => project;
+    window.testFetch = () => Promise.resolve({ok:true,json:()=>Promise.resolve(response)});
+    Object.assign(nodes, targets);
+  };
   return window.hostingTest;
 }
 
@@ -91,6 +98,58 @@ test('automatic DNS and verified TLS details are shown separately from manual in
   assert.match(html, /SSL läuft ab/);
   api.setChecks({p1:[{url:project.hosting.url, status:'down', checkedAt:new Date().toISOString(), error:'TLS fehlgeschlagen'}]});
   assert.match(api.renderHostingStatus(project), /SSL \/ TLS · geprüft<\/span><strong>Nicht verfügbar/);
+});
+
+test('server and SSL summaries show automatic values without replacing manual data', () => {
+  const api = harness();
+  const project = {id:'p1', hosting:{url:'https://example.com/',server:'internal-host',certificateExpiry:'2031-02-01'}};
+  assert.match(api.renderHostingServerSummary(project), /Noch nicht geprüft/);
+  assert.match(api.renderHostingCertificateSummary(project), /Noch nicht geprüft/);
+  const expires = new Date(Date.now()+10*86400000).toISOString();
+  api.setChecks({p1:[{url:project.hosting.url, checkedAt:new Date().toISOString(),
+    dns:{addresses:['8.8.8.8','8.8.4.4']},certificate:{notAfter:expires}}]});
+  const server = api.renderHostingServerSummary(project);
+  const ssl = api.renderHostingCertificateSummary(project);
+  assert.match(server, /8\.8\.8\.8, 8\.8\.4\.4/);
+  assert.match(server, /internal-host/);
+  assert.match(server, /Proxys oder CDN/);
+  assert.match(ssl, /SSL-Ablauf \(automatisch\)/);
+  assert.match(ssl, /läuft bald ab/);
+  assert.match(ssl, /SSL-Ablauf \(manuell\)/);
+  api.setChecks({p1:[{url:project.hosting.url, checkedAt:new Date(Date.now()-13*60000).toISOString(), dns:{addresses:['8.8.8.8']}}]});
+  assert.match(api.renderHostingServerSummary(project), /Prüfung veraltet/);
+  assert.match(api.renderHostingCertificateSummary(project), /Nicht verfügbar/);
+  project.hosting.url='https://other.example/';
+  assert.match(api.renderHostingServerSummary(project), /Noch nicht geprüft/);
+  api.setError('offline');
+  assert.match(api.renderHostingCertificateSummary(project), /Überwachung nicht verfügbar/);
+});
+
+test('automatic certificate expiry uses the exact timestamp', () => {
+  const api = harness();
+  assert.match(api.renderAutomaticCertificateExpiry(new Date(Date.now()-60000).toISOString()), /abgelaufen/);
+  assert.match(api.renderAutomaticCertificateExpiry(new Date(Date.now()+60000).toISOString()), /läuft bald ab/);
+  assert.equal(api.renderAutomaticCertificateExpiry('invalid'), 'Nicht verfügbar');
+});
+
+test('polling refreshes IP and certificate summaries without rerendering the editor', async () => {
+  const api = harness();
+  const project = {id:'p1', hosting:{url:'https://example.com/'}};
+  const node = () => ({innerHTML:'', getAttribute:()=>project.id});
+  const status = node(), server = node(), certificate = node();
+  api.configureRefresh(project, {checks:{p1:[{
+    url:project.hosting.url,status:'up',checkedAt:new Date().toISOString(),httpStatus:200,responseMs:12,
+    dns:{addresses:['8.8.8.8']},certificate:{notAfter:new Date(Date.now()+86400000).toISOString()}
+  }]}}, {
+    '[data-hosting-status]':[status],
+    '[data-hosting-server-summary]':[server],
+    '[data-hosting-certificate-summary]':[certificate]
+  });
+  await api.refreshHostingChecks();
+  assert.match(status.innerHTML, /Erreichbar/);
+  assert.match(server.innerHTML, /8\.8\.8\.8/);
+  assert.match(certificate.innerHTML, /SSL-Ablauf \(automatisch\)/);
+  assert.match(certificate.innerHTML, /läuft bald ab/);
 });
 
 test('saving hosting details preserves existing fields and rejects invalid amounts', () => {

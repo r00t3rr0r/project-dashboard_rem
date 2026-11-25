@@ -3338,12 +3338,36 @@ function renderHostingStatus(project){
   return html;
 }
 
+function getLatestHostingCheck(project){
+  var url=project.hosting&&project.hosting.url;
+  if(!url||HOSTING_CHECKS_ERROR)return null;
+  return (HOSTING_CHECKS[project.id]||[]).find(function(item){return item.url===url;})||null;
+}
+
+function hostingCheckState(project,check){
+  if(!project.hosting||!project.hosting.url)return 'Live-URL fehlt';
+  if(HOSTING_CHECKS_ERROR)return 'Überwachung nicht verfügbar';
+  if(!check)return 'Noch nicht geprüft';
+  var age=Date.now()-Date.parse(check.checkedAt);
+  return !isFinite(age)||age>12*60*1000?'Prüfung veraltet · '+formatDateTime(check.checkedAt):'Geprüft · '+formatDateTime(check.checkedAt);
+}
+
+function renderAutomaticCertificateExpiry(value){
+  var timestamp=Date.parse(value||'');
+  if(!isFinite(timestamp))return 'Nicht verfügbar';
+  var remaining=timestamp-Date.now();
+  var tone=remaining<0?'is-down':(remaining<=30*86400000?'is-warning':'');
+  return '<span'+(tone?' class="hosting-expiry-warning '+tone+'"':'')+'>'
+    +escapeHtml(formatDateTime(value))
+    +(remaining<0?' · abgelaufen':(remaining<=30*86400000?' · läuft bald ab':''))+'</span>';
+}
+
 function renderHostingCheckDetails(check){
   var dns=check.dns;
   var certificate=check.certificate;
   var html='<div class="hosting-check-details">';
   if(dns&&dns.host)html+='<div class="hosting-check-row"><span>Geprüfter Host</span><strong>'+escapeHtml(dns.host)+'</strong></div>';
-  html+='<div class="hosting-check-row"><span>DNS · Live-Host</span><strong>'
+  html+='<div class="hosting-check-row"><span>DNS · IP der Live-URL</span><strong>'
     +(dns&&Array.isArray(dns.addresses)&&dns.addresses.length?escapeHtml(dns.addresses.join(', ')):'Nicht verfügbar')+'</strong></div>';
   html+='<div class="hosting-check-row"><span>SSL / TLS · geprüft</span><strong>'
     +(certificate?escapeHtml(certificate.issuer||'Aussteller unbekannt'):'Nicht verfügbar')+'</strong></div>';
@@ -3351,7 +3375,7 @@ function renderHostingCheckDetails(check){
     if(certificate.subject)html+='<div class="hosting-check-row"><span>Zertifikat für</span><strong>'+escapeHtml(certificate.subject)+'</strong></div>';
     if(certificate.tlsVersion)html+='<div class="hosting-check-row"><span>Protokoll</span><strong>'+escapeHtml(certificate.tlsVersion)+'</strong></div>';
     if(certificate.notBefore)html+='<div class="hosting-check-row"><span>Gültig ab</span><strong>'+escapeHtml(formatDate(certificate.notBefore))+'</strong></div>';
-    if(certificate.notAfter)html+=renderHostingExpiry('SSL läuft ab',certificate.notAfter.slice(0,10));
+    if(certificate.notAfter)html+='<div class="hosting-check-row"><span>SSL läuft ab</span><strong>'+renderAutomaticCertificateExpiry(certificate.notAfter)+'</strong></div>';
   }
   return html+'</div>';
 }
@@ -3381,7 +3405,7 @@ var HOSTING_FIELD_GROUPS=[
     ['provider','Anbieter','text','Hosting-Anbieter'],
     ['plan','Tarif / Paket','text','z. B. VPS'],
     ['environment','Umgebung','text','Produktion'],
-    ['server','Server / IP','text','Servername oder IP'],
+    ['server','Servername / IP (manuell, optional)','text','Servername oder IP'],
     ['region','Standort / Region','text','z. B. Frankfurt'],
     ['runtime','Plattform / Laufzeit','text','z. B. Linux, Node.js'],
     ['contact','Ansprechpartner','text','Name oder Kontakt'],
@@ -3441,6 +3465,34 @@ function hostingYesNo(value){
   return value==='yes'?'Ja':(value==='no'?'Nein':'');
 }
 
+function renderHostingServerSummary(project){
+  var hosting=project.hosting||{};
+  var check=getLatestHostingCheck(project);
+  var addresses=check&&check.dns&&Array.isArray(check.dns.addresses)?check.dns.addresses:[];
+  return renderHostingSummary('Hosting & Server','dns',[
+    ['IP der Live-URL (DNS)',addresses.length?addresses.join(', '):(check?'Nicht verfügbar':hostingCheckState(project,check))],
+    ['DNS-Prüfung',check?hostingCheckState(project,check):''],
+    ['Servername / IP (manuell)',hosting.server],['Anbieter',hosting.provider],['Tarif',hosting.plan],
+    ['Umgebung',hosting.environment],['Region',hosting.region],['Plattform',hosting.runtime],['Kontakt',hosting.contact]])
+    +'<p class="hosting-auto-note">DNS kann die Adresse eines Proxys oder CDN statt des Ursprungsservers liefern.</p>';
+}
+
+function renderHostingCertificateSummary(project){
+  var hosting=project.hosting||{};
+  var check=getLatestHostingCheck(project);
+  var certificate=check&&check.certificate;
+  var status=hostingCheckState(project,check);
+  var expiry=certificate&&certificate.notAfter?renderAutomaticCertificateExpiry(certificate.notAfter):escapeHtml(check?(/^http:\/\//i.test(hosting.url)?'Kein HTTPS':'Nicht verfügbar'):status);
+  return '<section class="hosting-summary-card"><h5><span class="material-symbols-rounded" aria-hidden="true">verified_user</span>SSL / TLS</h5><dl>'
+    +'<div><dt>SSL-Ablauf (automatisch)</dt><dd>'+expiry+'</dd></div>'
+    +(check?'<div><dt>Prüfung</dt><dd>'+escapeHtml(status)+'</dd></div>':'')
+    +(hosting.certificateExpiry?'<div><dt>SSL-Ablauf (manuell)</dt><dd>'+escapeHtml(formatDate(hosting.certificateExpiry))+'</dd></div>':'')
+    +(hosting.certificateProvider?'<div><dt>Anbieter</dt><dd>'+escapeHtml(hosting.certificateProvider)+'</dd></div>':'')
+    +(hostingYesNo(hosting.certificateRenewal)?'<div><dt>Autom. Verlängerung</dt><dd>'+hostingYesNo(hosting.certificateRenewal)+'</dd></div>':'')
+    +(hosting.certificateNotes?'<div><dt>Hinweise</dt><dd>'+escapeHtml(hosting.certificateNotes)+'</dd></div>':'')
+    +'</dl></section>';
+}
+
 function renderProjectHeadResources(project,flow,canEdit){
   var ai=ensureProjectAiKnowledge(project);
   var hosting=project.hosting||{};
@@ -3456,12 +3508,10 @@ function renderProjectHeadResources(project,flow,canEdit){
     +'<div class="hosting-quick-links">'+(liveUrl?'<a href="'+escapeHtml(liveUrl)+'" target="_blank" rel="noopener noreferrer">Live-Projekt ↗</a>':'')
     +(adminUrl?'<a href="'+escapeHtml(adminUrl)+'" target="_blank" rel="noopener noreferrer">Verwaltung ↗</a>':'')+'</div></div>'
     +'<div class="hosting-summary-grid">'
-    +renderHostingSummary('Hosting & Server','dns',[
-      ['Anbieter',hosting.provider],['Tarif',hosting.plan],['Umgebung',hosting.environment],['Server / IP',hosting.server],['Region',hosting.region],['Plattform',hosting.runtime],['Kontakt',hosting.contact]])
+    +'<div data-hosting-server-summary="'+escapeHtml(project.id)+'">'+renderHostingServerSummary(project)+'</div>'
     +renderHostingSummary('Domain & DNS','language',[
       ['Domain',hosting.domain],['Registrar',hosting.registrar],['DNS-Anbieter',hosting.dnsProvider],['Nameserver',hosting.nameServers],['DNS-Hinweise',hosting.dnsRecords]])
-    +renderHostingSummary('SSL / TLS','verified_user',[
-      ['Anbieter',hosting.certificateProvider],['Autom. Verlängerung',hostingYesNo(hosting.certificateRenewal)],['Hinweise',hosting.certificateNotes]])
+    +'<div data-hosting-certificate-summary="'+escapeHtml(project.id)+'">'+renderHostingCertificateSummary(project)+'</div>'
     +renderHostingSummary('Vertrag & Abrechnung','receipt_long',[
       ['Betrag',hosting.billingAmount?[hosting.billingAmount,hosting.billingCurrency].filter(Boolean).join(' '):''],
       ['Intervall',hosting.billingInterval],
@@ -3493,6 +3543,14 @@ function refreshHostingChecks(){
     document.querySelectorAll('[data-hosting-status]').forEach(function(element){
       var project=window.DataLayer.getProjectById(element.getAttribute('data-hosting-status'));
       if(project)element.innerHTML=renderHostingStatus(project);
+    });
+    document.querySelectorAll('[data-hosting-server-summary]').forEach(function(element){
+      var project=window.DataLayer.getProjectById(element.getAttribute('data-hosting-server-summary'));
+      if(project)element.innerHTML=renderHostingServerSummary(project);
+    });
+    document.querySelectorAll('[data-hosting-certificate-summary]').forEach(function(element){
+      var project=window.DataLayer.getProjectById(element.getAttribute('data-hosting-certificate-summary'));
+      if(project)element.innerHTML=renderHostingCertificateSummary(project);
     });
   });
 }
