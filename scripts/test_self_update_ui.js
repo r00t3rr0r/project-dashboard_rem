@@ -17,7 +17,8 @@ function harness(updates){
   const timers=[],requests=[];
   let reloaded=false,versionCalls=0,resolveApply;
   const oldVersion={startedAt:'old',shortCommit:'old1234'};
-  const window={location:{reload(){reloaded=true;}},setTimeout(fn){timers.push(fn);},DashboardUpdates:updates};
+  const window={location:{reload(){reloaded=true;}},setTimeout(fn){timers.push(fn);},DashboardUpdates:updates,
+    LocalOllama:{getProvider:()=> 'claude',setProvider(){}}};
   const document={getElementById:()=>node('open'),createElement:()=>overlay,body:{appendChild(){}}};
   const fetch=async(url,options)=>{
     requests.push({url,options});
@@ -87,10 +88,12 @@ test('update failures show the server error without reporting success',async()=>
 
 test('analysis shows a selection before anything is published',async()=>{
   let published=false;
-  const h=harness({analyze:async()=>({topics:[]}),selectionHtml:()=>'<p>Themen</p>',generate:async()=>{published=true;}});
+  const h=harness({loadCommits:async()=>({commits:[{}]}),draftHtml:()=>'<p>Freigabe</p>',
+    readDrafts:()=>({items:[{}]}),analyze:async()=>({topics:[]}),selectionHtml:()=>'<p>Themen</p>',generate:async()=>{published=true;}});
   h.node('open').click();
   await new Promise(resolve=>setImmediate(resolve));
-  h.node('.update-model').value='test';
+  h.node('.update-load-commits').click();
+  await new Promise(resolve=>setImmediate(resolve));
   h.node('.update-generate').click();
   await new Promise(resolve=>setImmediate(resolve));
   assert.match(h.node('.update-preview').innerHTML,/Themen/);
@@ -101,10 +104,12 @@ test('analysis shows a selection before anything is published',async()=>{
 });
 
 test('analysis errors are visible without affecting update controls',async()=>{
-  const h=harness({analyze:async()=>{throw new Error('Keine Commits');}});
+  const h=harness({loadCommits:async()=>({commits:[{}]}),draftHtml:()=>'',readDrafts:()=>({items:[{}]}),
+    analyze:async()=>{throw new Error('Keine Commits');}});
   h.node('open').click();
   await new Promise(resolve=>setImmediate(resolve));
-  h.node('.update-model').value='test';
+  h.node('.update-load-commits').click();
+  await new Promise(resolve=>setImmediate(resolve));
   h.node('.update-generate').click();
   await new Promise(resolve=>setImmediate(resolve));
   assert.match(h.node('.update-ai-status').textContent,/Keine Commits/);

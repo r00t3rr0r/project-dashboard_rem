@@ -322,7 +322,7 @@ function setupDashboardUpdate(){
   var btn=document.getElementById('db-update-btn');
   if(!btn)return;
   var overlay=null,body=null,checkBtn=null,applyBtn=null,closeBtn=null,generateBtn=null,busy=false,reloadReady=false;
-  var analysis=null,aiController=null,modelsBtn=null,modelSelect=null,preview=null,cancelBtn=null;
+  var analysis=null,aiController=null,loadCommitsBtn=null,providerSelect=null,draft=null,draftData=null,preview=null,cancelBtn=null;
   var progressPanel=null,progressLabel=null,progressValue=null,progressBar=null,progressFill=null,progressLog=null;
   var lastProgress=null;
 
@@ -460,9 +460,10 @@ function setupDashboardUpdate(){
     overlay.innerHTML='<div class="modal update-dialog" role="dialog" aria-modal="true" aria-labelledby="update-title">'
       +'<header class="update-header"><span class="material-symbols-rounded" aria-hidden="true">system_update</span><div><h2 id="update-title">Dashboard-Version &amp; Update</h2><p>Installation und Update-Quelle verwalten</p></div></header>'
       +'<div class="update-body"></div>'
-      +'<section class="update-ai"><div><h3>Neuerungen für das Team</h3><p>Die Änderungen aller heutigen Commits werden abschnittsweise auf diesem Rechner analysiert. Das kann bei vielen Änderungen länger dauern. Binärdateien können nicht inhaltlich ausgewertet werden.</p><p>Zum Schutz des Quellcodes laufen Themenanalyse und Erstellung ausschließlich über Ollama auf diesem Rechner; Cloud-Anbieter werden nicht verwendet.</p></div>'
-      +'<div class="update-model-row"><label>Lokales KI-Modell<select class="update-model"><option value="">Bitte Modelle laden</option></select></label><button class="btn btn-secondary update-load-models" type="button">Modelle laden</button></div>'
-      +'<div class="update-topic-actions"><button class="btn btn-secondary update-generate" type="button"><span class="material-symbols-rounded" aria-hidden="true">manage_search</span> Commits analysieren</button><button class="btn btn-secondary update-cancel" type="button" hidden>Abbrechen</button></div>'
+      +'<section class="update-ai"><div><h3>Neuerungen für das Team</h3><p>Commits lokal prüfen und nicht vertrauliche Beschreibungen selbst eingeben. Nur ausdrücklich freigegebene Beschreibungen, Themen und Hinweise werden an Claude oder ChatGPT übertragen; Commit-Nachrichten, Dateien und Code-Diffs nicht automatisch.</p></div>'
+      +'<div class="update-model-row"><label>KI-Schnittstelle<select class="update-provider"><option value="">Bitte auswählen</option><option value="claude">Claude</option><option value="openai">ChatGPT</option></select></label><button class="btn btn-secondary update-load-commits" type="button">Commits laden</button></div>'
+      +'<div class="update-draft" hidden></div>'
+      +'<div class="update-topic-actions"><button class="btn btn-secondary update-generate" type="button"><span class="material-symbols-rounded" aria-hidden="true">manage_search</span> Freigegebene Beschreibungen analysieren</button><button class="btn btn-secondary update-cancel" type="button" hidden>Abbrechen</button></div>'
       +'<p class="update-ai-status" role="status" aria-live="polite"></p><div class="update-preview" hidden></div></section>'
       +'<section class="update-progress" hidden aria-label="Update-Fortschritt"><div class="update-progress-head"><strong class="update-progress-label"></strong><output class="update-progress-value"></output></div><div class="update-progress-track" role="progressbar" aria-label="Update-Fortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="update-progress-fill"></span></div><div class="update-console-title"><span class="material-symbols-rounded" aria-hidden="true">terminal</span>Aktionsprotokoll</div><pre class="update-console" role="log" aria-live="polite"></pre></section>'
       +'<div class="update-actions"><button class="btn btn-secondary update-close" type="button">Schliessen</button><button class="btn btn-secondary update-check" type="button">Nach Updates suchen</button><button class="btn btn-primary update-apply" type="button" disabled>Jetzt aktualisieren</button></div></div>';
@@ -471,8 +472,9 @@ function setupDashboardUpdate(){
     applyBtn=overlay.querySelector('.update-apply');
     closeBtn=overlay.querySelector('.update-close');
     generateBtn=overlay.querySelector('.update-generate');
-    modelsBtn=overlay.querySelector('.update-load-models');
-    modelSelect=overlay.querySelector('.update-model');
+    loadCommitsBtn=overlay.querySelector('.update-load-commits');
+    providerSelect=overlay.querySelector('.update-provider');
+    draft=overlay.querySelector('.update-draft');
     preview=overlay.querySelector('.update-preview');
     cancelBtn=overlay.querySelector('.update-cancel');
     progressPanel=overlay.querySelector('.update-progress');
@@ -490,43 +492,57 @@ function setupDashboardUpdate(){
     });
     applyBtn.addEventListener('click',startUpdate);
     var status=overlay.querySelector('.update-ai-status');
-    modelsBtn.addEventListener('click',function(){
-      if(busy)return;
-      if(!window.DashboardUpdates){status.textContent='Die Funktion für Neuerungen ist nicht verfügbar.';return;}
-      modelsBtn.disabled=true;status.textContent='Lokale Modelle werden geladen …';
-      window.DashboardUpdates.loadModels().then(function(models){
-        if(!models.length)throw new Error('Kein lokales Textmodell gefunden.');
-        modelSelect.innerHTML='<option value="">Modell auswählen</option>'+models.map(function(model){return '<option value="'+esc(model)+'">'+esc(model)+'</option>';}).join('');
-        status.textContent='Bitte ein Modell auswählen.';
-      }).catch(function(error){status.textContent='Modelle konnten nicht geladen werden: '+error.message;})
-        .then(function(){modelsBtn.disabled=false;});
+    if(window.LocalOllama&&window.LocalOllama.getProvider){
+      var currentProvider=window.LocalOllama.getProvider();
+      if(currentProvider==='claude'||currentProvider==='openai')providerSelect.value=currentProvider;
+    }
+    providerSelect.addEventListener('change',function(){
+      if(providerSelect.value&&window.LocalOllama&&window.LocalOllama.setProvider)window.LocalOllama.setProvider(providerSelect.value);
     });
     function runAi(work,success){
       if(busy)return;
       var applyWasDisabled=applyBtn.disabled;
-      busy=true;generateBtn.disabled=modelsBtn.disabled=modelSelect.disabled=checkBtn.disabled=applyBtn.disabled=closeBtn.disabled=true;
+      busy=true;generateBtn.disabled=loadCommitsBtn.disabled=providerSelect.disabled=checkBtn.disabled=applyBtn.disabled=closeBtn.disabled=true;
       cancelBtn.hidden=false;cancelBtn.disabled=false;
       aiController=new AbortController();
       var fields=preview.querySelector('fieldset');
       if(fields)fields.disabled=true;
+      var draftFields=draft.querySelector('fieldset');
+      if(draftFields)draftFields.disabled=true;
       Promise.resolve().then(function(){return work(aiController.signal);}).then(success).catch(function(error){
         status.textContent=(aiController.signal.aborted?'Abgebrochen. ':'Fehler: ')+error.message;
       }).then(function(){
-        busy=false;generateBtn.disabled=modelsBtn.disabled=modelSelect.disabled=checkBtn.disabled=closeBtn.disabled=false;
+        busy=false;generateBtn.disabled=loadCommitsBtn.disabled=providerSelect.disabled=checkBtn.disabled=closeBtn.disabled=false;
         applyBtn.disabled=applyWasDisabled;cancelBtn.hidden=true;aiController=null;
         var currentFields=preview.querySelector('fieldset');if(currentFields)currentFields.disabled=false;
+        var currentDraftFields=draft.querySelector('fieldset');if(currentDraftFields)currentDraftFields.disabled=false;
       });
     }
     cancelBtn.addEventListener('click',function(){if(aiController){cancelBtn.disabled=true;aiController.abort();status.textContent='Abbruch wird ausgeführt …';}});
+    loadCommitsBtn.addEventListener('click',function(){
+      if(busy)return;
+      if(!window.DashboardUpdates){status.textContent='Die Funktion für Neuerungen ist nicht verfügbar.';return;}
+      runAi(function(signal){status.textContent='Commits werden geladen …';return window.DashboardUpdates.loadCommits(signal);},
+        function(result){
+          draftData=result;analysis=null;preview.hidden=true;
+          draft.innerHTML='<fieldset>'+window.DashboardUpdates.draftHtml(result)+'</fieldset>';
+          draft.hidden=false;status.textContent='Commits geladen. Bitte Beschreibungen eingeben und freigeben.';
+        });
+    });
     generateBtn.addEventListener('click',function(){
       if(busy)return;
       if(!window.DashboardUpdates){status.textContent='Die Funktion für Neuerungen ist nicht verfügbar.';return;}
-      if(!modelSelect.value){status.textContent='Bitte zuerst ein lokales Modell laden und auswählen.';return;}
+      if(!providerSelect.value){status.textContent='Bitte Claude oder ChatGPT auswählen.';return;}
+      if(!draftData){status.textContent='Bitte zuerst die Commits laden.';return;}
+      var approved;
+      try{approved=window.DashboardUpdates.readDrafts(draft,draftData);}
+      catch(error){status.textContent=error.message;return;}
+      var provider=providerSelect.value;
       preview.hidden=true;analysis=null;
       runAi(function(signal){
-        status.textContent='Commits werden geladen …';
-        return window.DashboardUpdates.analyze(modelSelect.value,signal,function(done,total){
-          status.textContent='Lokale Analyse: '+done+' von '+total+' Abschnitten.';
+        status.textContent='Freigegebene Beschreibungen werden analysiert …';
+        return window.DashboardUpdates.analyze(approved,provider,signal,function(done,total){
+          status.textContent='KI-Analyse: '+done+' von '+total+' Beschreibungen.';
         });
       },function(result){
         analysis=result;preview.innerHTML='<fieldset>'+window.DashboardUpdates.selectionHtml(result)+'</fieldset>';
@@ -550,10 +566,11 @@ function setupDashboardUpdate(){
       var selection;
       try{selection=window.DashboardUpdates.readSelection(preview,analysis);}
       catch(error){status.textContent=error.message;return;}
+      var provider=providerSelect.value;
       runAi(function(signal){
-        return window.DashboardUpdates.generate(analysis,selection,modelSelect.value,signal,function(done,total,saving){
+        return window.DashboardUpdates.generate(analysis,selection,provider,signal,function(done,total,saving){
           if(saving){cancelBtn.disabled=true;status.textContent='Übersicht wird veröffentlicht …';}
-          else status.textContent='Texte werden lokal erstellt: '+done+' von '+total+' Themen.';
+          else status.textContent='Texte werden erstellt: '+done+' von '+total+' Themen.';
         });
       },function(result){status.textContent=result.count+' Neuerungen wurden auf dem Dashboard veröffentlicht.';});
     });

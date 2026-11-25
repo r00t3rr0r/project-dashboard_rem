@@ -129,6 +129,7 @@ function jsonContext(payload){
 function buildPrompt(path,payload){
   var supplied=payload&&payload.promptConfig&&String(payload.promptConfig.prompt||'').trim();
   var context='\n\nEingabedaten (JSON):\n'+jsonContext(payload);
+  if(path==='/api/ai/dashboard-updates'&&supplied)return supplied;
   if(supplied)return supplied+context;
   if(payload&&String(payload.draftInput||'').trim())return String(payload.draftInput).trim()+context;
 

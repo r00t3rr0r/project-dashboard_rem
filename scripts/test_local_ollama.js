@@ -107,10 +107,25 @@ test('selected cloud provider generates dashboard updates as JSON',async()=>{
     request=JSON.parse(init.body);
     return {ok:true,json:async()=>({choices:[{message:{content:'{"features":[{"title":"Neu","description":"Einfacher"}]}'}}]})};
   };
-  const result=await client.api.generate('/api/ai/dashboard-updates',{promptConfig:{prompt:'Commit-Nachrichten'}});
+  const result=await client.api.generate('/api/ai/dashboard-updates',{promptConfig:{prompt:'Commit-Nachrichten'},privateContext:'not to be sent'});
   assert.equal(url,'https://api.openai.com/v1/chat/completions');
   assert.equal(request.response_format.type,'json_object');
+  assert.equal(request.messages[0].content,'Commit-Nachrichten');
   assert.equal(result.features[0].title,'Neu');
+});
+
+test('Claude dashboard requests send the supplied prompt only',async()=>{
+  const client=makeClient('127.0.0.1');
+  client.window.localStorage={getItem:()=> 'claude'};
+  client.window.AuthManager={getCurrentUser:()=>({aiKeys:{claude:'test-key'}})};
+  let url,request;
+  client.sandbox.fetch=async(target,init)=>{
+    url=target;request=JSON.parse(init.body);
+    return {ok:true,json:async()=>({content:[{text:'{"topics":[]}'}]})};
+  };
+  await client.api.generate('/api/ai/dashboard-updates',{promptConfig:{prompt:'Freigegebener Text'},privateContext:'not to be sent'});
+  assert.equal(url,'https://api.anthropic.com/v1/messages');
+  assert.equal(request.messages[0].content,'Freigegebener Text');
 });
 
 test('private analysis forces local model resolution without remote fallback',async()=>{
