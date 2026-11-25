@@ -114,11 +114,51 @@ class StorageConcurrencyTest(unittest.TestCase):
             return response.status, json.loads(response.read().decode('utf-8'))
 
     def test_authentication_required_and_pin_removed(self):
-        for path in ('/api/kv', '/api/kv/stream?pin=1337', '/api/auth/session'):
+        for path in ('/api/kv', '/api/kv/stream?pin=1337', '/api/auth/session',
+                     '/api/hosting/checks', '/api/ai/project-knowledge?projectId=p1'):
             request = urllib.request.Request(self.base_url + path, headers={'X-Admin-Pin': '1337'})
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 urllib.request.urlopen(request, timeout=10)
             self.assertEqual(caught.exception.code, 401)
+
+    def test_project_knowledge_link_reads_only_the_project_file(self):
+        project = {'id': 'knowledge-test', 'aiKnowledge': {'filePath': 'data/project-knowledge/test.md'}}
+        conn = storage.open_db_connection()
+        old = conn.execute('SELECT value, updatedAt FROM kv_store WHERE key = ?', ('pd_projects',)).fetchone()
+        conn.execute('INSERT OR REPLACE INTO kv_store VALUES (?, ?, ?)',
+                     ('pd_projects', json.dumps([project]), storage.utc_now_iso_z()))
+        conn.commit()
+        conn.close()
+        try:
+            with tempfile.TemporaryDirectory() as directory, mock.patch.object(storage, 'KNOWLEDGE_DIR', directory):
+                with open(os.path.join(directory, 'test.md'), 'w', encoding='utf-8') as output:
+                    output.write('# Projektwissen')
+                request = urllib.request.Request(self.base_url + '/api/ai/project-knowledge?projectId=knowledge-test',
+                                                 headers={'Cookie': self.cookie.split(';')[0]})
+                with urllib.request.urlopen(request) as response:
+                    self.assertEqual(response.read().decode('utf-8'), '# Projektwissen')
+                    self.assertEqual(response.headers.get_content_type(), 'text/plain')
+                project['aiKnowledge']['filePath'] = 'data/project-knowledge/../test.md'
+                conn = storage.open_db_connection()
+                conn.execute('UPDATE kv_store SET value = ? WHERE key = ?', (json.dumps([project]), 'pd_projects'))
+                conn.commit()
+                conn.close()
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(request)
+                self.assertEqual(caught.exception.code, 404)
+        finally:
+            conn = storage.open_db_connection()
+            if old:
+                conn.execute('UPDATE kv_store SET value = ?, updatedAt = ? WHERE key = ?', (*old, 'pd_projects'))
+            else:
+                conn.execute('DELETE FROM kv_store WHERE key = ?', ('pd_projects',))
+            conn.commit()
+            conn.close()
+
+    def test_hosting_checks_endpoint_is_available_to_a_session(self):
+        status, payload = self.request_json('GET', '/api/hosting/checks')
+        self.assertEqual(status, 200)
+        self.assertIsInstance(payload['checks'], dict)
 
     def test_update_progress_requires_admin_session(self):
         with self.assertRaises(urllib.error.HTTPError) as caught:

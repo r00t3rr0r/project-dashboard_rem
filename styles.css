@@ -3027,6 +3027,95 @@ body.projects-modal-open {
   gap: 0.65rem;
 }
 
+.project-head-resources {
+  min-width: 0;
+  padding: 0.8rem;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.project-head-resources p {
+  margin: 0.3rem 0;
+  color: var(--text-muted);
+}
+
+.project-resources-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-primary);
+}
+
+.project-resources-heading .material-symbols-rounded {
+  color: var(--accent-blue);
+  font-size: 1.15rem;
+}
+
+.hosting-heading {
+  border-top: 1px solid var(--border-color);
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+}
+
+.project-resources-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent-blue);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hosting-status {
+  display: inline-block;
+  margin-top: 0.45rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: var(--bg-card);
+  font-weight: 700;
+}
+
+.hosting-status.is-up { color: var(--accent-green); }
+.hosting-status.is-down, .project-head-resources .hosting-expiry-warning { color: var(--accent-red); }
+.hosting-status.is-unknown { color: var(--text-muted); }
+
+.hosting-editor, .hosting-history {
+  margin-top: 0.55rem;
+}
+
+.hosting-editor summary, [data-hosting-status] summary {
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.hosting-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.hosting-fields label {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+  color: var(--text-muted);
+}
+
+.hosting-fields input {
+  min-width: 0;
+  width: 100%;
+}
+
+.hosting-history {
+  padding-left: 1rem;
+  color: var(--text-muted);
+}
+
 .project-card-head-main {
   min-width: 0;
   flex: 1 1 20rem;
@@ -5541,6 +5630,7 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   }
 
   .project-card-head-main,
+  .project-card-head-rail,
   .project-card-head-summary,
   .project-card-head-matrix,
   .project-card-head-actions {

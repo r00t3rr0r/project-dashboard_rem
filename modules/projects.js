@@ -19,6 +19,8 @@ var MEETING_PROTOCOL_DEFAULT_STATUS='open';
 var PROJECT_PAGE_DRAFT_KEY='projektDashboard.projectPageDraft';
 var PROJECT_PAGE_STATE_KEY='projektDashboard.projectPageState';
 var SECRET_VIEW_STATE={};
+var HOSTING_CHECKS={};
+var HOSTING_CHECKS_ERROR='';
 var AI_HEALTH_STATE={
   backendStatus:'unknown',
   ollamaStatus:'unknown',
@@ -3232,6 +3234,7 @@ function renderInfoHub(project,flow){
 
     +'<section class="infohub-card">'
     +'<h4>Sensible Daten</h4>'
+    +'<p class="security-warning">Diese bestehende Ablage ist nicht verschlüsselt. Keine Passwörter oder Zugangsdaten eingeben; ein sicherer Tresor benötigt HTTPS.</p>'
     +'<div class="infohub-form-row">'
     +'<select id="secret-category-'+escapeHtml(project.id)+'">'
     +'<option value="deployment">Deployment</option>'
@@ -3306,7 +3309,7 @@ function renderInfoHub(project,flow){
     +'</div>'
     +'<p class="text-muted mt-1">Status: '+escapeHtml(aiState.lastStatus||'idle')+(aiState.lastGeneratedAt?' · Letzter Lauf: '+formatDateTime(aiState.lastGeneratedAt):'')+'</p>'
     +(aiState.lastTaskDraftAt?'<p class="text-muted">Aufgaben abgeleitet: '+formatDateTime(aiState.lastTaskDraftAt)+' · Anzahl: '+Number(aiState.lastTaskDraftCount||0)+'</p>':'')
-    +(aiState.filePath?'<p class="text-muted">Datei: <a href="'+escapeHtml(aiState.filePath)+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(aiState.filePath)+'</a> ('+formatBytes(aiState.lastKnowledgeSize||0)+')</p>':'')
+    +(aiState.filePath?'<p class="text-muted">Datei: <a href="/api/ai/project-knowledge?projectId='+encodeURIComponent(project.id)+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(aiState.filePath)+'</a> ('+formatBytes(aiState.lastKnowledgeSize||0)+')</p>':'')
     +(AI_HEALTH_STATE.loading?'<p class="text-muted">Health-Check laeuft ...</p>':'')
     +(AI_HEALTH_STATE.error?'<p class="ai-status-error">Health: '+escapeHtml(AI_HEALTH_STATE.error)+'</p>':'')
     +(aiState.lastError?'<p class="ai-status-error">Fehler: '+escapeHtml(aiState.lastError)+'</p>':'')
@@ -3314,6 +3317,121 @@ function renderInfoHub(project,flow){
 
     +'</div>'
     +'</details>';
+}
+
+function renderHostingStatus(project){
+  var hosting=project.hosting||{};
+  if(!hosting.url)return '<span class="hosting-status is-unknown">Keine Live-URL hinterlegt</span>';
+  if(HOSTING_CHECKS_ERROR)return '<span class="hosting-status is-down">Überwachung nicht verfügbar</span><p>'+escapeHtml(HOSTING_CHECKS_ERROR)+'</p>';
+  var history=(HOSTING_CHECKS[project.id]||[]).filter(function(item){return item.url===hosting.url;});
+  if(!history.length)return '<span class="hosting-status is-unknown">Noch nicht geprüft</span><p>Automatische Prüfung alle 5 Minuten.</p>';
+  var latest=history[0];
+  var age=Date.now()-Date.parse(latest.checkedAt);
+  if(!isFinite(age)||age>12*60*1000)return '<span class="hosting-status is-down">Prüfung veraltet</span><p>Letzte Prüfung: '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>';
+  var label=latest.status==='up'?'Erreichbar':(latest.status==='redirect'?'Weiterleitung ungeprüft':'Nicht erreichbar');
+  var html='<span class="hosting-status '+(latest.status==='up'?'is-up':'is-down')+'">'+label+'</span>'
+    +'<p>HTTP '+escapeHtml(latest.httpStatus||'–')+' · '+escapeHtml(latest.responseMs)+' ms · '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>';
+  if(latest.error)html+='<p>'+escapeHtml(latest.error)+'</p>';
+  if(latest.status==='redirect')html+='<p>Das Weiterleitungsziel wird nicht geprüft.</p>';
+  html+='<details><summary>Prüfverlauf ('+history.length+')</summary><ul class="hosting-history">'
+    +history.slice(0,10).map(function(item){
+      return '<li>'+escapeHtml(formatDateTime(item.checkedAt))+' · '+escapeHtml(item.status==='up'?'OK':(item.status==='redirect'?'Weiterleitung':'Fehler'))
+        +' · '+escapeHtml(item.httpStatus||'–')+' · '+escapeHtml(item.responseMs)+' ms</li>';
+    }).join('')+'</ul></details>';
+  return html;
+}
+
+function safeHostingUrl(value){
+  try {
+    var parsed=new URL(value);
+    return /^https?:$/.test(parsed.protocol)&&!parsed.username&&!parsed.password&&!parsed.hash?parsed.href:'';
+  } catch(err) {
+    return '';
+  }
+}
+
+function renderHostingExpiry(label,value){
+  if(!value)return '';
+  var end=new Date(value+'T23:59:59');
+  if(isNaN(end.getTime()))return '<p class="hosting-expiry-warning">'+escapeHtml(label)+': ungültiges Datum</p>';
+  var days=Math.ceil((end.getTime()-Date.now())/86400000);
+  return '<p'+(days<=30?' class="hosting-expiry-warning"':'')+'>'+escapeHtml(label)+': '+escapeHtml(formatDate(value))
+    +(days<0?' · abgelaufen':(days<=30?' · läuft bald ab':''))+'</p>';
+}
+
+function renderProjectHeadResources(project,flow,canEdit){
+  var ai=ensureProjectAiKnowledge(project);
+  var hosting=project.hosting||{};
+  var knowledgePath=/^data\/project-knowledge\/[A-Za-z0-9._-]+\.md$/.test(ai.filePath)?ai.filePath:'';
+  var liveUrl=safeHostingUrl(hosting.url);
+  var adminUrl=safeHostingUrl(hosting.adminUrl);
+  var fields=[
+    ['url','Live-URL','url','https://example.com'],
+    ['provider','Anbieter','text','Hosting-Anbieter'],
+    ['environment','Umgebung','text','Produktion'],
+    ['server','Server / IP','text','Servername oder IP'],
+    ['domain','Domain','text','example.com'],
+    ['domainExpiry','Domain-Ablauf','date',''],
+    ['certificateExpiry','Zertifikat-Ablauf','date',''],
+    ['contact','Ansprechpartner','text','Name oder Kontakt'],
+    ['adminUrl','Verwaltungslink','url','https://...']
+  ];
+  var html='<section class="project-head-resources" aria-label="Projektwissen und Hosting">'
+    +'<div class="project-resources-heading"><span class="material-symbols-rounded" aria-hidden="true">folder_open</span><strong>Projektwissen</strong></div>'
+    +(knowledgePath?'<a href="/api/ai/project-knowledge?projectId='+encodeURIComponent(project.id)+'" target="_blank" rel="noopener noreferrer">Wissensdatei öffnen</a><p>Aktualisiert: '+escapeHtml(formatDateTime(ai.lastGeneratedAt))+'</p>':'<p>Noch keine Wissensdatei verfügbar.</p>')
+    +'<button type="button" class="project-resources-link" data-action="open-infohub" data-id="'+escapeHtml(project.id)+'">Verwalten · '+flow.attachmentCount+' Anhänge · '+flow.secretCount+' Secrets · '+flow.noteCount+' Notizen · '+flow.linkCount+' Links</button>'
+    +'<div class="project-resources-heading hosting-heading"><span class="material-symbols-rounded" aria-hidden="true">dns</span><strong>Hosting &amp; Live-Status</strong></div>'
+    +'<div data-hosting-status="'+escapeHtml(project.id)+'">'+renderHostingStatus(project)+'</div>'
+    +((hosting.provider||hosting.environment)?'<p>'+escapeHtml([hosting.provider,hosting.environment].filter(Boolean).join(' · '))+'</p>':'')
+    +renderHostingExpiry('Domain',hosting.domainExpiry)+renderHostingExpiry('Zertifikat',hosting.certificateExpiry)
+    +(liveUrl?'<a href="'+escapeHtml(liveUrl)+'" target="_blank" rel="noopener noreferrer">Live-Projekt öffnen ↗</a>':'')
+    +(adminUrl?'<br><a href="'+escapeHtml(adminUrl)+'" target="_blank" rel="noopener noreferrer">Verwaltung öffnen ↗</a>':'')
+    +'<details class="hosting-editor" data-project-state-key="hosting-editor-'+escapeHtml(project.id)+'"><summary>Hosting-Daten '+(canEdit?'bearbeiten':'anzeigen')+'</summary><div class="hosting-fields">';
+  fields.forEach(function(field){
+    html+='<label>'+escapeHtml(field[1])+'<input type="'+field[2]+'" data-hosting-field="'+field[0]+'" value="'+escapeHtml(hosting[field[0]]||'')+'" placeholder="'+escapeHtml(field[3])+'" '+(canEdit?'':'disabled')+'></label>';
+  });
+  html+='</div><p>Nur öffentliche HTTP(S)-Ziele; Weiterleitungen werden nicht verfolgt. Ablaufdaten werden manuell gepflegt. Keine Zugangsdaten in URLs speichern.</p>'
+    +(canEdit?'<button type="button" class="btn btn-secondary" data-action="save-hosting" data-id="'+escapeHtml(project.id)+'">Hosting speichern</button>':'')
+    +'</details></section>';
+  return html;
+}
+
+function refreshHostingChecks(){
+  return fetch('/api/hosting/checks',{cache:'no-store'}).then(function(response){
+    if(!response.ok)throw new Error('HTTP '+response.status);
+    return response.json();
+  }).then(function(data){
+    HOSTING_CHECKS=data.checks||{};
+    HOSTING_CHECKS_ERROR='';
+  }).catch(function(err){
+    HOSTING_CHECKS_ERROR=err.message||'Server nicht erreichbar';
+  }).then(function(){
+    document.querySelectorAll('[data-hosting-status]').forEach(function(element){
+      var project=window.DataLayer.getProjectById(element.getAttribute('data-hosting-status'));
+      if(project)element.innerHTML=renderHostingStatus(project);
+    });
+  });
+}
+
+function saveHosting(project,card){
+  var next={};
+  card.querySelectorAll('[data-hosting-field]').forEach(function(input){
+    next[input.getAttribute('data-hosting-field')]=input.value.trim();
+  });
+  for(var i=0;i<2;i++){
+    var key=i?'adminUrl':'url';
+    if(!next[key])continue;
+    var normalized=safeHostingUrl(next[key]);
+    if(!normalized){
+      notify('Bitte eine gültige HTTP(S)-URL ohne Zugangsdaten oder Fragment eingeben.','error');
+      return;
+    }
+    next[key]=normalized;
+  }
+  project.hosting=next;
+  window.DataLayer.updateProject(project);
+  notify('Hosting-Daten gespeichert. Die automatische Prüfung erfolgt innerhalb von fünf Minuten.','info');
+  render();
 }
 
 function renderProjectList(){
@@ -3390,6 +3508,7 @@ function renderProjectList(){
     html+=renderProjectCardHeadSummary(project);
     html+='</div>';
     html+='<div class="project-card-head-rail">';
+    html+=renderProjectHeadResources(project,flow,canEdit);
     html+=renderProjectCardHeadTimeline(project);
     html+='</div>';
     html+='<div class="project-card-head-actions">';
@@ -5390,6 +5509,16 @@ function bindListActions(){
     var canEdit=!auth||typeof auth.canEditProject!=='function'||auth.canEditProject(project);
     var canDelete=!auth||typeof auth.canDeleteProject!=='function'||auth.canDeleteProject();
 
+    if(action==='open-infohub'){
+      var hub=target.closest('.project-card').querySelector('.project-infohub');
+      if(hub){hub.open=true;hub.scrollIntoView({behavior:'smooth',block:'start'});}
+      return;
+    }
+    if(action==='save-hosting'){
+      if(!canEdit){notify('Dieses Projekt kann nicht bearbeitet werden.','error');return;}
+      if(project)saveHosting(project,target.closest('.project-card'));
+      return;
+    }
     if(action==='save-project-e2e-workflow'||action==='commit-e2e-workflow'||action==='start-e2e-workflow'){
       if(!canEdit){notify('Dieses Projekt kann nicht bearbeitet werden.','error');return;}
       if(action==='start-e2e-workflow'&&!window.confirm('Workflow speichern und jetzt in GitHub Actions starten?'))return;
@@ -5697,6 +5826,8 @@ function init(){
     var contextButton=byId('project-context-btn');
     if(contextButton)contextButton.addEventListener('click',generateProjectContextFile);
     render();
+    refreshHostingChecks();
+    window.setInterval(refreshHostingChecks,30000);
 
     refreshAiHealthStatus(false).then(function(){
       render();

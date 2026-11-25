@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+import hosting_monitor
 from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse, quote
@@ -607,6 +608,20 @@ class StorageHandler(BaseHTTPRequestHandler):
         if parsed.path == '/api/ai/health':
             self._send_json(self._check_ai_health())
             return
+        if parsed.path == '/api/ai/project-knowledge':
+            self._handle_project_knowledge_get(parsed)
+            return
+        if parsed.path == '/api/hosting/checks':
+            try:
+                conn = open_db_connection()
+                try:
+                    checks = hosting_monitor.read_checks(conn)
+                finally:
+                    conn.close()
+                self._send_json({'checks': checks})
+            except (sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
+                self._send_json({'error': 'Hosting-Prüfungen konnten nicht geladen werden: ' + str(exc)}, status=500)
+            return
         if parsed.path == '/api/health':
             self._send_json({
                 'status': 'ok',
@@ -714,6 +729,41 @@ class StorageHandler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
         self._send_json({'url': '/api/task-attachments/' + attachment_id})
+
+    def _handle_project_knowledge_get(self, parsed):
+        project_id = (parse_qs(parsed.query).get('projectId') or [''])[0]
+        try:
+            conn = open_db_connection()
+            try:
+                project = next((item for item in hosting_monitor.get_projects(conn)
+                                if isinstance(item, dict) and str(item.get('id', '')) == project_id), None)
+            finally:
+                conn.close()
+            knowledge = project.get('aiKnowledge') if project else None
+            path = knowledge.get('filePath', '') if isinstance(knowledge, dict) else ''
+            if not isinstance(path, str) or not re.fullmatch(r'data/project-knowledge/[A-Za-z0-9._-]+\.md', path):
+                self._send_json({'error': 'Keine Wissensdatei vorhanden.'}, status=404)
+                return
+            root = os.path.realpath(KNOWLEDGE_DIR)
+            filename = os.path.realpath(os.path.join(root, os.path.basename(path)))
+            if os.path.commonpath([root, filename]) != root:
+                self._send_json({'error': 'Ungültige Wissensdatei.'}, status=400)
+                return
+            with open(filename, 'rb') as handle:
+                content = handle.read()
+        except FileNotFoundError:
+            self._send_json({'error': 'Wissensdatei nicht gefunden.'}, status=404)
+            return
+        except (OSError, sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
+            self._send_json({'error': 'Wissensdatei konnte nicht geladen werden: ' + str(exc)}, status=500)
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.send_header('Content-Length', str(len(content)))
+        self.send_header('Cache-Control', 'no-store')
+        self._apply_security_headers()
+        self.end_headers()
+        self.wfile.write(content)
 
     def _handle_task_attachment_get(self, path):
         attachment_id = path.rsplit('/', 1)[-1]
@@ -2811,8 +2861,18 @@ class DashboardHTTPServer(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+def run_hosting_monitor():
+    while True:
+        try:
+            hosting_monitor.run_checks(open_db_connection, utc_now_iso_z)
+        except (sqlite3.Error, ValueError, OSError, TypeError) as exc:
+            print('[Hosting] Überwachung fehlgeschlagen: ' + str(exc), flush=True)
+        time.sleep(hosting_monitor.INTERVAL_SECONDS)
+
+
 if __name__ == '__main__':
     init_db()
     httpd = DashboardHTTPServer((HOST, PORT), StorageHandler)
+    threading.Thread(target=run_hosting_monitor, daemon=True, name='hosting-monitor').start()
     print(f'Storage server listening on http://{HOST}:{PORT}')
     httpd.serve_forever()
