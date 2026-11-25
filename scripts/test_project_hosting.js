@@ -28,17 +28,30 @@ test('hosting status ignores results for an old URL and warns when results are s
   api.setChecks({p1:[{url:'https://old.example/', status:'up', checkedAt:new Date().toISOString()}]});
   assert.match(api.renderHostingStatus(project), /Noch nicht geprüft/);
   api.setChecks({p1:[{url:project.hosting.url, status:'up', checkedAt:new Date(Date.now()-13*60000).toISOString()}]});
-  assert.match(api.renderHostingStatus(project), /Prüfung veraltet/);
+  assert.match(api.renderHostingStatus(project), /hosting-status is-warning">Prüfung veraltet/);
 });
 
 test('redirects and errors never appear as an available live project', () => {
   const api = harness();
   const project = {id:'p1', hosting:{url:'https://example.com/'}};
   api.setChecks({p1:[{url:project.hosting.url, status:'redirect', checkedAt:new Date().toISOString(), httpStatus:302, responseMs:10}]});
-  assert.match(api.renderHostingStatus(project), /Weiterleitung ungeprüft/);
+  assert.match(api.renderHostingStatus(project), /hosting-status is-warning">Weiterleitung ungeprüft/);
   assert.doesNotMatch(api.renderHostingStatus(project), /Erreichbar/);
   assert.equal(api.safeHostingUrl('javascript:alert(1)'), '');
   assert.equal(api.safeHostingUrl('https://user:pass@example.com/'), '');
+});
+
+test('expiry colors distinguish impending and expired dates', () => {
+  const api = harness();
+  const today = new Date();
+  const localDate = date => [date.getFullYear(), String(date.getMonth()+1).padStart(2,'0'), String(date.getDate()).padStart(2,'0')].join('-');
+  const yesterday = new Date(today);
+  const tomorrow = new Date(today);
+  yesterday.setDate(yesterday.getDate()-1);
+  tomorrow.setDate(tomorrow.getDate()+1);
+  assert.match(api.renderHostingExpiry('Domain', localDate(tomorrow)), /hosting-expiry-warning is-warning/);
+  assert.match(api.renderHostingExpiry('Domain', localDate(yesterday)), /hosting-expiry-warning is-down/);
+  assert.match(api.renderHostingExpiry('Domain', localDate(yesterday)), /abgelaufen/);
 });
 
 test('knowledge and hosting actions are displayed and expiry dates warn', () => {

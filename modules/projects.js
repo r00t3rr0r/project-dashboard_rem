@@ -3327,9 +3327,9 @@ function renderHostingStatus(project){
   if(!history.length)return '<span class="hosting-status is-unknown">Noch nicht geprüft</span><p>Automatische Prüfung alle 5 Minuten.</p>';
   var latest=history[0];
   var age=Date.now()-Date.parse(latest.checkedAt);
-  if(!isFinite(age)||age>12*60*1000)return '<span class="hosting-status is-down">Prüfung veraltet</span><p>Letzte Prüfung: '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>';
+  if(!isFinite(age)||age>12*60*1000)return '<span class="hosting-status is-warning">Prüfung veraltet</span><p>Letzte Prüfung: '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>';
   var label=latest.status==='up'?'Erreichbar':(latest.status==='redirect'?'Weiterleitung ungeprüft':'Nicht erreichbar');
-  var html='<span class="hosting-status '+(latest.status==='up'?'is-up':'is-down')+'">'+label+'</span>'
+  var html='<span class="hosting-status '+(latest.status==='up'?'is-up':(latest.status==='redirect'?'is-warning':'is-down'))+'">'+label+'</span>'
     +'<p>HTTP '+escapeHtml(latest.httpStatus||'–')+' · '+escapeHtml(latest.responseMs)+' ms · '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>';
   if(latest.error)html+='<p>'+escapeHtml(latest.error)+'</p>';
   if(latest.status==='redirect')html+='<p>Das Weiterleitungsziel wird nicht geprüft.</p>';
@@ -3353,10 +3353,11 @@ function safeHostingUrl(value){
 function renderHostingExpiry(label,value){
   if(!value)return '';
   var end=new Date(value+'T23:59:59');
-  if(isNaN(end.getTime()))return '<p class="hosting-expiry-warning">'+escapeHtml(label)+': ungültiges Datum</p>';
-  var days=Math.ceil((end.getTime()-Date.now())/86400000);
-  return '<p'+(days<=30?' class="hosting-expiry-warning"':'')+'>'+escapeHtml(label)+': '+escapeHtml(formatDate(value))
-    +(days<0?' · abgelaufen':(days<=30?' · läuft bald ab':''))+'</p>';
+  if(isNaN(end.getTime()))return '<p class="hosting-expiry-warning is-warning">'+escapeHtml(label)+': ungültiges Datum</p>';
+  var remaining=end.getTime()-Date.now();
+  var days=Math.ceil(remaining/86400000);
+  return '<p'+(days<=30?' class="hosting-expiry-warning '+(remaining<0?'is-down':'is-warning')+'"':'')+'>'+escapeHtml(label)+': '+escapeHtml(formatDate(value))
+    +(remaining<0?' · abgelaufen':(days<=30?' · läuft bald ab':''))+'</p>';
 }
 
 function renderProjectHeadResources(project,flow,canEdit){
