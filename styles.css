@@ -6844,13 +6844,6 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
   }
 }
 
-@container project-card (min-width: 66.01rem) {
-  .dashboard-project-row > .project-card .project-card-head .project-card-head-rail {
-    flex-basis: 32rem;
-    width: min(100%, 32rem);
-  }
-}
-
 @container project-head-main (max-width: 46rem) {
   .project-card-head-summary {
     grid-template-columns: minmax(0, 1fr) minmax(0, 9.25rem);

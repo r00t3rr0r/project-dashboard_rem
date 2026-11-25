@@ -3850,9 +3850,9 @@ function renderProjectList(){
       html+='<p class="project-active-work-note">Mitarbeiter arbeitet aktuell an einer Aufgabe.</p>';
     }
     html+=renderProjectCardHeadSummary(project);
+    html+=renderProjectHeadResources(project,flow,canEdit);
     html+='</div>';
     html+='<div class="project-card-head-rail">';
-    html+=renderProjectHeadResources(project,flow,canEdit);
     html+=renderProjectCardHeadTimeline(project);
     html+='</div>';
     html+='<div class="project-card-head-actions">';
