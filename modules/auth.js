@@ -558,6 +558,13 @@
       });
     }
 
+    if (incoming.aiKeys && typeof incoming.aiKeys === 'object') {
+      next.aiKeys = Object.assign({}, next.aiKeys || {});
+      ['claude', 'openai'].forEach(function (key) {
+        if (Object.prototype.hasOwnProperty.call(incoming.aiKeys, key)) next.aiKeys[key] = String(incoming.aiKeys[key] || '').trim();
+      });
+    }
+
     if (incoming.auth && typeof incoming.auth === 'object' && incoming.auth.login && typeof incoming.auth.login === 'object') {
       next.auth = next.auth && typeof next.auth === 'object' ? next.auth : {};
       next.auth.login = next.auth.login && typeof next.auth.login === 'object' ? next.auth.login : {};
