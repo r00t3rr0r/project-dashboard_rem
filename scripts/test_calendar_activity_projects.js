@@ -9,7 +9,7 @@ function harness() {
     return {
       children:[],dataset:{},style:{},innerHTML:'',textContent:'',
       appendChild(child){this.children.push(child);},
-      setAttribute(){},
+      setAttribute(){},addEventListener(){},classList:{add(){},toggle(){}},
       insertAdjacentHTML(position,html){this.innerHTML+=html;}
     };
   }
