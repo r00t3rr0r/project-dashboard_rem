@@ -1012,6 +1012,17 @@ class StorageHandler(BaseHTTPRequestHandler):
         _next_kv_stream_event('set', 'dashboard_updates')
         self._send_json({'update': update})
 
+    def _delete_dashboard_updates(self):
+        if not self._require_admin():
+            return
+        try:
+            self._write_value('dashboard_updates', None)
+        except (sqlite3.Error, OSError) as exc:
+            self._send_json({'error': 'Neuerungen konnten nicht entfernt werden: ' + str(exc)}, status=500)
+            return
+        _next_kv_stream_event('delete', 'dashboard_updates')
+        self._send_json({'update': None})
+
     def _generate_dashboard_updates(self):
         if not self._require_admin():
             return
@@ -2337,6 +2348,19 @@ class StorageHandler(BaseHTTPRequestHandler):
 
         return None
 
+    def do_DELETE(self):
+        ensure_daily_backup()
+        if not self._is_request_origin_allowed():
+            self._send_json({'error': 'Origin not allowed.'}, status=403)
+            return
+        parsed = urlparse(self.path)
+        if not self._require_session(parsed.path):
+            return
+        if parsed.path == '/api/dashboard/updates':
+            self._delete_dashboard_updates()
+            return
+        self._send_json({'error': 'Nicht gefunden.'}, status=404)
+
     def do_OPTIONS(self):
         if not self._is_request_origin_allowed():
             self.send_response(403)
@@ -2347,7 +2371,7 @@ class StorageHandler(BaseHTTPRequestHandler):
         self.send_response(204)
         self._apply_cors_headers()
         self._apply_security_headers()
-        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-GitHub-Token')
         self.send_header('Access-Control-Max-Age', '600')
         self.end_headers()

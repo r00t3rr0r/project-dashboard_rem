@@ -20,11 +20,14 @@ function harness(options={}){
       const inputs=JSON.parse(prompt.split('Themen: ').at(-1));
       return {features:inputs.map(item=>({id:item.id,title:item.title,description:item.description}))};
     }
-  },addEventListener(){},setInterval(){}};
+  },AuthManager:{getMode:()=>options.admin?'admin':'employee'},confirm:()=>options.confirm!==false,addEventListener(){},setInterval(){}};
   const document={getElementById:()=>host,addEventListener(){}};
   const fetch=async(url,init)=>{
     requests.push({url,init});
     if(url.endsWith('daily-commits'))return {ok:true,json:async()=>({date:'2026-11-25',commits:options.commits||[commit]})};
+    if(init.method==='DELETE'){
+      return {ok:true,json:async()=>({update:null})};
+    }
     if(init.method==='POST'){
       const input=JSON.parse(init.body);
       if(options.saveError)return {ok:false,status:500,json:async()=>({error:'Speichern fehlgeschlagen'})};
@@ -174,6 +177,19 @@ test('publication requires explicit approval for selected topics and notes',()=>
   assert.throws(()=>h.api.readSelection(root,{topics:[{}]}),/bestätigen/);
   approved.checked=true;
   assert.equal(h.api.readSelection(root,{topics:[{title:'Neu'}]}).topics.length,1);
+});
+
+test('admin can remove the dashboard publication',async()=>{
+  const h=harness({
+    admin:true,
+    existing:{date:'2026-11-25',features:[{title:'Neu',description:'Aktuell'}]}
+  });
+  await h.api.refresh();
+  assert.match(h.host.innerHTML,/dashboard-updates-remove/);
+  assert.equal(await h.api.remove(),true);
+  const removal=h.requests.find(request=>request.init.method==='DELETE');
+  assert.equal(removal.url,'/api/dashboard/updates');
+  assert.equal(h.host.hidden,true);
 });
 
 test('provider change interrupts analysis before the next request',async()=>{

@@ -784,6 +784,9 @@ textarea#retro-notes {
 .dashboard-updates { margin: 0 0 1.4rem; padding: clamp(1.1rem, 3vw, 1.8rem); border: 1px solid var(--border-color); border-radius: 1rem; background: radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--accent-cyan) 15%, transparent), transparent 40%), var(--bg-secondary); }
 .dashboard-updates[hidden] { display: none; }
 .dashboard-updates-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.dashboard-updates-heading-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; }
+.dashboard-updates-remove { display: inline-flex; align-items: center; gap: .35rem; }
+.dashboard-updates-remove .material-symbols-rounded { font-size: 1rem; }
 .dashboard-updates-kicker { display: inline-flex; align-items: center; gap: .35rem; color: var(--accent-cyan); font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .dashboard-updates-kicker .material-symbols-rounded { font-size: 1rem; }
 .dashboard-updates-heading h2 { margin: .35rem 0; font-size: 1.35rem; }

@@ -28,9 +28,14 @@ function render(update){
   if(!update){host.hidden=true;host.innerHTML='';return;}
   var parts=String(update.date||'').split('-');
   var date=parts.length===3?parts[2]+'.'+parts[1]+'.'+parts[0]:update.date;
+  var auth=window.AuthManager;
+  var mode=auth&&typeof auth.getMode==='function'?auth.getMode():null;
+  var adminActions=mode==='setup'||mode==='admin'
+    ?'<button type="button" class="dashboard-updates-remove btn btn-danger" title="Dashboard-Neuerungen entfernen"><span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Entfernen</span></button>'
+    :'';
   host.innerHTML='<div class="dashboard-updates-heading"><div><span class="dashboard-updates-kicker"><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span> Dashboard-Update</span>'
     +'<h2>Das ist neu</h2><p>Ein Überblick über die Arbeit am Dashboard vom '+escapeHtml(date)+'.</p></div>'
-    +'<span class="dashboard-updates-badge">Für das Team</span></div>'
+    +'<div class="dashboard-updates-heading-actions"><span class="dashboard-updates-badge">Für das Team</span>'+adminActions+'</div></div>'
     +'<div class="dashboard-updates-grid">'+update.features.map(function(feature){
       var sources=Array.isArray(feature.sources)?feature.sources:[];
       var references=feature.sourceDetail!=='none'&&sources.length
@@ -41,6 +46,14 @@ function render(update){
       return '<article class="dashboard-update-card"><span class="material-symbols-rounded dashboard-update-icon" aria-hidden="true">auto_awesome</span><div><h3>'+escapeHtml(feature.title)+'</h3><p>'+escapeHtml(feature.description)+'</p>'+references+'</div></article>';
     }).join('')+'</div><p class="dashboard-updates-note">Mit KI aus freigegebenen Änderungsbeschreibungen erstellt. Angaben können ungenau sein.</p>';
   host.hidden=false;
+}
+
+async function remove(){
+  if(!window.confirm('Dashboard-Neuerungen wirklich dauerhaft entfernen?'))return false;
+  var result=await api('/api/dashboard/updates',{method:'DELETE'});
+  ++requestVersion;
+  render(result.update);
+  return true;
 }
 
 function refresh(){
@@ -258,9 +271,19 @@ async function generate(analysis,selection,provider,signal,onProgress){
   return {count:saved.update.features.length};
 }
 
-window.DashboardUpdates={loadCommits:loadCommits,draftHtml:draftHtml,readDrafts:readDrafts,analyze:analyze,selectionHtml:selectionHtml,addManualTopic:addManualTopic,readSelection:readSelection,generate:generate,refresh:refresh};
+window.DashboardUpdates={loadCommits:loadCommits,draftHtml:draftHtml,readDrafts:readDrafts,analyze:analyze,selectionHtml:selectionHtml,addManualTopic:addManualTopic,readSelection:readSelection,generate:generate,remove:remove,refresh:refresh};
 document.addEventListener('DOMContentLoaded',function(){
   refresh();
+  var host=document.getElementById('dashboard-updates');
+  if(host)host.addEventListener('click',function(event){
+    var button=event.target.closest('.dashboard-updates-remove');
+    if(!button)return;
+    button.disabled=true;
+    remove().catch(function(error){
+      host.hidden=false;
+      host.innerHTML='<p class="dashboard-updates-error">Neuerungen konnten nicht entfernt werden: '+escapeHtml(error.message)+'</p>';
+    });
+  });
   window.addEventListener('authChanged',refresh);
   window.setInterval(refresh,60000);
 });
