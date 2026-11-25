@@ -1585,22 +1585,36 @@ function getProjectTimelineCompactTitle(title){
   return text.slice(0,23).trim()+'...';
 }
 
-function renderProjectTimelineDayPopover(entries){
+function renderProjectTimelineWeekEntries(entries, dayLabel, isPopover){
+  var prefix=isPopover?'project-head-timeline-week-day-popover':'project-head-timeline-week-agenda';
+  function renderItem(item){
+    var meta=window.CalendarModule.getTimelineEventMeta(item);
+    return '<li class="'+prefix+'-item" style="border-left:3px solid '+escapeHtml(meta.color)+'">'
+      +(isPopover?'':'<span class="'+prefix+'-day">'+dayLabel+'</span>')
+      +'<span class="'+prefix+'-time">'+escapeHtml(item.startTime||'Ganztags')+'</span>'
+      +'<span class="'+prefix+'-title">'+escapeHtml(getProjectTimelineCompactTitle(item.title))+'</span>'
+    +'</li>';
+  }
+  var html=entries.slice(0,5).map(renderItem).join('');
+  if(entries.length>5){
+    var remaining=entries.length-5;
+    html+='<li class="project-head-timeline-week-more"><details>'
+      +'<summary>+'+remaining+' weitere'+(remaining===1?'r Termin':' Termine')+' ('+dayLabel+')</summary>'
+      +'<ul class="'+prefix+'-list">'+entries.slice(5).map(renderItem).join('')+'</ul>'
+      +'</details></li>';
+  }
+  return html;
+}
+
+function renderProjectTimelineDayPopover(entries, dayLabel){
   if(!entries.length){
-    return '<div class="project-head-timeline-week-day-popover" aria-hidden="true">'
+    return '<div class="project-head-timeline-week-day-popover">'
       +'<p class="project-head-timeline-week-day-popover-empty">Keine Termine</p>'
     +'</div>';
   }
 
-  var items=entries.map(function(item){
-    return '<li class="project-head-timeline-week-day-popover-item'+(item.isThisWeek?' is-highlight':'')+'">'
-      +'<span class="project-head-timeline-week-day-popover-time">'+escapeHtml(item.startTime||'Ganztags')+'</span>'
-      +'<span class="project-head-timeline-week-day-popover-title">'+escapeHtml(getProjectTimelineCompactTitle(item.title))+'</span>'
-    +'</li>';
-  });
-
-  return '<div class="project-head-timeline-week-day-popover" aria-hidden="true">'
-    +'<ul class="project-head-timeline-week-day-popover-list">'+items.join('')+'</ul>'
+  return '<div class="project-head-timeline-week-day-popover">'
+    +'<ul class="project-head-timeline-week-day-popover-list">'+renderProjectTimelineWeekEntries(entries,dayLabel,true)+'</ul>'
   +'</div>';
 }
 
@@ -1624,7 +1638,7 @@ function renderProjectTimelineWeekCalendar(preview){
     var badgeHtml=entries.length?'<span class="project-head-timeline-week-count">'+entries.length+'</span>':'';
     var dayLabel=getProjectTimelineWeekdayShort(dayIndex);
     var dateLabel=new Date(dayTs).toLocaleDateString('de-DE',{day:'2-digit'});
-    var popoverHtml=renderProjectTimelineDayPopover(entries);
+    var popoverHtml=renderProjectTimelineDayPopover(entries,dayLabel);
     var dayAria=dayLabel+' '+dateLabel+'. '+(entries.length?(entries.length+' Termin'+(entries.length===1?'':'e')):'Keine Termine');
     dayCells.push(
       '<div class="project-head-timeline-week-day'+(entries.length?' has-entry':'')+(isToday?' is-today':'')+'" tabindex="0" aria-label="'+escapeHtml(dayAria)+'">'
@@ -1635,15 +1649,7 @@ function renderProjectTimelineWeekCalendar(preview){
       +'</div>'
     );
 
-    entries.forEach(function(item){
-      agendaItems.push(
-        '<li class="project-head-timeline-week-agenda-item'+(item.isThisWeek?' is-highlight':'')+'">'
-          +'<span class="project-head-timeline-week-agenda-day">'+dayLabel+'</span>'
-          +'<span class="project-head-timeline-week-agenda-time">'+escapeHtml(item.startTime||'Ganztags')+'</span>'
-          +'<span class="project-head-timeline-week-agenda-title">'+escapeHtml(getProjectTimelineCompactTitle(item.title))+'</span>'
-        +'</li>'
-      );
-    });
+    if(entries.length)agendaItems.push(renderProjectTimelineWeekEntries(entries,dayLabel,false));
   }
 
   if(!agendaItems.length){
@@ -1685,6 +1691,8 @@ function buildProjectTimelinePreview(project, limit){
     var isThisWeek=ts>=todayStart && ts<nextWeekStart;
     merged.push({
       kind:kind,
+      type:sourceKind==='milestone'?'release':String(raw&&raw.type||'meeting').toLowerCase(),
+      source:String(raw&&raw.source||''),
       title:normalizedTitle,
       date:date,
       startTime:String(raw&&raw.startTime||'').trim(),

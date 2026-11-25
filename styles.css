@@ -4241,7 +4241,8 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
 }
 
 .project-head-timeline-week-day:hover,
-.project-head-timeline-week-day:focus-visible {
+.project-head-timeline-week-day:focus-visible,
+.project-head-timeline-week-day:focus-within {
   z-index: 4;
   transform: translateY(-2px);
   border-color: rgba(141, 205, 255, 0.45);
@@ -4290,9 +4291,11 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
 
 .project-head-timeline-week-day-popover {
   position: absolute;
-  top: calc(100% + 0.45rem);
+  top: 100%;
   left: 50%;
   width: min(16rem, 75vw);
+  max-height: min(24rem, 70vh);
+  overflow-y: auto;
   transform: translate(-50%, 0.45rem) scale(0.98);
   transform-origin: top center;
   opacity: 0;
@@ -4303,13 +4306,15 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   border: 1px solid rgba(124, 188, 255, 0.24);
   background: linear-gradient(160deg, rgba(19, 30, 47, 0.96), rgba(14, 25, 39, 0.96));
   box-shadow: 0 16px 38px rgba(2, 6, 13, 0.58);
-  transition: opacity 180ms ease, transform 180ms ease, visibility 180ms ease;
+  transition: opacity 180ms ease, transform 180ms ease;
 }
 
 .project-head-timeline-week-day:hover .project-head-timeline-week-day-popover,
-.project-head-timeline-week-day:focus-visible .project-head-timeline-week-day-popover {
+.project-head-timeline-week-day:focus-visible .project-head-timeline-week-day-popover,
+.project-head-timeline-week-day:focus-within .project-head-timeline-week-day-popover {
   opacity: 1;
   visibility: visible;
+  pointer-events: auto;
   transform: translate(-50%, 0) scale(1);
 }
 
@@ -4370,6 +4375,24 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   list-style: none;
   display: grid;
   gap: 0.34rem;
+}
+
+.project-head-timeline-week-agenda-list {
+  list-style: none;
+  display: grid;
+  gap: 0.34rem;
+}
+
+.project-head-timeline-week-more summary {
+  cursor: pointer;
+  color: var(--accent-blue);
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 0.25rem 0.42rem;
+}
+
+.project-head-timeline-week-more details[open] > ul {
+  margin-top: 0.28rem;
 }
 
 .project-head-timeline-week-agenda-item {

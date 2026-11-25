@@ -2130,6 +2130,10 @@
     openDetails: openEventDetailsModal,
     respond: respondToEvent,
     applyInviteUrgency: applyInviteUrgency,
+    getTimelineEventMeta: function (event) {
+      if (event.source === 'github-commit') return getActivityTypeMeta('github-commit');
+      return getEventTypeMeta(normalizeEventType(event.type || 'meeting'));
+    },
     setMode: function (mode) {
       currentCalendarMode = mode === CALENDAR_MODE_ACTIVITY ? CALENDAR_MODE_ACTIVITY : CALENDAR_MODE_EVENTS;
       renderCalendar(currentViewDate);
