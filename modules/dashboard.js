@@ -422,6 +422,21 @@
       node.remove();
     });
 
+    wrapper.querySelectorAll('.project-card').forEach(function(card) {
+      var panel = card.querySelector('.hosting-live-panel');
+      var server = card.querySelector('[data-hosting-server-summary]');
+      if (!panel || !server) return;
+      var group = document.createElement('section');
+      group.className = 'hosting-summary-card dashboard-hosting-server';
+      server.parentNode.insertBefore(group, server);
+      group.appendChild(server);
+      while (panel.firstChild) group.appendChild(panel.firstChild);
+      panel.remove();
+      group.querySelectorAll('[data-action="refresh-hosting-screenshot"]').forEach(function(button) {
+        button.remove();
+      });
+    });
+
     // Duplicate IDs wuerden Inputs/Labels in zwei Seitenbereichen kollidieren.
     wrapper.querySelectorAll('[id]').forEach(function(node) {
       node.removeAttribute('id');
@@ -430,6 +445,12 @@
     // Dashboard zeigt die Projekte als Uebersicht im Lesemodus.
     wrapper.querySelectorAll('input, select, textarea, button').forEach(function(node) {
       if (node.hasAttribute('data-project-task-dialog')) return;
+      if (node.matches('button[data-action="view-hosting-screenshot"]')) {
+        node.setAttribute('data-dashboard-hosting-screenshot', node.getAttribute('data-id'));
+        node.removeAttribute('data-action');
+        node.removeAttribute('data-id');
+        return;
+      }
       if (node.matches('button[data-action="open-infohub"]')) {
         var projectId = node.getAttribute('data-id');
         var project = window.DataLayer.getProjectById(projectId);

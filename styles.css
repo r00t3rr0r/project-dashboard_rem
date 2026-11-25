@@ -3135,6 +3135,24 @@ body.projects-modal-open {
   margin: 0;
 }
 
+.dashboard-hosting-server {
+  grid-column: 1 / -1;
+}
+
+.dashboard-hosting-server > [data-hosting-server-summary] > .hosting-summary-card {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.dashboard-hosting-server > .hosting-panel-kicker {
+  margin-top: 0.75rem;
+}
+
+.dashboard-hosting-server .hosting-screenshot {
+  max-width: 24rem;
+}
+
 .project-head-resources .hosting-auto-note {
   margin: 0.3rem 0.15rem 0;
   font-size: 0.68rem;
@@ -5416,6 +5434,10 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   cursor: pointer;
   max-width: 100%;
   white-space: normal;
+}
+
+.dashboard-project-row > .project-card button[data-dashboard-hosting-screenshot] {
+  cursor: zoom-in;
 }
 
 .project-knowledge-dialog::backdrop {

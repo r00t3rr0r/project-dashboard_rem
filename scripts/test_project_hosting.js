@@ -18,7 +18,7 @@ function harness() {
   const context = vm.createContext({window, document, console, URL, Date, fetch:(...args)=>window.testFetch(...args)});
   const source = fs.readFileSync(path.join(__dirname, '../modules/projects.js'), 'utf8').replace(
     'function renderProjectHeadResources(project,flow,canEdit){',
-    'window.hostingTest={renderHostingStatus,renderHostingExpiry,renderProjectHeadResources,renderHostingServerSummary,renderHostingCertificateSummary,renderAutomaticCertificateExpiry,refreshHostingChecks,safeHostingUrl,saveHosting,renderHostingScreenshot,ensureHostingScreenshot,screenshotQueue:function(){return HOSTING_SCREENSHOT_QUEUE;},setChecks:function(value){HOSTING_CHECKS=value;},setError:function(value){HOSTING_CHECKS_ERROR=value;}};\nfunction renderProjectHeadResources(project,flow,canEdit){'
+    'window.hostingTest={renderHostingStatus,renderHostingExpiry,renderProjectHeadResources,renderHostingServerSummary,renderHostingCertificateSummary,renderAutomaticCertificateExpiry,refreshHostingChecks,safeHostingUrl,saveHosting,renderHostingScreenshot,updateHostingScreenshot,ensureHostingScreenshot,screenshotQueue:function(){return HOSTING_SCREENSHOT_QUEUE;},setChecks:function(value){HOSTING_CHECKS=value;},setError:function(value){HOSTING_CHECKS_ERROR=value;},setScreenshot:function(id,value){HOSTING_SCREENSHOTS[id]=value;}};\nfunction renderProjectHeadResources(project,flow,canEdit){'
   ).replace(
     "notify('Hosting-Daten gespeichert. Die automatische Prüfung erfolgt innerhalb von fünf Minuten.','info');\n  render();",
     "notify('Hosting-Daten gespeichert. Die automatische Prüfung erfolgt innerhalb von fünf Minuten.','info');"
@@ -30,8 +30,34 @@ function harness() {
     Object.assign(nodes, targets);
   };
   window.hostingTest.setFetch = value => { window.testFetch = value; };
+  window.hostingTest.setNodes = (selector, value) => { nodes[selector] = value; };
   return window.hostingTest;
 }
+
+test('screenshot updates keep the dashboard read-only and its preview viewable', () => {
+  const api = harness();
+  const project = {id:'p1', hosting:{url:'https://example.com/'}};
+  api.setScreenshot(project.id, {url:project.hosting.url,createdAt:'2030-01-01T00:00:00Z'});
+  const attributes = {'data-action':'view-hosting-screenshot','data-id':'p1'};
+  const button = {
+    setAttribute(name,value){attributes[name]=value;},
+    removeAttribute(name){delete attributes[name];}
+  };
+  const node = dashboard => ({
+    innerHTML:'',
+    getAttribute:()=>project.id,
+    closest:()=>dashboard,
+    querySelector:()=>button
+  });
+  const dashboard=node(true), projects=node(false);
+  api.setNodes('[data-hosting-screenshot]', [dashboard, projects]);
+  api.updateHostingScreenshot(project);
+  assert.match(dashboard.innerHTML, /Screenshot vergrößern/);
+  assert.doesNotMatch(dashboard.innerHTML, /Screenshot aktualisieren/);
+  assert.equal(attributes['data-dashboard-hosting-screenshot'], 'p1');
+  assert.equal(attributes['data-action'], undefined);
+  assert.match(projects.innerHTML, /Screenshot aktualisieren/);
+});
 
 test('screenshots are created once, refreshed manually and hidden after a URL change', async () => {
   const api = harness();

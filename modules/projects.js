@@ -3600,8 +3600,17 @@ function updateHostingScreenshot(project){
   document.querySelectorAll('[data-hosting-screenshot]').forEach(function(element){
     if(element.getAttribute('data-hosting-screenshot')!==String(project.id))return;
     var auth=getAuthManager();
-    var canEdit=!auth||typeof auth.canEditProject!=='function'||auth.canEditProject(project);
+    var dashboard=!!element.closest('#dashboard-projects-full');
+    var canEdit=!dashboard&&(!auth||typeof auth.canEditProject!=='function'||auth.canEditProject(project));
     element.innerHTML=renderHostingScreenshot(project,canEdit);
+    if(dashboard){
+      var button=element.querySelector('[data-action="view-hosting-screenshot"]');
+      if(button){
+        button.setAttribute('data-dashboard-hosting-screenshot',project.id);
+        button.removeAttribute('data-action');
+        button.removeAttribute('data-id');
+      }
+    }
   });
 }
 
@@ -5782,6 +5791,14 @@ function bindForm(){
     if(!trigger||trigger.disabled)return;
     evt.preventDefault();
     openDashboardKnowledgeDialog(trigger.getAttribute('data-project-id')||'');
+  });
+
+  document.addEventListener('click',function(evt){
+    var trigger=evt.target&&evt.target.closest?evt.target.closest('[data-dashboard-hosting-screenshot]'):null;
+    if(!trigger||trigger.disabled)return;
+    var project=window.DataLayer.getProjectById(trigger.getAttribute('data-dashboard-hosting-screenshot'));
+    if(project)openHostingScreenshot(project);
+    else notify('Projekt für den Screenshot nicht gefunden.','error');
   });
 
   document.addEventListener('toggle',function(evt){
