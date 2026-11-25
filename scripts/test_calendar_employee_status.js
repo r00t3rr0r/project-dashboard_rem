@@ -78,7 +78,7 @@ function harness(initialEvents = []) {
   }
   return {
     api: window.testCalendar, window, events, alerts, fields, checkboxes, list, invitePanel,
-    setCurrentUser(user) { currentUser = user; }, form, exported: () => exported
+    form, exported: () => exported
   };
 }
 
