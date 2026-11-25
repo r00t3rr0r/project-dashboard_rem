@@ -112,3 +112,34 @@ test('selected cloud provider generates dashboard updates as JSON',async()=>{
   assert.equal(request.response_format.type,'json_object');
   assert.equal(result.features[0].title,'Neu');
 });
+
+test('private analysis forces local model resolution without remote fallback',async()=>{
+  const client=makeClient('178.105.213.50');
+  const calls=[];
+  client.sandbox.fetch=async(url,init)=>{
+    calls.push({url,init});
+    if(url.endsWith('/api/tags'))return {ok:true,json:async()=>({models:[{name:'text-a:latest'},{name:'example:cloud'},{name:'remote:latest',remote_host:'https://remote.invalid'}]})};
+    return {ok:true,json:async()=>({response:'{"topics":[]}',done_reason:'stop'})};
+  };
+  const models=await client.api.privateLocalModels();
+  assert.equal(models.join(','),'text-a:latest');
+  await client.api.privateLocalGenerate('private source','text-a:latest');
+  assert.equal(calls[1].url,'http://127.0.0.1:11434/api/generate');
+  assert.equal(calls[1].init.redirect,'error');
+  const request=JSON.parse(calls[1].init.body);
+  assert.equal(request.model,'text-a:latest:local');
+  assert.equal(request.truncate,false);
+  await assert.rejects(client.api.privateLocalGenerate('private source','example:cloud'),/Cloud-Modelle/);
+  assert.equal(calls.length,2);
+});
+
+test('private analysis rejects truncated output and never retries on a remote server',async()=>{
+  const client=makeClient('178.105.213.50');
+  const urls=[];
+  client.sandbox.fetch=async(url)=>{
+    urls.push(url);
+    return {ok:true,json:async()=>({response:'{"topics":[]}',done_reason:'length'})};
+  };
+  await assert.rejects(client.api.privateLocalGenerate('private source','text-a:latest'),/abgeschnitten/);
+  assert.equal(urls.join(','),'http://127.0.0.1:11434/api/generate');
+});

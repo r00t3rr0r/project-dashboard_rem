@@ -440,12 +440,20 @@ def get_today_dashboard_commits():
     start = datetime.combine(today, datetime_time.min).astimezone()
     end = datetime.combine(today + timedelta(days=1), datetime_time.min).astimezone()
     output = _git('log', '--no-merges', '--since-as-filter=' + start.isoformat(),
-                  '--format=%ct%x1f%s', 'HEAD')
+                  '--format=%ct%x1f%H%x1f%s', 'HEAD')
     commits = []
     for line in output.splitlines():
-        timestamp, subject = line.split('\x1f', 1)
+        timestamp, sha, subject = line.split('\x1f', 2)
         if start.timestamp() <= int(timestamp) < end.timestamp():
-            commits.append(subject)
+            if not re.fullmatch(r'[0-9a-f]{40,64}', sha):
+                raise ValueError('Ungueltige Commit-Kennung.')
+            body = _git('show', '-s', '--format=%B', sha)
+            files = _git('show', '--format=', '--name-only', '--no-renames',
+                         '--no-ext-diff', '--no-textconv', sha, '--').splitlines()
+            patch = _git('show', '--format=', '--no-renames', '--no-ext-diff',
+                         '--no-textconv', '--no-color', sha, '--')
+            commits.append({'sha': sha, 'subject': subject, 'message': body,
+                            'files': files, 'patch': patch})
     return {'date': today.isoformat(), 'commits': commits}
 
 
@@ -971,10 +979,18 @@ class StorageHandler(BaseHTTPRequestHandler):
         features = payload.get('features')
         day = payload.get('date')
         if (not isinstance(day, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day)
-                or not isinstance(features, list) or not 1 <= len(features) <= 12
+                or not isinstance(features, list) or not features
                 or any(not isinstance(item, dict)
                        or not isinstance(item.get('title'), str) or not 1 <= len(item['title'].strip()) <= 120
-                       or not isinstance(item.get('description'), str) or not 1 <= len(item['description'].strip()) <= 500
+                       or not isinstance(item.get('description'), str) or not 1 <= len(item['description'].strip()) <= 1800
+                       or not isinstance(item.get('sources', []), list)
+                       or any(not isinstance(source, dict)
+                              or not isinstance(source.get('sha'), str)
+                              or not re.fullmatch(r'[0-9a-f]{40,64}', source['sha'])
+                              or not isinstance(source.get('subject', ''), str)
+                              or len(source.get('subject', '')) > 500
+                              for source in item.get('sources', []))
+                       or item.get('sourceDetail', 'none') not in ('none', 'short', 'full')
                        for item in features)):
             self._send_json({'error': 'Ungueltige Zusammenfassung.'}, status=400)
             return
@@ -984,7 +1000,9 @@ class StorageHandler(BaseHTTPRequestHandler):
             self._send_json({'error': 'Ungueltiges Datum.'}, status=400)
             return
         update = {'date': day, 'generatedAt': utc_now_iso_z(),
-                  'features': [{'title': item['title'].strip(), 'description': item['description'].strip()}
+                  'features': [{'title': item['title'].strip(), 'description': item['description'].strip(),
+                                **({'sourceDetail': item['sourceDetail'], 'sources': item['sources']}
+                                   if item.get('sourceDetail', 'none') != 'none' else {})}
                                for item in features]}
         try:
             self._write_value('dashboard_updates', json.dumps(update, ensure_ascii=False))

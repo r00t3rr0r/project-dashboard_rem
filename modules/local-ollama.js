@@ -24,6 +24,7 @@ function operationLabel(path){
     '/api/ai/plan-to-tasks':'Aufgaben erzeugen',
     '/api/ai/meeting-task-draft':'Aufgabenentwurf erstellen',
     '/api/ai/dashboard-updates':'Dashboard-Neuerungen erstellen',
+    '/api/ai/dashboard-analysis':'Commits lokal analysieren',
     '/api/ai/project-milestones-draft':'Meilensteine erstellen',
     '/api/ai/project-knowledge':'Projektwissen aufbereiten'
   };
@@ -294,6 +295,45 @@ function requestGeneration(requestBody,options){
   });
 }
 
+function privateLocalRequest(path,options){
+  return fetch('http://127.0.0.1:11434'+path,Object.assign({redirect:'error',credentials:'omit'},options||{})).then(function(response){
+    return response.json().then(function(body){
+      if(!response.ok)throw new Error(body.error||'HTTP '+response.status);
+      return body;
+    });
+  }).catch(function(error){
+    if(error&&error.name==='AbortError')throw error;
+    throw new Error('Lokales Ollama auf diesem Rechner ist nicht erreichbar oder hat die Anfrage abgelehnt: '+String(error&&error.message||error));
+  });
+}
+
+function privateLocalModels(){
+  return privateLocalRequest('/api/tags',{method:'GET'}).then(function(body){
+    return generationModels(body.models).filter(function(item){
+      var name=String(item&&(item.name||item.model)||item||'').trim();
+      return name&&!/(?:^|:|-)cloud$/i.test(name)&&!(item&&item.remote_host)&&!(item&&item.remote_model);
+    }).map(function(item){return String(item&&(item.name||item.model)||item||'').trim();});
+  });
+}
+
+function privateLocalGenerate(prompt,model,options){
+  if(!model)return Promise.reject(new Error('Bitte ein lokales Textmodell auswählen.'));
+  if(/(?:^|:|-)cloud$/i.test(model))return Promise.reject(new Error('Cloud-Modelle sind für diese Analyse nicht erlaubt.'));
+  var taggedModel=model.lastIndexOf(':')>model.lastIndexOf('/')?model:model+':latest';
+  var operation=beginOperation('/api/ai/dashboard-analysis',options&&options.signal);
+  return privateLocalRequest('/api/generate',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:taggedModel+':local',prompt:prompt,stream:false,format:'json',truncate:false,
+      options:{temperature:0.1,num_predict:4096,num_ctx:16384}}),
+    signal:operation.controller?operation.controller.signal:undefined
+  }).then(function(body){
+    if(body.done_reason==='length')throw new Error('Die lokale KI-Ausgabe wurde abgeschnitten. Bitte ein geeignetes Modell wählen.');
+    var result=parseJson(body.response);
+    finishOperation(operation,null);
+    return result;
+  }).catch(function(error){finishOperation(operation,error);throw error;});
+}
+
 function currentEmployee(){
   try{
     var auth=window.AuthManager||window.AuthModule;
@@ -493,6 +533,8 @@ window.LocalOllama={
   providers:function(){return Object.keys(PROVIDERS).map(function(key){return {id:key,label:PROVIDERS[key].label};});},
   providerSelectHtml:providerSelectHtml,
   bindProviderSelect:bindProviderSelect,
+  privateLocalModels:privateLocalModels,
+  privateLocalGenerate:privateLocalGenerate,
   getStatus:function(){return Object.assign({},activityState);},
   stopAll:stopAll
 };

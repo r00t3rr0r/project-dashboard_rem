@@ -9,9 +9,9 @@ function harness(updates){
   const setup=source.slice(source.indexOf('function setupDashboardUpdate(){'),source.indexOf('function setupExportImport(){'));
   const nodes={};
   function node(id){
-    return nodes[id]||(nodes[id]={disabled:false,hidden:false,textContent:'',innerHTML:'',style:{},attributes:{},
+    return nodes[id]||(nodes[id]={disabled:false,hidden:false,textContent:'',innerHTML:'',value:'',style:{},attributes:{},
       addEventListener(event,fn){this[event]=fn;},setAttribute(key,value){this.attributes[key]=value;},
-      insertAdjacentHTML(){},focus(){}});
+      querySelector:node,querySelectorAll(){return [];},insertAdjacentHTML(){},focus(){}});
   }
   const overlay={style:{},addEventListener(){},querySelector:node};
   const timers=[],requests=[];
@@ -35,7 +35,7 @@ function harness(updates){
     }
     return {ok:true,json:async()=>data};
   };
-  vm.runInNewContext(setup+';setupDashboardUpdate();',{window,document,fetch,confirm:()=>true});
+  vm.runInNewContext(setup+';setupDashboardUpdate();',{window,document,fetch,AbortController,confirm:()=>true});
   return {node,timers,requests,resolveApply:payload=>resolveApply(payload),get reloaded(){return reloaded;}};
 }
 
@@ -85,21 +85,26 @@ test('update failures show the server error without reporting success',async()=>
   assert.equal(h.reloaded,false);
 });
 
-test('generation button reports publication success and restores controls',async()=>{
-  const h=harness({generate:async()=>({count:3})});
+test('analysis shows a selection before anything is published',async()=>{
+  let published=false;
+  const h=harness({analyze:async()=>({topics:[]}),selectionHtml:()=>'<p>Themen</p>',generate:async()=>{published=true;}});
   h.node('open').click();
   await new Promise(resolve=>setImmediate(resolve));
+  h.node('.update-model').value='test';
   h.node('.update-generate').click();
   await new Promise(resolve=>setImmediate(resolve));
-  assert.match(h.node('.update-ai-status').textContent,/3 Neuerungen/);
+  assert.match(h.node('.update-preview').innerHTML,/Themen/);
+  assert.match(h.node('.update-ai-status').textContent,/Analyse abgeschlossen/);
+  assert.equal(published,false);
   assert.equal(h.node('.update-generate').disabled,false);
   assert.equal(h.node('.update-close').disabled,false);
 });
 
-test('generation errors are visible without affecting update controls',async()=>{
-  const h=harness({generate:async()=>{throw new Error('Keine Commits');}});
+test('analysis errors are visible without affecting update controls',async()=>{
+  const h=harness({analyze:async()=>{throw new Error('Keine Commits');}});
   h.node('open').click();
   await new Promise(resolve=>setImmediate(resolve));
+  h.node('.update-model').value='test';
   h.node('.update-generate').click();
   await new Promise(resolve=>setImmediate(resolve));
   assert.match(h.node('.update-ai-status').textContent,/Keine Commits/);

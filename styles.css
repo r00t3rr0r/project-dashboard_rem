@@ -759,6 +759,23 @@ textarea#retro-notes {
 .update-generate { justify-self: start; display: inline-flex; align-items: center; gap: .4rem; }
 .update-ai .update-ai-status { color: var(--text-secondary); }
 .update-ai-status:empty { display: none; }
+.update-model-row, .update-topic-actions { display: flex; flex-wrap: wrap; align-items: end; gap: .6rem; }
+.update-model-row label, .update-options label, .update-hints { display: grid; gap: .3rem; color: var(--text-secondary); font-size: .8rem; }
+.update-model-row label { flex: 1 1 14rem; }
+.update-model-row select, .update-options select, .update-hints textarea { width: 100%; padding: .5rem; border: 1px solid var(--border-color); border-radius: .45rem; color: var(--text-primary); background: var(--bg-primary); font: inherit; }
+.update-preview fieldset { display: grid; gap: .75rem; min-width: 0; padding: 0; border: 0; }
+.update-topic-list { display: grid; gap: .55rem; max-height: 28rem; overflow: auto; }
+.update-topic-commit { padding: .7rem; border: 1px solid var(--border-color); border-radius: .65rem; background: var(--bg-primary); }
+.update-topic-commit > summary, .update-commit-detail > summary { cursor: pointer; color: var(--text-primary); font-size: .82rem; overflow-wrap: anywhere; }
+.update-topic-commit .update-topic-files { margin: .5rem 0; overflow-wrap: anywhere; }
+.update-commit-detail pre { max-height: 16rem; overflow: auto; padding: .7rem; color: var(--text-secondary); background: var(--bg-secondary); font: .72rem/1.5 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.update-topic { display: flex; align-items: flex-start; gap: .55rem; padding: .55rem 0; border-top: 1px solid var(--border-color); }
+.update-topic input { flex: 0 0 auto; margin-top: .2rem; }
+.update-topic strong, .update-topic small { display: block; overflow-wrap: anywhere; }
+.update-topic strong { color: var(--text-primary); font-size: .82rem; }
+.update-topic small { margin-top: .2rem; color: var(--text-muted); font-size: .75rem; line-height: 1.4; }
+.update-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: .65rem; }
+.update-publish { justify-self: start; display: inline-flex; align-items: center; gap: .4rem; }
 .dashboard-updates { margin: 0 0 1.4rem; padding: clamp(1.1rem, 3vw, 1.8rem); border: 1px solid var(--border-color); border-radius: 1rem; background: radial-gradient(circle at 90% 0%, color-mix(in srgb, var(--accent-cyan) 15%, transparent), transparent 40%), var(--bg-secondary); }
 .dashboard-updates[hidden] { display: none; }
 .dashboard-updates-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
@@ -777,6 +794,9 @@ textarea#retro-notes {
 .dashboard-update-icon { flex: 0 0 auto; padding: .5rem; align-self: flex-start; border-radius: .6rem; color: var(--update-color); background: color-mix(in srgb, var(--update-color) 12%, var(--bg-card)); font-size: 1.15rem; }
 .dashboard-update-card h3 { margin: 0 0 .35rem; font-size: .9rem; overflow-wrap: anywhere; }
 .dashboard-update-card p { margin: 0; color: var(--text-secondary); font-size: .82rem; line-height: 1.5; overflow-wrap: anywhere; }
+.dashboard-update-sources { margin-top: .65rem; color: var(--text-muted); font-size: .73rem; overflow-wrap: anywhere; }
+.dashboard-update-sources summary { cursor: pointer; }
+.dashboard-update-sources ul { margin: .4rem 0 0; padding-left: 1rem; }
 .dashboard-updates-note { margin-top: .9rem; }
 .dashboard-updates-error { color: var(--accent-red); font-size: .85rem; }
 @media (max-width: 540px) {

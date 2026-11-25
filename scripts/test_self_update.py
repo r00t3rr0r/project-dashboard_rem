@@ -197,16 +197,40 @@ class SelfUpdateTest(unittest.TestCase):
         today = date.today()
         start = datetime.combine(today, datetime_time.min).astimezone()
         end = datetime.combine(today + timedelta(days=1), datetime_time.min).astimezone()
+        sha = 'a' * 40
         entries = '\n'.join([
-            str(int(end.timestamp())) + '\x1ffuture',
-            str(int(start.timestamp())) + '\x1ftoday',
-            str(int(start.timestamp()) - 1) + '\x1fyesterday',
+            str(int(end.timestamp())) + '\x1f' + 'b' * 40 + '\x1ffuture',
+            str(int(start.timestamp())) + '\x1f' + sha + '\x1ftoday',
+            str(int(start.timestamp()) - 1) + '\x1f' + 'c' * 40 + '\x1fyesterday',
         ])
-        with mock.patch.object(storage, '_git', return_value=entries) as git:
+        with mock.patch.object(storage, '_git', side_effect=[entries, 'today\nDetails', 'app.js', '+change']) as git:
             result = storage.get_today_dashboard_commits()
-        self.assertEqual(result, {'date': today.isoformat(), 'commits': ['today']})
-        self.assertIn('--no-merges', git.call_args.args)
-        self.assertIn('--since-as-filter=' + start.isoformat(), git.call_args.args)
+        self.assertEqual(result, {'date': today.isoformat(), 'commits': [
+            {'sha': sha, 'subject': 'today', 'message': 'today\nDetails', 'files': ['app.js'], 'patch': '+change'}]})
+        self.assertIn('--no-merges', git.call_args_list[0].args)
+        self.assertIn('--since-as-filter=' + start.isoformat(), git.call_args_list[0].args)
+
+    def test_daily_commits_include_real_message_files_and_patch(self):
+        result = storage.get_today_dashboard_commits()
+        self.assertEqual(len(result['commits']), 1)
+        commit = result['commits'][0]
+        self.assertEqual(commit['subject'], 'Test update')
+        self.assertIn('Co-authored-by:', commit['message'])
+        self.assertIn('storage_server.py', commit['files'])
+        self.assertIn('original', commit['patch'])
+
+    def test_dashboard_commit_sources_are_persisted(self):
+        handler = object.__new__(storage.StorageHandler)
+        handler._require_admin = lambda: True
+        handler._read_json_payload = lambda: ({'date': '2026-11-25', 'features': [
+            {'title': 'Neu', 'description': 'Details', 'sourceDetail': 'full',
+             'sources': [{'sha': 'a' * 40, 'subject': 'Original'}]}]}, '')
+        with mock.patch.object(storage, 'schedule_full_backup'), mock.patch.object(handler, '_send_json') as send:
+            handler._save_dashboard_updates()
+            saved = send.call_args.args[0]['update']
+            handler._send_dashboard_updates()
+            self.assertEqual(saved, send.call_args.args[0]['update'])
+        self.assertEqual(saved['features'][0]['sources'][0]['sha'], 'a' * 40)
 
     def test_new_update_endpoints_require_admin_for_generation_and_publication(self):
         handler = object.__new__(storage.StorageHandler)

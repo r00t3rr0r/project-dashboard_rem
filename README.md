@@ -283,9 +283,11 @@ Unter `#page=tasks` wechselt der Ansichtsumschalter zwischen allen Aufgaben, der
 
 ### Dashboard-Neuerungen
 
-Administratoren können unter „Version / Update“ eine KI-Schnittstelle auswählen und mit „Neuerungen erstellen“ eine Übersicht für das Team veröffentlichen. Grundlage sind die Commit-Nachrichten des aktuellen Kalendertags in der Zeitzone des Servers, aus dem aktuell ausgecheckten Dashboard-Repository; Merge-Commits werden ausgelassen. Es werden keine Quellcode-Diffs verwendet. Bei Claude oder ChatGPT werden die Commit-Nachrichten an den ausgewählten Anbieter übermittelt.
+Administratoren können unter „Version / Update“ lokale Ollama-Modelle laden und eines für die Commit-Analyse auswählen. Ein aktuelles Ollama mit Unterstützung für den Modellzusatz `:local` muss auf dem Rechner des Browsers unter `127.0.0.1:11434` erreichbar sein und den Dashboard-Origin erlauben. Die Anfrage erzwingt `:local`; Cloud-Modelle und externe KI-Anbieter werden für diesen Ablauf nicht verwendet.
 
-Die letzte erfolgreich gespeicherte Übersicht erscheint für angemeldete Mitarbeitende auf dem Dashboard und bleibt auch an späteren Tagen sichtbar. Bei fehlenden Commits oder einem Fehler bleibt die vorherige Übersicht erhalten. KI-Ergebnisse können ungenau sein und sollten vor der Weiterverwendung geprüft werden.
+Die Analyse betrachtet Commit-Nachrichten, Dateien und Textänderungen aller Commits des aktuellen Kalendertags in der Zeitzone des Servers, aus dem aktuell ausgecheckten Dashboard-Repository; Merge-Commits werden ausgelassen. Große Änderungen werden abschnittsweise verarbeitet, was viele lokale KI-Anfragen und Zeit benötigen kann. Binärdateien lassen sich nicht inhaltlich auswerten. Vor der Veröffentlichung können die gefundenen Themen und vollständigen Commit-Änderungen geprüft, Themen ausgewählt, Zielgruppe, Sprache, Detailgrad, Commit-Bezug und zusätzliche Hinweise festgelegt werden. Jeder Commit ist zusätzlich einzeln auswählbar; die KI kann dennoch Änderungen übersehen oder falsch einordnen.
+
+Die letzte erfolgreich gespeicherte Übersicht erscheint für angemeldete Mitarbeitende auf dem Dashboard und bleibt auch an späteren Tagen sichtbar. Bei fehlenden Commits, Abbruch oder Fehler bleibt die vorherige Übersicht erhalten. KI-Ergebnisse können ungenau sein und sollten vor der Weiterverwendung geprüft werden.
 
 ### Team-Kalender
 
