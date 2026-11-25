@@ -2679,11 +2679,13 @@
   };
 
   function buildInviteRow(evt, status) {
-    var color = INVITE_TYPE_COLORS[evt.type] || 'var(--text-muted)';
+    var calMeta = window.CalendarModule && typeof window.CalendarModule.getTimelineEventMeta === 'function' ? window.CalendarModule.getTimelineEventMeta(evt) : null;
+    var color = calMeta ? calMeta.color : (INVITE_TYPE_COLORS[evt.type] || 'var(--text-muted)');
     var dateKey = String(evt.date || evt.startDate || '');
     var when = formatDate(dateKey + 'T12:00:00') + (evt.startTime ? ', ' + evt.startTime + ' Uhr' : '');
     var html = '<div class="calendar-invite-row" style="--invite-color:' + color + '">' +
       '<button type="button" class="calendar-invite-info" data-invite-open="' + escapeHtml(evt.id) + '">' +
+      (calMeta ? '<span class="calendar-invite-type"><span class="material-symbols-rounded" aria-hidden="true">' + escapeHtml(calMeta.icon) + '</span>' + escapeHtml(calMeta.label) + '</span>' : '') +
       '<strong>' + escapeHtml(evt.title || 'Termin') + '</strong>' +
       '<span class="calendar-invite-date">' + escapeHtml(when + (evt.location ? ' · ' + evt.location : '')) + '</span></button>' +
       '<div class="calendar-invite-actions">';
@@ -2692,7 +2694,23 @@
         '" data-invite-respond="' + pair[0] + '" data-invite-id="' + escapeHtml(evt.id) + '" title="' + pair[1] + '">' +
         '<span class="material-symbols-rounded" aria-hidden="true">' + INVITE_RSVP[pair[0]].icon + '</span><span>' + pair[1] + '</span></button>';
     });
-    return html + '</div></div>';
+    return html + '</div>' + buildInviteParticipants(evt) + '</div>';
+  }
+
+  function buildInviteParticipants(evt) {
+    var ids = getEventParticipants(evt);
+    if (!ids.length) return '';
+    var employees = (window.DataLayer && typeof window.DataLayer.getEmployees === 'function' ? window.DataLayer.getEmployees() : []) || [];
+    var responses = evt.responses && typeof evt.responses === 'object' ? evt.responses : {};
+    var chips = ids.map(function(id) {
+      var emp = employees.find(function(e) { return String(e.id) === id; });
+      var entry = responses[id];
+      var status = entry && INVITE_RSVP[entry.status] ? entry.status : 'pending';
+      return '<span class="calendar-rsvp-badge calendar-rsvp-badge-' + status + '" title="' + escapeHtml(INVITE_RSVP[status].label) + '">' +
+        '<span class="material-symbols-rounded" aria-hidden="true">' + INVITE_RSVP[status].icon + '</span>' +
+        escapeHtml(emp ? (emp.name || emp.title || id) : id) + '</span>';
+    }).join('');
+    return '<div class="calendar-invite-participants" aria-label="Teilnehmer und Anwesenheit">' + chips + '</div>';
   }
 
   function applyDashboardInviteUrgency(host, events) {

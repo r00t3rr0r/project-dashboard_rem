@@ -2211,6 +2211,13 @@ body.kanban-touch-dragging {
   flex-wrap: wrap;
 }
 
+.calendar-invite-participants {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
 .calendar-invites-more {
   font-size: 0.74rem;
   color: var(--text-muted);
