@@ -9,6 +9,7 @@ function harness(provider, tree) {
   const saved = [];
   const requests = [];
   const dialogs = [];
+  const notifications = [];
   let interval;
   const elements = {
     'knowledge-progress-p1':{textContent:''},
@@ -16,6 +17,7 @@ function harness(provider, tree) {
   };
   const window = {
     location:{origin:'http://localhost'},
+    AuthManager:{getMode:()=> 'admin'},
     DataLayer:{getProjectById:()=>project, updateProject(){}},
     LocalOllama:{
       getProvider:()=>provider,
@@ -25,7 +27,7 @@ function harness(provider, tree) {
       }
     },
     testOverrides:{
-      render(){}, refreshAiHealthStatus:()=>Promise.resolve(), notify(){}, openAiKnowledgeTaskDialog(){},
+      render(){}, refreshAiHealthStatus:()=>Promise.resolve(), notify:(message)=>notifications.push(message), openAiKnowledgeTaskDialog(){},
       buildProjectKnowledgeSnapshot:()=>({project:{title:'Demo'}}),
       fetchRepoMeta:async()=>({default_branch:'main'}),
       fetchGitHubJson:async(url)=>url.includes('/commits/')?{sha:'commit-123',commit:{tree:{sha:'tree-123'}}}:tree,
@@ -53,11 +55,13 @@ function harness(provider, tree) {
      postBackendJson=function(){return window.testOverrides.postBackendJson.apply(null,arguments);};
      window.testRuns=KNOWLEDGE_RUNS;
      window.testSections=buildKnowledgeSections; window.testPrompt=knowledgePrompt;
+     window.testBuildKnowledgeContinuationPrompt=buildKnowledgeContinuationPrompt;
+     window.testOpenProjectKnowledgeEditor=openProjectKnowledgeEditor;
      window[NAMESPACE]={`
   );
   vm.runInNewContext(source,{window,document,URL,Date,console,TextEncoder,AbortController,
     setInterval:fn=>{interval=fn;return 1;},clearInterval(){}});
-  return {window,project,saved,requests,elements,dialogs,tick:()=>interval()};
+  return {window,project,saved,requests,elements,dialogs,notifications,tick:()=>interval()};
 }
 
 for (const provider of ['ollama','claude','openai']) {
@@ -185,4 +189,58 @@ test('ein Fehler beim Speichern laesst die bisherige Wissensdatei bestehen',asyn
   await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/Speicherfehler/);
   assert.equal(h.project.aiKnowledge.filePath,'data/project-knowledge/old.md');
   assert.equal(h.project.aiKnowledge.lastStatus,'error');
+});
+
+test('Projektwissen ist in der KI-Aufbereitung auf Admins beschraenkt',()=>{
+  const h=harness('ollama',{tree:[]});
+  h.window.AuthManager.getMode=()=> 'employee';
+  assert.throws(()=>h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/Nur Administratoren/);
+  assert.equal(h.requests.length,0);
+  assert.equal(h.saved.length,0);
+});
+
+test('KI-Ergaenzungen beruecksichtigen den Bereich und begrenzen Unicode-Wissen ohne Kontextueberlauf',()=>{
+  const h=harness('ollama',{tree:[]});
+  const existing=('Anfang 🧑‍💻 '.repeat(1000))+'Ende des Projektwissens';
+  const result=h.window.testBuildKnowledgeContinuationPrompt(
+    h.project,'Fehleranalyse','Reproduktionsschritte und Hypothesen','Fehler seit dem Release',existing
+  );
+  assert.equal(result.truncated,true);
+  assert.match(result.prompt,/Fehleranalyse/);
+  assert.match(result.prompt,/Reproduktionsschritte und Hypothesen/);
+  assert.match(result.prompt,/Fehler seit dem Release/);
+  assert.match(result.prompt,/gekuerzt/);
+  assert.match(result.prompt,/Ende des Projektwissens/);
+  assert(Buffer.byteLength(result.prompt,'utf8')+2048+1024<=8192);
+});
+
+test('Admin-Editor fuegt einen pruefbaren Entwurf ein und speichert erst nach Klick',async()=>{
+  const h=harness('ollama',{tree:[]});
+  h.window.testOpenProjectKnowledgeEditor('p1');
+  const dialog=h.dialogs[0];
+  const area=dialog.querySelector('[data-knowledge-area]');
+  const markdown=dialog.querySelector('[data-knowledge-markdown]');
+  area.value='errors';
+  markdown.value='# Bisheriges Wissen';
+  const click=(action)=>dialog.listeners.click({
+    target:{closest:()=>({getAttribute:()=>action})}
+  });
+  click('generate');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(markdown.value,/## KI-Ergaenzung: Fehleranalyse/);
+  assert.match(markdown.value,/Dokumentierter Abschnitt/);
+  assert.equal(h.saved.length,0);
+  click('save');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(h.saved[0].url,'/api/project-knowledge');
+  assert.match(h.saved[0].payload.markdown,/KI-Ergaenzung: Fehleranalyse/);
+  assert.equal(h.project.aiKnowledge.filePath,'data/project-knowledge/p1.md');
+});
+
+test('Der Wissenseditor bleibt Nicht-Admins verborgen',()=>{
+  const h=harness('ollama',{tree:[]});
+  h.window.AuthManager.getMode=()=> 'employee';
+  h.window.testOpenProjectKnowledgeEditor('p1');
+  assert.equal(h.dialogs.length,0);
+  assert.match(h.notifications[0],/Nur Administratoren/);
 });

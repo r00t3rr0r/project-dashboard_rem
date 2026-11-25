@@ -868,6 +868,8 @@ class StorageHandler(BaseHTTPRequestHandler):
         self._send_json({'url': '/api/task-attachments/' + attachment_id})
 
     def _handle_project_knowledge_get(self, parsed):
+        if not self._require_admin():
+            return
         project_id = (parse_qs(parsed.query).get('projectId') or [''])[0]
         try:
             conn = open_db_connection()
@@ -1091,6 +1093,8 @@ class StorageHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def _handle_project_knowledge_post(self):
+        if not self._require_admin():
+            return
         length = int(self.headers.get('Content-Length', '0'))
         body = self.rfile.read(length).decode('utf-8') if length else '{}'
         try:
@@ -1159,6 +1163,8 @@ class StorageHandler(BaseHTTPRequestHandler):
         })
 
     def _handle_project_knowledge_save(self):
+        if not self._require_admin():
+            return
         payload, error = self._read_json_payload()
         if error:
             self._send_json({'error': error}, status=400)
@@ -1182,6 +1188,8 @@ class StorageHandler(BaseHTTPRequestHandler):
         self._send_json({'ok': True, 'filePath': relative_path, 'bytes': len(content)})
 
     def _handle_project_context_post(self):
+        if not self._require_admin():
+            return
         payload, error = self._read_json_payload()
         if error:
             self._send_json({'error': error}, status=400)
@@ -2786,7 +2794,7 @@ class StorageHandler(BaseHTTPRequestHandler):
                 for employee in self._auth_employees(connection):
                     if str(employee.get('id')) == session[0] and employee.get('auth', {}).get('accessLevel') == 'admin':
                         return True
-        self._send_json({'error': 'Nur Administratoren duerfen das Dashboard aktualisieren.'}, status=403)
+        self._send_json({'error': 'Nur Administratoren duerfen diese Aktion ausfuehren.'}, status=403)
         return False
 
     def _handle_system_update(self, apply):

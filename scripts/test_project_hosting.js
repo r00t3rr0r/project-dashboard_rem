@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {test} = require('node:test');
 
-function harness() {
+function harness(mode='admin') {
   const nodes = {};
   const document = {
     readyState:'loading', addEventListener(){}, getElementById(){return null;},
@@ -14,7 +14,7 @@ function harness() {
       this.innerHTML = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }};}
   };
-  const window = {location:{origin:'http://localhost'}, DataLayer:{updateProject(){}}, QuickTaskModule:{showToast(){}}};
+  const window = {location:{origin:'http://localhost'},AuthManager:{getMode:()=>mode},DataLayer:{updateProject(){}},QuickTaskModule:{showToast(){}}};
   const context = vm.createContext({window, document, console, URL, Date, fetch:(...args)=>window.testFetch(...args)});
   const source = fs.readFileSync(path.join(__dirname, '../modules/projects.js'), 'utf8').replace(
     'function renderProjectHeadResources(project,flow,canEdit){',
@@ -148,6 +148,16 @@ test('knowledge and hosting data are grouped and editable', () => {
   assert.match(html, /jährlich/);
   assert.match(html, /data-hosting-field="dnsRecords"/);
   assert.match(html, /data-hosting-field="autoRenew"/);
+});
+
+test('AI project knowledge is hidden from non-admin project cards', () => {
+  const api = harness('employee');
+  const html = api.renderProjectHeadResources({
+    id:'p1', aiKnowledge:{filePath:'data/project-knowledge/p1.md'},
+    hosting:{url:'https://example.com/'}
+  }, {attachmentCount:0,secretCount:0,noteCount:0,linkCount:0}, false);
+  assert.doesNotMatch(html, /Wissensdatei öffnen/);
+  assert.match(html, /Hosting &amp; Live-Status/);
 });
 
 test('automatic DNS and verified TLS details are shown separately from manual information', () => {

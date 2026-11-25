@@ -163,7 +163,7 @@ function runSpecialAssistant(root,mode,action,answers){
   if(mode==='routine'&&!description){notify('Bitte zuerst den gewuenschten Routineablauf beschreiben.',true);return;}
   var host=root.querySelector('#ai-special-result');host.hidden=false;host.innerHTML='<div class="ai-assistant-pending"><span class="material-symbols-rounded">progress_activity</span><span>'+escapeHtml(ASSISTANTS[mode].title)+' wird vorbereitet ...</span></div>';
   fetchProjectKnowledge(project).then(function(knowledge){
-    var context=projectContext(project);var answerText=answers?Object.keys(answers).map(function(id){return id+': '+answers[id];}).join('\n'):'Keine ergaenzenden Antworten';var finalInstruction=action==='prepare'?'Alle Rueckfragen sind beantwortet. Erzeuge jetzt den finalen Workflow ohne weitere questions und fuelle workflowYaml vollstaendig aus.':'Nutze die Antworten, um den Workflow neu zu generieren. Pruefe, ob danach noch wirklich notwendige questions offen sind.';var instruction=ASSISTANTS[mode].instruction+'\n\n'+finalInstruction+'\n\nBeantwortete Rueckfragen:\n'+answerText+'\n\nNutzerbeschreibung:\n'+description+'\nZielumgebung: '+target+'\nRuntime: '+runtime+'\nBekannte Eingaben/Parameter:\n'+(inputs||'Keine Angaben')+'\n\nProjektwissen:\n'+(knowledge||'Keine separate Wissensdatei vorhanden.')+'\n\nAntworte ausschliesslich als JSON-Objekt.';
+    var context=projectContext(project);var answerText=answers?Object.keys(answers).map(function(id){return id+': '+answers[id];}).join('\n'):'Keine ergaenzenden Antworten';var finalInstruction=action==='prepare'?'Alle Rueckfragen sind beantwortet. Erzeuge jetzt den finalen Workflow ohne weitere questions und fuelle workflowYaml vollstaendig aus.':'Nutze die Antworten, um den Workflow neu zu generieren. Pruefe, ob danach noch wirklich notwendige questions offen sind.';var instruction=ASSISTANTS[mode].instruction+'\n\n'+finalInstruction+'\n\nBeantwortete Rueckfragen:\n'+answerText+'\n\nNutzerbeschreibung:\n'+description+'\nZielumgebung: '+target+'\nRuntime: '+runtime+'\nBekannte Eingaben/Parameter:\n'+(inputs||'Keine Angaben')+'\n\nProjektwissen:\n'+(knowledge||unavailableProjectKnowledgeMessage())+'\n\nAntworte ausschliesslich als JSON-Objekt.';
     return window.LocalOllama.generate('/api/ai/meeting-task-draft',{projectId:project.id,projectTitle:projectTitle(project),draftInput:instruction,existingData:context,promptConfig:{temperature:0.1,maxTokens:5000}});
   }).then(function(body){
     var data=body&&body.draft&&typeof body.draft==='object'?body.draft:body||{};if(mode==='routine'){data.target=target;data.runtime=runtime;data.requiredInputs=inputs;}renderSpecialResult(root,mode,data);
@@ -210,10 +210,25 @@ function projectContext(project){
     employees:employees.map(function(employee){return {id:employee.id,name:employee.name||'',role:employee.role||'',availability:employee.availability||'',capacityPoints:employee.capacityPoints||0,focusArea:employee.focusArea||'',skills:employee.skills||employee.competencies||[],openTaskCount:workload[employee.id]||0};})
   };
 }
+function canReadProjectKnowledge(){
+  return !!(window.AuthManager&&typeof window.AuthManager.getMode==='function'
+    &&window.AuthManager.getMode()==='admin');
+}
+function unavailableProjectKnowledgeMessage(){
+  return canReadProjectKnowledge()
+    ?'Keine separate Wissensdatei vorhanden.'
+    :'Das separate KI-Projektwissen ist nur Administratoren zugaenglich. Nutze den aktuellen Dashboard-Projektkontext.';
+}
 function fetchProjectKnowledge(project){
   var filePath=String(project&&project.aiKnowledge&&project.aiKnowledge.filePath||'').trim();
   if(!filePath||typeof fetch!=='function')return Promise.resolve('');
-  return fetch(filePath).then(function(response){return response.ok?response.text():'';}).then(function(text){return String(text||'').slice(0,9000);}).catch(function(){return '';});
+  if(!canReadProjectKnowledge())return Promise.resolve('');
+  return fetch('/api/ai/project-knowledge?projectId='+encodeURIComponent(project.id),{
+    method:'GET',cache:'no-store'
+  }).then(function(response){
+    if(!response.ok)throw new Error('KI-Projektwissen konnte nicht geladen werden (HTTP '+response.status+').');
+    return response.text();
+  }).then(function(text){return String(text||'').slice(0,9000);});
 }
 function normalizeAssistantDraft(body){
   var draft=body&&body.draft&&typeof body.draft==='object'?body.draft:{};
@@ -557,7 +572,7 @@ function runAssistant(root,mode){
   result.innerHTML='<div class="ai-assistant-pending"><span class="material-symbols-rounded" aria-hidden="true">progress_activity</span><span>'+escapeHtml(assistant.title)+' analysiert '+escapeHtml(projectTitle(project))+' ...</span></div>';
   fetchProjectKnowledge(project).then(function(knowledge){
     var context=projectContext(project);
-    var instruction=assistant.instruction+'\n\nProjektwissen:\n'+(knowledge||'Keine separate Wissensdatei vorhanden. Nutze den aktuellen Projektsnapshot.')+'\n\nAntworte ausschliesslich als JSON-Objekt mit dem Feld tasks. Jede Aufgabe benoetigt title, description, priority, effortHours, sequenceIndex, dependsOnPrevious, subtasks und bei Projekt fertigstellen zusaetzlich aiPrompt. Keine Markdown-Ausgabe.';
+    var instruction=assistant.instruction+'\n\nProjektwissen:\n'+(knowledge||unavailableProjectKnowledgeMessage())+'\n\nAntworte ausschliesslich als JSON-Objekt mit dem Feld tasks. Jede Aufgabe benoetigt title, description, priority, effortHours, sequenceIndex, dependsOnPrevious, subtasks und bei Projekt fertigstellen zusaetzlich aiPrompt. Keine Markdown-Ausgabe.';
     return window.LocalOllama.generate('/api/ai/meeting-task-draft',{projectId:project.id,projectTitle:projectTitle(project),draftInput:instruction,options:{createSubtasks:true,splitIntoMultiple:true},existingData:context,promptConfig:{temperature:0.2,maxTokens:3200}});
   }).then(function(body){
       assistantDraft={projectId:project.id,mode:mode,ownerId:'',items:normalizeAssistantDraft(body)};

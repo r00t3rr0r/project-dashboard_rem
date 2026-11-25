@@ -102,6 +102,14 @@ class StorageConcurrencyTest(unittest.TestCase):
             return response.headers['Set-Cookie']
 
     @classmethod
+    def employee_cookie(cls):
+        request = urllib.request.Request(cls.base_url + '/api/auth/login', data=json.dumps({
+            'username': 'test.employee', 'password': 'employee-password', 'remember': False
+        }).encode(), headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.headers['Set-Cookie']
+
+    @classmethod
     def tearDownClass(cls):
         cls.server.shutdown()
         cls.server.server_close()
@@ -113,7 +121,7 @@ class StorageConcurrencyTest(unittest.TestCase):
         cls.temp_dir.cleanup()
 
     @classmethod
-    def request_json(cls, method, path, payload=None):
+    def request_json(cls, method, path, payload=None, cookie=None):
         body = None if payload is None else json.dumps(payload).encode('utf-8')
         request = urllib.request.Request(
             cls.base_url + path,
@@ -121,7 +129,7 @@ class StorageConcurrencyTest(unittest.TestCase):
             method=method,
             headers={
                 'Content-Type': 'application/json',
-                'Cookie': cls.cookie.split(';')[0]
+                'Cookie': (cookie or cls.cookie).split(';')[0]
             }
         )
         with urllib.request.urlopen(request, timeout=10) as response:
@@ -197,6 +205,44 @@ class StorageConcurrencyTest(unittest.TestCase):
         self.assertEqual(call.call_args.args, ('test-model', 'Analysiere diesen Abschnitt'))
         self.assertTrue(call.call_args.kwargs['require_complete'])
         self.assertEqual(call.call_args.kwargs['max_tokens'], 4096)
+
+    def test_project_knowledge_endpoints_are_admin_only(self):
+        conn = storage.open_db_connection()
+        old = conn.execute('SELECT value, updatedAt FROM kv_store WHERE key = ?', ('pd_employees',)).fetchone()
+        employees = json.loads(old[0])
+        employees.append({'id': 'test-employee', 'auth': {'accessLevel': 'employee', 'login': {
+            'enabled': True, 'username': 'test.employee',
+            'passwordHash': hashlib.sha256(b'employee-password').hexdigest()
+        }}})
+        conn.execute('UPDATE kv_store SET value = ?, updatedAt = ? WHERE key = ?',
+                     (json.dumps(employees), storage.utc_now_iso_z(), 'pd_employees'))
+        conn.commit()
+        conn.close()
+        try:
+            employee_cookie = self.employee_cookie()
+            requests = [
+                ('GET', '/api/ai/project-knowledge?projectId=p1', None),
+                ('POST', '/api/project-knowledge', {
+                    'projectId': 'p1', 'projectTitle': 'Demo', 'markdown': '# Wissen'
+                }),
+                ('POST', '/api/ai/project-knowledge', {
+                    'projectId': 'p1', 'projectTitle': 'Demo',
+                    'analysisOnly': True, 'knowledgePrompt': 'Analyse'
+                }),
+                ('POST', '/api/ai/project-context', {'projects': [{'id': 'p1'}]})
+            ]
+            with mock.patch.object(storage.StorageHandler, '_call_ollama') as call:
+                for method, path, payload in requests:
+                    with self.subTest(method=method, path=path), self.assertRaises(urllib.error.HTTPError) as caught:
+                        self.request_json(method, path, payload, cookie=employee_cookie)
+                    self.assertEqual(caught.exception.code, 403)
+                call.assert_not_called()
+        finally:
+            conn = storage.open_db_connection()
+            conn.execute('UPDATE kv_store SET value = ?, updatedAt = ? WHERE key = ?',
+                         (*old, 'pd_employees'))
+            conn.commit()
+            conn.close()
 
     def test_project_knowledge_rejects_context_overflow_before_generation(self):
         with mock.patch.object(storage.StorageHandler, '_call_ollama') as call:

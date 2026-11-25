@@ -43,6 +43,11 @@ function getAuthManager(){
   return window.AuthManager || null;
 }
 
+function isProjectKnowledgeAdmin(){
+  var auth=getAuthManager();
+  return !!(auth&&typeof auth.getMode==='function'&&auth.getMode()==='admin');
+}
+
 function getVisibleProjects(){
   var projects = window.DataLayer.getProjects().slice();
   var auth = getAuthManager();
@@ -2582,6 +2587,7 @@ function ensureProjectAiKnowledge(project){
   if(typeof project.aiKnowledge.lastStatus!=='string')project.aiKnowledge.lastStatus='idle';
   if(typeof project.aiKnowledge.lastGeneratedAt!=='string')project.aiKnowledge.lastGeneratedAt='';
   if(typeof project.aiKnowledge.filePath!=='string')project.aiKnowledge.filePath='';
+  if(typeof project.aiKnowledge.lastEditedAt!=='string')project.aiKnowledge.lastEditedAt='';
   if(typeof project.aiKnowledge.lastError!=='string')project.aiKnowledge.lastError='';
   if(typeof project.aiKnowledge.lastModel!=='string')project.aiKnowledge.lastModel='';
   if(typeof project.aiKnowledge.sourceCommitSha!=='string')project.aiKnowledge.sourceCommitSha='';
@@ -3104,6 +3110,10 @@ function buildProjectContextSnapshot(project){
 }
 
 function generateProjectContextFile(){
+  if(!isProjectKnowledgeAdmin()){
+    notify('Nur Administratoren duerfen den KI-Projektkontext erstellen.','error');
+    return Promise.resolve();
+  }
   var projects=getVisibleProjects();
   if(!projects.length){notify('Keine sichtbaren Projekte fuer den KI-Kontext vorhanden.','error');return Promise.resolve();}
   var payload={
@@ -3264,6 +3274,7 @@ function openDashboardKnowledgeDialog(projectId){
 }
 
 function renderAiProjectContext(project,flow){
+  if(!isProjectKnowledgeAdmin())return '';
   var team=Array.isArray(flow.teamMembers)?flow.teamMembers:[];
   var github=project.github||{};
   var aiState=ensureProjectAiKnowledge(project);
@@ -3304,7 +3315,7 @@ function renderInfoHub(project,flow){
     +'<summary>Projektwissen verwalten (Anhange, Secrets, Notizen, Links)</summary>'
     +'<div class="infohub-grid">'
 
-    +renderAiProjectContext(project,flow)
+    +(isProjectKnowledgeAdmin()?renderAiProjectContext(project,flow):'')
 
     +'<section class="infohub-card">'
     +'<h4>Dateianhaenge</h4>'
@@ -3370,10 +3381,10 @@ function renderInfoHub(project,flow){
     +'<button class="btn btn-secondary mt-1" data-action="save-scratchpad" data-id="'+escapeHtml(project.id)+'">Schmierzettel speichern</button>'
     +'</section>'
 
-    +'<section class="infohub-card infohub-ai-card">'
+    +(isProjectKnowledgeAdmin()?'<section class="infohub-card infohub-ai-card">'
     +'<h4>KI - Projektwissen</h4>'
     +(hasGithubLink
-      ?'<p class="text-muted">Projektkontext und Repository-Dateibaum werden an die gewaehlte KI gesendet. Claude und ChatGPT sind externe Dienste; Notizen, Links und Dateinamen koennen sensible Daten enthalten. Dateiinhalte werden nicht analysiert.</p>'
+      ?'<p class="text-muted">Projektkontext und Repository-Dateibaum werden an die gewaehlte KI gesendet. Claude und ChatGPT sind externe Dienste; Notizen, Links und Dateinamen koennen sensible Daten enthalten. Dateiinhalte werden bei der Erzeugung nicht analysiert; fuer KI-Ergaenzungen wird ein Auszug der Wissensdatei uebertragen.</p>'
       :'<p class="text-muted">Fuer KI-Aufbereitung bitte zuerst GitHub-Repository am Projekt hinterlegen.</p>')
     +(window.LocalOllama&&window.LocalOllama.providerSelectHtml?window.LocalOllama.providerSelectHtml('ai-provider-'+project.id):'')
     +'<div class="ai-health-grid">'
@@ -3384,6 +3395,7 @@ function renderInfoHub(project,flow){
     +'<p class="text-muted mt-1">Letzter Health-Check: '+(AI_HEALTH_STATE.checkedAt?formatDateTime(AI_HEALTH_STATE.checkedAt):'n/a')+(AI_HEALTH_STATE.endpoint?' · Endpoint: '+escapeHtml(AI_HEALTH_STATE.endpoint):'')+'</p>'
     +(provider==='ollama'?'<label for="ai-model-'+escapeHtml(project.id)+'" class="text-muted">Ollama-Modell</label><select id="ai-model-'+escapeHtml(project.id)+'">'+renderModelOptions(selectedModel)+'</select>':'<p class="text-muted">Cloud-Modell wird durch die KI-Schnittstelle vorgegeben. Der Check prueft nur, ob ein Schluessel hinterlegt ist.</p>')
     +'<div class="project-actions-inline mt-1">'
+    +'<button class="btn btn-secondary" data-action="edit-ai-knowledge" data-id="'+escapeHtml(project.id)+'">Wissensdatei bearbeiten</button>'
     +'<button class="btn btn-secondary" data-action="check-ai-health" data-id="'+escapeHtml(project.id)+'">Verbindung pruefen</button>'
     +'<button class="btn btn-primary" data-action="generate-ai-knowledge" data-id="'+escapeHtml(project.id)+'" '+(hasGithubLink&&!run?'':'disabled')+'>Projektwissen KI erzeugen</button>'
     +'<button class="btn btn-secondary" data-action="generate-ai-tasks" data-id="'+escapeHtml(project.id)+'" '+(aiState.filePath?'':'disabled')+'>Aufgaben aus KI-Wissen</button>'
@@ -3395,7 +3407,7 @@ function renderInfoHub(project,flow){
     +(AI_HEALTH_STATE.loading?'<p class="text-muted">Health-Check laeuft ...</p>':'')
     +(AI_HEALTH_STATE.error?'<p class="ai-status-error">Health: '+escapeHtml(AI_HEALTH_STATE.error)+'</p>':'')
     +(aiState.lastError?'<p class="ai-status-error">Fehler: '+escapeHtml(aiState.lastError)+'</p>':'')
-    +'</section>'
+    +'</section>':'')
 
     +'</div>'
     +'</details>';
@@ -3699,13 +3711,14 @@ function openHostingScreenshot(project){
 
 function renderProjectHeadResources(project,flow,canEdit){
   var ai=ensureProjectAiKnowledge(project);
+  var showAiKnowledge=isProjectKnowledgeAdmin();
   var hosting=project.hosting||{};
   var knowledgePath=/^data\/project-knowledge\/[A-Za-z0-9._-]+\.md$/.test(ai.filePath)?ai.filePath:'';
   var liveUrl=safeHostingUrl(hosting.url);
   var adminUrl=safeHostingUrl(hosting.adminUrl);
   var html='<section class="project-head-resources" aria-label="Projektwissen und Hosting">'
-    +'<div class="project-resources-heading"><span class="material-symbols-rounded" aria-hidden="true">folder_open</span><strong>Projektwissen</strong></div>'
-    +(knowledgePath?'<a href="/api/ai/project-knowledge?projectId='+encodeURIComponent(project.id)+'" target="_blank" rel="noopener noreferrer">Wissensdatei öffnen</a><p>Aktualisiert: '+escapeHtml(formatDateTime(ai.lastGeneratedAt))+'</p>':'<p>Noch keine Wissensdatei verfügbar.</p>')
+    +(showAiKnowledge?'<div class="project-resources-heading"><span class="material-symbols-rounded" aria-hidden="true">folder_open</span><strong>KI-Projektwissen</strong></div>'
+    +(knowledgePath?'<a href="/api/ai/project-knowledge?projectId='+encodeURIComponent(project.id)+'" target="_blank" rel="noopener noreferrer">Wissensdatei öffnen</a><p>Aktualisiert: '+escapeHtml(formatDateTime(ai.lastEditedAt||ai.lastGeneratedAt))+'</p>':'<p>Noch keine Wissensdatei verfügbar.</p>'):'')
     +'<button type="button" class="project-resources-link" data-action="open-infohub" data-id="'+escapeHtml(project.id)+'">Verwalten · '+flow.attachmentCount+' Anhänge · '+flow.secretCount+' Secrets · '+flow.noteCount+' Notizen · '+flow.linkCount+' Links</button>'
     +'<div class="project-resources-heading hosting-heading"><span class="material-symbols-rounded" aria-hidden="true">dns</span><div><strong>Hosting &amp; Live-Status</strong><small>Projektbetrieb im Überblick</small></div></div>'
     +'<div class="hosting-live-panel"><div class="hosting-panel-kicker">Live-Überwachung</div><div data-hosting-status="'+escapeHtml(project.id)+'">'+renderHostingStatus(project)+'</div>'
@@ -3871,7 +3884,9 @@ function renderProjectList(){
     html+='<button class="project-card-menu-item" data-action="set-progress" data-id="'+escapeHtml(project.id)+'" '+(canSetProgress?'':'disabled')+'>Fortschritt setzen ('+currentProgress+'%)</button>';
     html+='<button class="project-card-menu-item project-card-menu-item-danger" data-action="delete" data-id="'+escapeHtml(project.id)+'" '+(canDelete?'':'disabled')+'>Loeschen</button>';
     html+='<button class="project-card-menu-item" data-action="sync" data-id="'+escapeHtml(project.id)+'" '+(canEdit?'':'disabled')+'>Commits aktualisieren</button>';
-    html+='<button class="project-card-menu-item" data-action="generate-ai-knowledge" data-id="'+escapeHtml(project.id)+'" '+(gh.url&&canEdit?'':'disabled')+'>Projektwissen KI</button>';
+    if(isProjectKnowledgeAdmin()){
+      html+='<button class="project-card-menu-item" data-action="generate-ai-knowledge" data-id="'+escapeHtml(project.id)+'" '+(gh.url?'':'disabled')+'>Projektwissen KI</button>';
+    }
     html+='</div>';
     html+='</details>';
     html+='</div></div>';
@@ -4902,7 +4917,236 @@ function importCommitsForProject(projectId){
   });
 }
 
+function knowledgeUtf8Slice(text,maxBytes,fromEnd){
+  var characters=Array.from(String(text||''));
+  var selected=[];
+  var bytes=0;
+  for(var index=fromEnd?characters.length-1:0;fromEnd?index>=0:index<characters.length;index+=fromEnd?-1:1){
+    var character=characters[index];
+    var size=knowledgeBytes(character);
+    if(bytes+size>maxBytes)break;
+    selected.push(character);
+    bytes+=size;
+  }
+  if(fromEnd)selected.reverse();
+  return selected.join('');
+}
+
+function buildKnowledgeContinuationPrompt(project,areaLabel,areaInstruction,guidance,markdown){
+  var maxPromptBytes=8192-2048-1024;
+  var instructions=knowledgeUtf8Slice(guidance,1000,false);
+  var prefix='Du bist der technische Projektassistent. Erstelle einen neuen, konkreten Markdown-Abschnitt fuer die Wissensdatei. '
+    +'Arbeitsbereich: '+areaLabel+'. '+areaInstruction+'\n'
+    +'Projekt: '+getProjectTitle(project)+'\n'
+    +'Admin-Hinweis: '+(instructions||'Kein zusaetzlicher Hinweis.')+'\n'
+    +'Bestehendes Projektwissen (bei langen Dateien ein gekuerzter Auszug):\n';
+  var suffix='\n\nGib ausschliesslich den neuen Abschnitt als Markdown aus. Wiederhole oder ersetze nicht die bestehende Datei. '
+    +'Erfinde keine Implementierungsdetails. Trenne verifizierte Fakten, Annahmen und offene Fragen klar.';
+  var existing=String(markdown||'').trim()||'[Noch keine Wissensdatei vorhanden.]';
+  var available=maxPromptBytes-knowledgeBytes(prefix)-knowledgeBytes(suffix);
+  if(available<=0)throw new Error('Projektname und Eingaben ueberschreiten das KI-Kontextbudget.');
+  var truncated=knowledgeBytes(existing)>available;
+  if(truncated){
+    var marker='\n\n[... Wissensdatei fuer den KI-Entwurf gekuerzt ...]\n\n';
+    var contentBudget=Math.max(0,available-knowledgeBytes(marker));
+    var startBytes=Math.ceil(contentBudget/2);
+    existing=knowledgeUtf8Slice(existing,startBytes,false)+marker
+      +knowledgeUtf8Slice(existing,contentBudget-startBytes,true);
+  }
+  var prompt=prefix+existing+suffix;
+  if(knowledgeBytes(prompt)+2048+1024>8192)throw new Error('Der KI-Auftrag ueberschreitet das verfuegbare Kontextbudget.');
+  return {prompt:prompt,truncated:truncated};
+}
+
+function openProjectKnowledgeEditor(projectId){
+  if(!isProjectKnowledgeAdmin()){
+    notify('Nur Administratoren duerfen das KI-Projektwissen bearbeiten.','error');
+    return;
+  }
+  var project=window.DataLayer.getProjectById(projectId);
+  if(!project){
+    notify('Projekt nicht gefunden.','error');
+    return;
+  }
+  var aiState=ensureProjectAiKnowledge(project);
+  var workAreas=[
+    {value:'programming',label:'Weiterprogrammierung',instruction:'Leite konkrete technische Folgeschritte, Voraussetzungen und einen passenden Testplan ab.'},
+    {value:'tasks',label:'Aufgaben und Planung',instruction:'Erstelle priorisierte naechste Aufgaben mit Abhaengigkeiten und pruefbaren Ergebnissen.'},
+    {value:'logic',label:'Systemlogik',instruction:'Beschreibe wichtige Ablaeufe, Regeln, Zustaende, Randfaelle und offene Fragen.'},
+    {value:'errors',label:'Fehleranalyse',instruction:'Strukturiere bekannte Fehler, Reproduktionsschritte, moegliche Ursachen als Hypothesen und Verifikationsschritte.'},
+    {value:'other',label:'Sonstiges',instruction:'Ergaenze das Wissen passend zum Admin-Hinweis und benenne Unsicherheiten.'}
+  ];
+  var options=workAreas.map(function(area){
+    return '<option value="'+area.value+'">'+area.label+'</option>';
+  }).join('');
+  var dialog=document.createElement('dialog');
+  var state={controller:null,busy:false};
+  dialog.className='project-knowledge-dialog knowledge-generation-dialog knowledge-editor-dialog';
+  dialog.setAttribute('aria-labelledby','project-knowledge-editor-title');
+  dialog.innerHTML='<header class="project-knowledge-header"><div><p class="section-kicker">KI-Projektwissen · Admin</p>'
+    +'<h2 id="project-knowledge-editor-title">'+escapeHtml(getProjectTitle(project))+'</h2>'
+    +'<p>Pruefe Aenderungen, bevor du sie dauerhaft speicherst.</p></div>'
+    +'<button type="button" class="toolbar-icon-btn" data-knowledge-editor-action="close" aria-label="Dialog schliessen" title="Dialog schliessen"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></header>'
+    +'<div class="knowledge-editor-body">'
+    +'<label class="form-group"><span>Wissensbereich fuer die KI-Ergaenzung</span><select data-knowledge-area>'+options+'</select></label>'
+    +'<label class="form-group"><span>Hinweis an die KI (optional)</span><textarea rows="2" maxlength="1000" data-knowledge-guidance placeholder="z. B. Fokus auf den Login-Ablauf oder Fehler seit dem letzten Release"></textarea></label>'
+    +'<p class="text-muted">Die ausgewaehlte KI erhaelt einen Auszug der Wissensdatei und deinen Hinweis. KI-Ergaenzungen werden nur als Entwurf eingefuegt und nicht automatisch gespeichert.</p>'
+    +'<label class="form-group"><span>Wissensdatei (Markdown)</span><textarea data-knowledge-markdown rows="20" spellcheck="true" placeholder="# Projektwissen&#10;&#10;Halte hier bestaetigte Fakten, Ablaufe und offene Fragen fest."></textarea></label>'
+    +'<p class="text-muted" data-knowledge-editor-status role="status" aria-live="polite">Wissensdatei wird geladen ...</p>'
+    +'</div><footer class="knowledge-editor-footer">'
+    +'<button type="button" class="btn btn-secondary" data-knowledge-editor-action="close">Schliessen</button>'
+    +'<button type="button" class="btn btn-secondary" data-knowledge-editor-action="generate">KI-Ergaenzung entwerfen</button>'
+    +'<button type="button" class="btn btn-primary" data-knowledge-editor-action="save">Aenderungen speichern</button>'
+    +'</footer>';
+  document.body.appendChild(dialog);
+
+  var markdownField=dialog.querySelector('[data-knowledge-markdown]');
+  var statusField=dialog.querySelector('[data-knowledge-editor-status]');
+  var generateButton=dialog.querySelector('[data-knowledge-editor-action="generate"]');
+  var saveButton=dialog.querySelector('[data-knowledge-editor-action="save"]');
+  function setStatus(message,isError){
+    if(!dialog.open)return;
+    statusField.textContent=message;
+    statusField.className=isError?'ai-status-error':'text-muted';
+  }
+  function setBusy(busy){
+    state.busy=busy;
+    generateButton.disabled=busy;
+    saveButton.disabled=busy;
+  }
+  function closeEditor(){
+    if(state.controller)state.controller.abort();
+    dialog.close();
+  }
+  dialog.addEventListener('close',function(){
+    if(state.controller)state.controller.abort();
+    dialog.remove();
+  });
+  dialog.addEventListener('click',function(event){
+    var button=event.target&&event.target.closest?event.target.closest('[data-knowledge-editor-action]'):null;
+    if(!button)return;
+    var action=button.getAttribute('data-knowledge-editor-action');
+    if(action==='close'){
+      closeEditor();
+      return;
+    }
+    if(action==='generate'){
+      if(state.busy)return;
+      if(!window.LocalOllama||typeof window.LocalOllama.generate!=='function'){
+        setStatus('Der KI-Anbieter ist nicht verfuegbar.',true);
+        return;
+      }
+      var selected=dialog.querySelector('[data-knowledge-area]').value;
+      var area=workAreas.find(function(item){return item.value===selected;})||workAreas[0];
+      var prompt;
+      try{
+        prompt=buildKnowledgeContinuationPrompt(project,area.label,area.instruction,
+          dialog.querySelector('[data-knowledge-guidance]').value,markdownField.value);
+      }catch(error){
+        setStatus(error.message||String(error),true);
+        return;
+      }
+      var provider=window.LocalOllama.getProvider();
+      var modelInput=byId('ai-model-'+projectId);
+      var model=modelInput&&modelInput.value?modelInput.value.trim():aiState.preferredModel;
+      var payload={
+        projectId:project.id,
+        projectTitle:getProjectTitle(project),
+        analysisOnly:true,
+        knowledgePrompt:prompt.prompt,
+        promptConfig:{temperature:0.2,maxTokens:2048,contextTokens:8192}
+      };
+      if(provider==='ollama'&&model)payload.model=model;
+      state.controller=new AbortController();
+      setBusy(true);
+      setStatus(prompt.truncated
+        ?'KI erstellt einen Entwurf aus einem gekuerzten Auszug der Wissensdatei ...'
+        :'KI erstellt einen Entwurf aus dem vorhandenen Projektwissen ...');
+      var generation;
+      try{
+        generation=window.LocalOllama.generate('/api/ai/project-knowledge',payload,{
+          provider:provider,signal:state.controller.signal
+        });
+      }catch(error){
+        state.controller=null;
+        setBusy(false);
+        setStatus('KI-Ergaenzung fehlgeschlagen: '+String(error&&error.message||error),true);
+        return;
+      }
+      Promise.resolve(generation).then(function(result){
+        var addition=String(result&&result.markdown||'').trim();
+        if(!addition)throw new Error('Die KI hat keinen Abschnitt geliefert.');
+        var current=String(markdownField.value||'').trim();
+        var heading='## KI-Ergaenzung: '+area.label+' ('+new Date().toISOString()+')';
+        markdownField.value=(current?current+'\n\n':'')+heading+'\n\n'+addition+'\n';
+        setStatus('Entwurf eingefuegt. Bitte pruefen und danach selbst speichern.');
+      }).catch(function(error){
+        if(error&&error.name==='AbortError')return;
+        setStatus('KI-Ergaenzung fehlgeschlagen: '+String(error&&error.message||error),true);
+      }).then(function(){
+        state.controller=null;
+        setBusy(false);
+      });
+      return;
+    }
+    if(action==='save'){
+      if(state.busy)return;
+      var markdown=String(markdownField.value||'').trim();
+      if(!markdown){
+        setStatus('Die Wissensdatei darf nicht leer sein.',true);
+        return;
+      }
+      setBusy(true);
+      setStatus('Wissensdatei wird gespeichert ...');
+      postBackendJson('/api/project-knowledge',{
+        projectId:project.id,projectTitle:getProjectTitle(project),markdown:markdown
+      }).then(function(saved){
+        if(!saved||!/^data\/project-knowledge\/[A-Za-z0-9._-]+\.md$/.test(saved.filePath||'')||!saved.bytes){
+          throw new Error('Der Server hat die Wissensdatei nicht bestaetigt.');
+        }
+        var freshProject=window.DataLayer.getProjectById(projectId);
+        if(freshProject){
+          var freshAiState=ensureProjectAiKnowledge(freshProject);
+          freshAiState.filePath=saved.filePath;
+          freshAiState.lastKnowledgeSize=Number(saved.bytes)||knowledgeBytes(markdown);
+          freshAiState.lastEditedAt=new Date().toISOString();
+          freshAiState.lastStatus='ready';
+          freshAiState.lastError='';
+          window.DataLayer.updateProject(freshProject);
+        }
+        notify('KI-Projektwissen gespeichert.','info');
+        render();
+        dialog.close();
+      }).catch(function(error){
+        setStatus('Speichern fehlgeschlagen: '+String(error&&error.message||error),true);
+      }).then(function(){
+        setBusy(false);
+      });
+    }
+  });
+  dialog.showModal();
+  if(aiState.filePath){
+    fetch('/api/ai/project-knowledge?projectId='+encodeURIComponent(projectId),{
+      method:'GET',cache:'no-store'
+    }).then(function(response){
+      if(!response.ok)throw new Error('Wissensdatei konnte nicht geladen werden (HTTP '+response.status+').');
+      return response.text();
+    }).then(function(markdown){
+      markdownField.value=markdown;
+      setStatus('Datei geladen. Manuelle Aenderungen und KI-Ergaenzungen werden erst nach dem Speichern uebernommen.');
+    }).catch(function(error){
+      setStatus(error.message||String(error),true);
+    });
+  }else{
+    setStatus('Noch keine Wissensdatei vorhanden. Du kannst hier neues Projektwissen anlegen.');
+  }
+}
+
 function openAiKnowledgeTaskDialog(projectId,options){
+  if(!isProjectKnowledgeAdmin()){
+    notify('Nur Administratoren duerfen Aufgaben aus dem KI-Projektwissen ableiten.','error');
+    return;
+  }
   var project=window.DataLayer.getProjectById(projectId);
   if(!project)return;
 
@@ -5367,6 +5611,7 @@ function fetchKnowledgeTree(github,onProgress){
 }
 
 function generateAiKnowledgeForProject(projectId){
+  if(!isProjectKnowledgeAdmin())throw new Error('Nur Administratoren duerfen das KI-Projektwissen erstellen.');
   var project=window.DataLayer.getProjectById(projectId);
   if(!project)throw new Error('Projekt nicht gefunden.');
   if(KNOWLEDGE_RUNS[projectId])return Promise.reject(new Error('Die Erstellung laeuft bereits.'));
@@ -6290,9 +6535,14 @@ function bindListActions(){
       return;
     }
 
+    if(action==='edit-ai-knowledge'){
+      openProjectKnowledgeEditor(projectId);
+      return;
+    }
+
     if(action==='generate-ai-knowledge'){
-      if(!canEdit){
-        notify('Dieses Projekt kann nicht bearbeitet werden.','error');
+      if(!isProjectKnowledgeAdmin()){
+        notify('Nur Administratoren duerfen das KI-Projektwissen erstellen.','error');
         return;
       }
       generateAiKnowledgeForProject(projectId).catch(function(err){
@@ -6302,8 +6552,8 @@ function bindListActions(){
     }
 
     if(action==='generate-ai-tasks'){
-      if(!canEdit){
-        notify('Dieses Projekt kann nicht bearbeitet werden.','error');
+      if(!isProjectKnowledgeAdmin()){
+        notify('Nur Administratoren duerfen Aufgaben aus dem KI-Projektwissen ableiten.','error');
         return;
       }
       openAiKnowledgeTaskDialog(projectId,{autoGenerate:false});
@@ -6473,7 +6723,10 @@ function init(){
     bindListActions();
     bindRepoAdmin();
     var contextButton=byId('project-context-btn');
-    if(contextButton)contextButton.addEventListener('click',generateProjectContextFile);
+    if(contextButton){
+      contextButton.hidden=!isProjectKnowledgeAdmin();
+      if(isProjectKnowledgeAdmin())contextButton.addEventListener('click',generateProjectContextFile);
+    }
     render();
     refreshHostingChecks();
     window.setInterval(refreshHostingChecks,30000);

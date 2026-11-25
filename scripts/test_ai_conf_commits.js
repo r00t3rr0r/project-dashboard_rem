@@ -48,7 +48,7 @@ function makeHarness() {
   };
   const source = fs.readFileSync(path.join(__dirname,'../modules/ai-conf.js'),'utf8').replace(
     'window.AIConfModule={render:render,getConfiguration:readConfig};',
-    'window.AIConfModule={fetchRecentCommits,translateCommitBatch,importCommitTask,importedCommitShas,runCommitAssistant,saveConfig,getConfiguration:readConfig,setDraft:function(value){assistantDraft=value;}};'
+    'window.AIConfModule={fetchProjectKnowledge,fetchRecentCommits,translateCommitBatch,importCommitTask,importedCommitShas,runCommitAssistant,saveConfig,getConfiguration:readConfig,setDraft:function(value){assistantDraft=value;}};'
   );
   vm.runInNewContext(source,sandbox);
   return {api:window.AIConfModule,window,sandbox,project,tasks,requests,notifications,openedDrafts,root,host,select,button,controls,choices};
@@ -71,6 +71,23 @@ test('model selection survives string-backed storage and reload',()=>{
   assert.equal(JSON.parse(stored).routing,'fallback');
   assert.equal(harness.api.getConfiguration().primaryModel,'text-primary');
   assert.equal(harness.api.getConfiguration().fallbackModel,'text-fallback');
+});
+
+test('AI workflows retrieve project knowledge only for admins through the protected endpoint',async()=>{
+  const harness=makeHarness();
+  harness.project.aiKnowledge={filePath:'data/project-knowledge/p1-ki-wissen.md'};
+  harness.window.AuthManager.getMode=()=> 'employee';
+  assert.equal(await harness.api.fetchProjectKnowledge(harness.project),'');
+  assert.equal(harness.requests.length,0);
+
+  harness.window.AuthManager.getMode=()=> 'admin';
+  harness.sandbox.fetch=async(url,options)=>{
+    harness.requests.push({url,options});
+    return {ok:true,text:async()=>'# Verifiziertes Wissen'};
+  };
+  assert.equal(await harness.api.fetchProjectKnowledge(harness.project),'# Verifiziertes Wissen');
+  assert.equal(harness.requests[0].url,'/api/ai/project-knowledge?projectId=p1');
+  assert.equal(harness.requests[0].options.cache,'no-store');
 });
 
 function githubCommit(number,date='2026-11-17T11:00:00Z') {
