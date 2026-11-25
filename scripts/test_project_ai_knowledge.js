@@ -8,6 +8,7 @@ function harness(provider, tree) {
   const project = {id:'p1', name:'Demo', github:{url:'https://github.com/acme/demo'}};
   const saved = [];
   const requests = [];
+  const dialogs = [];
   let interval;
   const elements = {
     'knowledge-progress-p1':{textContent:''},
@@ -31,7 +32,17 @@ function harness(provider, tree) {
       postBackendJson:async(url,payload)=>{saved.push({url,payload}); return {filePath:'data/project-knowledge/p1.md',bytes:123};}
     }
   };
-  const document = {readyState:'loading',addEventListener(){},getElementById:id=>elements[id]||null};
+  function element(){
+    const listeners={},children={};
+    return {innerHTML:'',textContent:'',open:false,disabled:false,hidden:false,listeners,
+      setAttribute(){},addEventListener:(name,fn)=>{listeners[name]=fn;},
+      appendChild(text){this.innerHTML=String(text).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');},
+      querySelector(selector){return children[selector]||(children[selector]=element());},
+      showModal(){this.open=true;},close(){this.open=false;listeners.close?.();},remove(){this.removed=true;}
+    };
+  }
+  const document = {readyState:'loading',addEventListener(){},getElementById:id=>elements[id]||null,
+    createElement:()=>element(),createTextNode:text=>text,body:{appendChild:node=>dialogs.push(node)}};
   const source = fs.readFileSync(path.join(__dirname,'../modules/projects.js'),'utf8').replace(
     'window[NAMESPACE]={',
     `render=window.testOverrides.render; refreshAiHealthStatus=window.testOverrides.refreshAiHealthStatus;
@@ -41,11 +52,12 @@ function harness(provider, tree) {
      fetchGitHubJson=function(){return window.testOverrides.fetchGitHubJson.apply(null,arguments);};
      postBackendJson=function(){return window.testOverrides.postBackendJson.apply(null,arguments);};
      window.testRuns=KNOWLEDGE_RUNS;
+     window.testSections=buildKnowledgeSections; window.testPrompt=knowledgePrompt;
      window[NAMESPACE]={`
   );
-  vm.runInNewContext(source,{window,document,URL,Date,console,
+  vm.runInNewContext(source,{window,document,URL,Date,console,TextEncoder,AbortController,
     setInterval:fn=>{interval=fn;return 1;},clearInterval(){}});
-  return {window,project,saved,requests,elements,tick:()=>interval()};
+  return {window,project,saved,requests,elements,dialogs,tick:()=>interval()};
 }
 
 for (const provider of ['ollama','claude','openai']) {
@@ -53,7 +65,7 @@ for (const provider of ['ollama','claude','openai']) {
     const tree = {tree:Array.from({length:101},(_,i)=>({path:'src/file'+i+'.js',type:'blob'})),truncated:false};
     const h = harness(provider,tree);
     await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
-    assert.equal(h.requests.length,3);
+    assert(h.requests.length>3);
     assert(h.requests.every(request=>request.options.provider===provider));
     assert.equal(h.saved[0].url,'/api/project-knowledge');
     assert.match(h.saved[0].payload.markdown,/src\/file100\.js/);
@@ -61,6 +73,8 @@ for (const provider of ['ollama','claude','openai']) {
     assert.equal(h.project.aiKnowledge.filePath,'data/project-knowledge/p1.md');
     assert.equal(h.project.aiKnowledge.sourceCommitSha,'commit-123');
     assert.equal(h.project.aiKnowledge.lastModel,provider+'-model');
+    assert.equal(h.dialogs[0].querySelector('[data-run-close]').disabled,false);
+    assert.match(h.dialogs[0].querySelector('[data-run-log]').textContent,/erfolgreich gespeichert/);
   });
 }
 
@@ -97,6 +111,71 @@ test('Fortschritt und vorhandene Abschnitte bleiben waehrend langer KI-Anfragen 
   assert.match(h.elements['knowledge-preview-p1'].textContent,/Erster Abschnitt/);
   finish({markdown:'Zweiter Abschnitt',model:'test'});
   await pending;
+});
+
+test('grosser Kontext mit Unicode wird ohne Datenverlust innerhalb des Kontextbudgets zerlegt',async()=>{
+  const h=harness('openai',{tree:[]});
+  const long='Text 🧑‍💻 ä漢字 '.repeat(1200);
+  const data={description:long,tasks:Array.from({length:25},(_,i)=>({id:i,title:'Aufgabe '+i}))};
+  const sections=h.window.testSections(data,[]);
+  assert(sections.length>10);
+  const records=sections.flatMap(section=>section.data);
+  assert.equal(records.filter(record=>record.path.join('.')==='description').map(record=>record.text).join(''),JSON.stringify(long));
+  assert.equal(records.filter(record=>record.path[0]==='tasks').length,50);
+  for(const section of sections){
+    const bytes=new TextEncoder().encode(h.window.testPrompt(section)).length;
+    assert(bytes+4096+1024<=8192,bytes);
+    assert(section.data.length<=16);
+  }
+});
+
+for(const code of ['AI_OUTPUT_TRUNCATED','AI_CONTEXT_LIMIT']){
+  test(code+': teilt nur den fehlgeschlagenen Chunk und speichert keine Teilantwort',async()=>{
+    const h=harness('openai',{tree:[{path:'app.js',type:'blob'}]});
+    h.window.testOverrides.buildProjectKnowledgeSnapshot=()=>({a:'eins',b:'zwei',c:'drei',d:'vier'});
+    let calls=0;
+    h.window.LocalOllama.generate=async()=>{
+      if(++calls===1)throw Object.assign(new Error('Limit'),{code});
+      return {markdown:'Erfolg '+calls,model:'test'};
+    };
+    await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+    assert.equal(calls,4);
+    assert.match(h.dialogs[0].querySelector('[data-run-log]').textContent,/halbiert/);
+    assert.match(h.saved[0].payload.markdown,/Erfolg 2/);
+    assert.match(h.saved[0].payload.markdown,/Erfolg 3/);
+    assert.doesNotMatch(h.saved[0].payload.markdown,/Limit/);
+  });
+}
+
+test('wiederholte Kuerzung endet begrenzt mit sichtbarem Fehler ohne Speicherung',async()=>{
+  const h=harness('claude',{tree:[]});
+  h.window.testOverrides.buildProjectKnowledgeSnapshot=()=>({description:'x'.repeat(5000)});
+  let calls=0;
+  h.window.LocalOllama.generate=async()=>{calls++;throw Object.assign(new Error('abgeschnitten'),{code:'AI_OUTPUT_TRUNCATED'});};
+  await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/abgeschnitten/);
+  assert(calls<=5);
+  assert.equal(h.saved.length,0);
+  assert.match(h.dialogs[0].querySelector('[data-run-log]').textContent,/Fehler: abgeschnitten/);
+  assert.equal(h.dialogs[0].querySelector('[data-run-close]').disabled,false);
+});
+
+test('Abbrechen im Popup beendet die Anfrage und speichert keine Datei',async()=>{
+  const h=harness('ollama',{tree:[]});
+  let signal;
+  h.window.LocalOllama.generate=async(path,payload,options)=>{
+    signal=options.signal;
+    return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(Object.assign(new Error('Abbruch'),{name:'AbortError'}))));
+  };
+  const pending=h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  await new Promise(resolve=>setImmediate(resolve));
+  const dialog=h.dialogs[0];
+  assert(dialog.open);
+  assert.equal(dialog.querySelector('[data-run-close]').disabled,true);
+  dialog.querySelector('[data-run-stop]').listeners.click();
+  await assert.rejects(pending,/abgebrochen/);
+  assert(signal.aborted);
+  assert.equal(h.project.aiKnowledge.lastStatus,'stopped');
+  assert.equal(h.saved.length,0);
 });
 
 test('ein Fehler beim Speichern laesst die bisherige Wissensdatei bestehen',async()=>{

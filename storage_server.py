@@ -1110,15 +1110,24 @@ class StorageHandler(BaseHTTPRequestHandler):
         model = str(payload.get('model') or OLLAMA_DEFAULT_MODEL).strip() or OLLAMA_DEFAULT_MODEL
 
         prompt = self._build_project_prompt(project_title, github, snapshot)
+        knowledge_tokens = 4096
         if payload.get('analysisOnly') is True:
             prompt = str(payload.get('knowledgePrompt') or '').strip()
-            if not prompt or len(prompt) > 500000:
-                self._send_json({'error': 'Ungueltiger Projektwissen-Prompt.'}, status=400)
+            config = payload.get('promptConfig') if isinstance(payload.get('promptConfig'), dict) else {}
+            knowledge_tokens = self._read_max_tokens({'maxTokens': config.get('maxTokens', 4096)})
+            if not prompt or len(prompt.encode('utf-8')) + knowledge_tokens + 1024 > 8192:
+                self._send_json({'error': 'Projektwissen-Chunk ueberschreitet das Kontextbudget.',
+                                 'code': 'AI_CONTEXT_LIMIT'}, status=400)
                 return
         try:
-            ai_text, _ai_chunks = self._call_ollama(model, prompt, max_tokens=6000, require_complete=True) if payload.get('analysisOnly') is True else self._call_ollama(model, prompt)
+            ai_text, _ai_chunks = self._call_ollama(model, prompt, max_tokens=knowledge_tokens, require_complete=True) if payload.get('analysisOnly') is True else self._call_ollama(model, prompt)
         except RuntimeError as exc:
-            self._send_json({'error': str(exc)}, status=502)
+            result = {'error': str(exc)}
+            if 'abgeschnitten' in str(exc):
+                result['code'] = 'AI_OUTPUT_TRUNCATED'
+            elif re.search(r'context.{0,30}(?:length|window|limit)|maximum context|prompt.{0,20}too long', str(exc), re.I):
+                result['code'] = 'AI_CONTEXT_LIMIT'
+            self._send_json(result, status=502)
             return
 
         generated_at = utc_now_iso_z()
@@ -2641,6 +2650,7 @@ class StorageHandler(BaseHTTPRequestHandler):
             payload['format'] = response_format
         if require_complete:
             payload['truncate'] = False
+            payload['options']['num_ctx'] = 8192
         data = json.dumps(payload).encode('utf-8')
         errors = []
         for base_url in OLLAMA_BASE_URLS:

@@ -189,7 +189,10 @@ function localFetch(path,options){
         if(!response.ok)throw new Error(body&&body.error?body.error:'HTTP '+response.status);
         return {body:body,endpoint:OLLAMA_BASES[index]+path};
       });
-    }).catch(function(error){return tryBase(index+1,error);});
+    }).catch(function(error){
+      if(error&&error.name==='AbortError')throw error;
+      return tryBase(index+1,error);
+    });
   }
   return tryBase(0,null);
 }
@@ -226,6 +229,9 @@ function resolvedPayload(payload){
     temperature:global.temperature,
     maxTokens:global.maxTokens
   });
+  if(next.knowledgePrompt){
+    next.promptConfig=Object.assign({},next.promptConfig,supplied,{contextTokens:8192});
+  }
   return next;
 }
 
@@ -282,7 +288,11 @@ function remoteFetch(path,method,payload,options){
   }
   return fetch(url,init).then(function(response){
     return response.json().catch(function(){return {};}).then(function(body){
-      if(!response.ok)throw new Error(body&&body.error?body.error:'HTTP '+response.status+' an '+url);
+      if(!response.ok){
+        var error=new Error(body&&body.error?body.error:'HTTP '+response.status+' an '+url);
+        if(body&&body.code)error.code=body.code;
+        throw error;
+      }
       return {body:body,endpoint:url};
     });
   });
@@ -411,7 +421,9 @@ function cloudComplete(provider,requestBody,options){
         throw new Error(PROVIDERS[provider].label+': '+(typeof message==='string'?message:JSON.stringify(message)));
       }
       if(requestBody.requireComplete&&((provider==='claude'&&data.stop_reason==='max_tokens')||(provider==='openai'&&data.choices&&data.choices[0]&&data.choices[0].finish_reason==='length'))){
-        throw new Error('Die KI-Antwort wurde abgeschnitten. Bitte ein hoeheres Antwortbudget oder ein geeignetes Modell waehlen.');
+        var error=new Error('Die KI-Antwort wurde abgeschnitten.');
+        error.code='AI_OUTPUT_TRUNCATED';
+        throw error;
       }
       if(provider==='claude')return (Array.isArray(data.content)?data.content:[]).map(function(part){return part&&part.text||'';}).join('');
       return String(data&&data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content||'');
@@ -468,7 +480,10 @@ function generateCore(path,payload,options){
       stream:false,
       options:{temperature:config.temperature,num_predict:config.maxTokens}
     };
-    if(path==='/api/ai/project-knowledge')requestBody.truncate=false;
+    if(path==='/api/ai/project-knowledge'){
+      requestBody.truncate=false;
+      requestBody.options.num_ctx=8192;
+    }
     if(isJsonPath(path))requestBody.format='json';
     function generateWithModel(model){
       requestBody.model=model;
@@ -479,7 +494,11 @@ function generateCore(path,payload,options){
       if(models.length<2||!isModelUnavailableError(error))throw error;
       return generateWithModel(models[1]);
     }).then(function(result){
-    if(path==='/api/ai/project-knowledge'&&result.body.done_reason==='length')throw new Error('Die Ollama-Antwort wurde abgeschnitten. Bitte ein hoeheres Antwortbudget waehlen.');
+    if(path==='/api/ai/project-knowledge'&&result.body.done_reason==='length'){
+      var error=new Error('Die Ollama-Antwort wurde abgeschnitten.');
+      error.code='AI_OUTPUT_TRUNCATED';
+      throw error;
+    }
     try{
       return wrapResult(path,payload||{},String(result.body.response||''));
     }catch(firstError){

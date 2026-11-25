@@ -5528,6 +5528,34 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   flex-direction: column;
 }
 
+.knowledge-generation-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem;
+}
+
+.knowledge-generation-body progress {
+  width: 100%;
+  margin: 0.75rem 0;
+  accent-color: var(--accent-primary);
+}
+
+.knowledge-generation-body pre {
+  max-height: 30vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 0.85rem;
+  margin: 0.75rem 0 1.25rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+}
+
+.knowledge-generation-dialog footer {
+  flex-wrap: wrap;
+}
+
 .dashboard-project-row > .project-card .project-resources-link[data-project-knowledge-dialog] {
   cursor: pointer;
   max-width: 100%;
