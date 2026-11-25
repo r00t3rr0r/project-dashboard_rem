@@ -519,7 +519,9 @@
       if (!dateKey || dateKey < todayKey) return;
       if (getEventParticipants(evt).indexOf(String(user.id)) === -1) return;
       var response = getEventResponses(evt)[String(user.id)];
-      var status = response && getRsvpMeta(response.status) ? response.status : 'pending';
+      var status = response && ['accepted', 'tentative', 'declined'].indexOf(response.status) !== -1
+        ? response.status
+        : 'pending';
       (status === 'pending' ? pendingEvents : answeredEvents).push({ evt: evt, status: status });
     });
     pendingEvents.sort(function (a, b) { return sortEvents(a.evt, b.evt); });
