@@ -186,7 +186,7 @@ Schnelle Ereignisfolgen werden clientseitig je Key zusammengefuehrt und geordnet
 
 ## Lokale KI API (Besucher-Rechner)
 
-Die frueheren `/api/ai/*`-Endpunkte des Python-Servers sind deaktiviert und antworten mit HTTP 410. KI-Anfragen laufen im Browser direkt an `http://127.0.0.1:11434` beziehungsweise `http://localhost:11434` auf dem Rechner des Besuchers.
+Bei lokal geöffnetem Dashboard laufen Ollama-Anfragen direkt an `http://127.0.0.1:11434` beziehungsweise `http://localhost:11434`; bei Remote-Zugriff werden sie über die KI-Endpunkte des Storage-Servers weitergeleitet. Claude und ChatGPT werden vom Browser direkt aufgerufen.
 
 ### `GET http://127.0.0.1:11434/api/tags`
 
@@ -194,7 +194,7 @@ Prueft aus dem Browser die Erreichbarkeit der lokalen Ollama-Instanz und liefert
 
 ### `POST http://127.0.0.1:11434/api/generate`
 
-Fuehrt alle KI-Generierungen direkt in der lokalen Ollama-Instanz des Besuchers aus. Der zentrale Storage-Server erhaelt keine KI-Daten.
+Führt lokale Ollama-Generierungen im Browser aus.
 
 Request Body (Beispiel):
 
@@ -217,6 +217,12 @@ Response (Beispiel):
   "done": true
 }
 ```
+
+### Projektwissen speichern und lesen
+
+`POST /api/project-knowledge` speichert mit bestehender Sitzung `{projectId, projectTitle, markdown}` als Markdown und liefert `{ok, filePath, bytes}`. Der Inhalt darf nicht leer und höchstens 10 MiB groß sein. `GET /api/ai/project-knowledge?projectId=...` liest die im Projekt hinterlegte Datei.
+
+Für Remote-Ollama erzeugt `POST /api/ai/project-knowledge` mit `analysisOnly: true` und `knowledgePrompt` einen Abschnitt und liefert `markdown` und `model`, ohne eine Datei zu schreiben. Die Projektoberfläche speichert die zusammengefügten Abschnitte erst nach erfolgreicher Erstellung. Die Erhebung umfasst den GitHub-Dateibaum und Dashboard-Projektkontext, aber keine Dateiinhalte.
 
 ### `GET /api/health`
 

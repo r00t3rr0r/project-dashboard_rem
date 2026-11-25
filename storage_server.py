@@ -711,6 +711,9 @@ class StorageHandler(BaseHTTPRequestHandler):
         if parsed.path == '/api/ai/project-knowledge':
             self._handle_project_knowledge_post()
             return
+        if parsed.path == '/api/project-knowledge':
+            self._handle_project_knowledge_save()
+            return
         if parsed.path == '/api/ai/project-context':
             self._handle_project_context_post()
             return
@@ -1107,13 +1110,21 @@ class StorageHandler(BaseHTTPRequestHandler):
         model = str(payload.get('model') or OLLAMA_DEFAULT_MODEL).strip() or OLLAMA_DEFAULT_MODEL
 
         prompt = self._build_project_prompt(project_title, github, snapshot)
+        if payload.get('analysisOnly') is True:
+            prompt = str(payload.get('knowledgePrompt') or '').strip()
+            if not prompt or len(prompt) > 500000:
+                self._send_json({'error': 'Ungueltiger Projektwissen-Prompt.'}, status=400)
+                return
         try:
-            ai_text, _ai_chunks = self._call_ollama(model, prompt)
+            ai_text, _ai_chunks = self._call_ollama(model, prompt, max_tokens=6000, require_complete=True) if payload.get('analysisOnly') is True else self._call_ollama(model, prompt)
         except RuntimeError as exc:
             self._send_json({'error': str(exc)}, status=502)
             return
 
         generated_at = utc_now_iso_z()
+        if payload.get('analysisOnly') is True:
+            self._send_json({'ok': True, 'model': model, 'generatedAt': generated_at, 'markdown': ai_text})
+            return
         file_name = self._safe_file_name(project_id + '-' + project_title) + '-ki-wissen.md'
         relative_path = os.path.join('data', 'project-knowledge', file_name).replace('\\', '/')
         full_path = os.path.join(ROOT, relative_path)
@@ -1137,6 +1148,29 @@ class StorageHandler(BaseHTTPRequestHandler):
             'filePath': '/' + relative_path,
             'bytes': len(document.encode('utf-8'))
         })
+
+    def _handle_project_knowledge_save(self):
+        payload, error = self._read_json_payload()
+        if error:
+            self._send_json({'error': error}, status=400)
+            return
+        project_id, project_title, error = self._read_project_identity(payload)
+        markdown = payload.get('markdown')
+        if error or not isinstance(markdown, str) or not markdown.strip():
+            self._send_json({'error': error or 'Projektwissen darf nicht leer sein.'}, status=400)
+            return
+        content = markdown.encode('utf-8')
+        if len(content) > 10 * 1024 * 1024:
+            self._send_json({'error': 'Projektwissen ist groesser als 10 MB.'}, status=400)
+            return
+        file_name = self._safe_file_name(project_id + '-' + project_title) + '-ki-wissen.md'
+        relative_path = 'data/project-knowledge/' + file_name
+        try:
+            _atomic_write_text(os.path.join(KNOWLEDGE_DIR, file_name), markdown)
+        except OSError as exc:
+            self._send_json({'error': 'Projektwissen konnte nicht gespeichert werden: ' + str(exc)}, status=500)
+            return
+        self._send_json({'ok': True, 'filePath': relative_path, 'bytes': len(content)})
 
     def _handle_project_context_post(self):
         payload, error = self._read_json_payload()
@@ -2593,7 +2627,7 @@ class StorageHandler(BaseHTTPRequestHandler):
             text = str(text or '')
         return '\\n'.join(header) + '\\n' + text.strip() + '\\n'
 
-    def _call_ollama(self, model, prompt, temperature=0.2, max_tokens=1400, response_format=None):
+    def _call_ollama(self, model, prompt, temperature=0.2, max_tokens=1400, response_format=None, require_complete=False):
         payload = {
             'model': model,
             'prompt': prompt,
@@ -2605,6 +2639,8 @@ class StorageHandler(BaseHTTPRequestHandler):
         }
         if response_format:
             payload['format'] = response_format
+        if require_complete:
+            payload['truncate'] = False
         data = json.dumps(payload).encode('utf-8')
         errors = []
         for base_url in OLLAMA_BASE_URLS:
@@ -2619,6 +2655,7 @@ class StorageHandler(BaseHTTPRequestHandler):
                 with urllib.request.urlopen(request, timeout=180) as response:
                     chunks = []
                     collected = []
+                    completed = False
                     for raw_line in response:
                         line = raw_line.decode('utf-8', errors='ignore').strip()
                         if not line:
@@ -2632,8 +2669,13 @@ class StorageHandler(BaseHTTPRequestHandler):
                             chunks.append(text)
                             collected.append(text)
                         if piece.get('done'):
+                            if require_complete and piece.get('done_reason') == 'length':
+                                raise RuntimeError('Die Ollama-Antwort wurde abgeschnitten.')
+                            completed = True
                             break
                     text = ''.join(collected).strip()
+                    if require_complete and not completed:
+                        raise RuntimeError('Die Ollama-Antwort wurde vorzeitig beendet.')
                     if text:
                         return text, chunks
                     errors.append(base_url + ': keine Antwort')

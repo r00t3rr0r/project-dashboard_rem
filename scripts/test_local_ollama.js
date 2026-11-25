@@ -9,7 +9,7 @@ function makeClient(hostname,config={}){
   const models=[{name:'qwen3-embedding:0.6b',capabilities:['embedding']},{name:'text-a',capabilities:['completion']},{name:'text-b'}];
   const window={location:{hostname,origin:'http://'+hostname},AIConfModule:{getConfiguration:()=>config},dispatchEvent(){}};
   const sandbox={
-    window,console,AbortController,CustomEvent:function(){},setInterval:()=>1,clearInterval(){},
+    window,console,AbortController,TextEncoder,CustomEvent:function(){},setInterval:()=>1,clearInterval(){},
     fetch:async(url,init)=>{
       if(init.method==='GET')return {ok:true,json:async()=>({models})};
       const body=JSON.parse(init.body);
@@ -158,3 +158,59 @@ test('private analysis rejects truncated output and never retries on a remote se
   await assert.rejects(client.api.privateLocalGenerate('private source','text-a:latest'),/abgeschnitten/);
   assert.equal(urls.join(','),'http://127.0.0.1:11434/api/generate');
 });
+
+test('project knowledge preserves the selected Ollama model and rejects truncated answers',async()=>{
+  const client=makeClient('127.0.0.1',{routing:'fixed',primaryModel:'text-b'});
+  client.sandbox.fetch=async(url,init)=>{
+    const request=JSON.parse(init.body);
+    assert.equal(request.model,'text-a');
+    assert.equal(request.prompt,'Abschnitt');
+    return {ok:true,json:async()=>({response:'Unvollstaendig',done_reason:'length'})};
+  };
+  await assert.rejects(client.api.generate('/api/ai/project-knowledge',{model:'text-a',knowledgePrompt:'Abschnitt'}),/abgeschnitten/);
+});
+
+test('remote Ollama project knowledge sends the requested section to the backend',async()=>{
+  const client=makeClient('178.105.213.50',{routing:'fixed',primaryModel:'text-b'});
+  let url,request;
+  client.sandbox.fetch=async(target,init)=>{
+    url=target;request=JSON.parse(init.body);
+    return {ok:true,json:async()=>({markdown:'# Wissen',model:'text-a'})};
+  };
+  const result=await client.api.generate('/api/ai/project-knowledge',{
+    model:'text-a',analysisOnly:true,knowledgePrompt:'Abschnitt'
+  });
+  assert.equal(url,'http://178.105.213.50/api/ai/project-knowledge');
+  assert.equal(request.model,'text-a');
+  assert.equal(request.knowledgePrompt,'Abschnitt');
+  assert.equal(request.analysisOnly,true);
+  assert.equal(result.markdown,'# Wissen');
+});
+
+test('cloud project knowledge rejects truncated output',async()=>{
+  const client=makeClient('127.0.0.1');
+  client.window.localStorage={getItem:()=> 'openai'};
+  client.window.AuthManager={getCurrentUser:()=>({aiKeys:{openai:'test-key'}})};
+  client.sandbox.fetch=async()=>({ok:true,json:async()=>({choices:[{finish_reason:'length',message:{content:'unvollstaendig'}}]})});
+  await assert.rejects(client.api.generate('/api/ai/project-knowledge',{knowledgePrompt:'Abschnitt'}),/abgeschnitten/);
+});
+
+for(const provider of ['claude','openai']){
+  test(provider+': project knowledge uses the selected provider and returns markdown',async()=>{
+    const client=makeClient('127.0.0.1');
+    client.window.localStorage={getItem:()=>provider};
+    client.window.AuthManager={getCurrentUser:()=>({aiKeys:{[provider]:'test-key'}})};
+    let url,request;
+    client.sandbox.fetch=async(target,init)=>{
+      url=target; request=JSON.parse(init.body);
+      return {ok:true,json:async()=>provider==='claude'
+        ?{stop_reason:'end_turn',content:[{text:'# Wissen'}]}
+        :{choices:[{finish_reason:'stop',message:{content:'# Wissen'}}]}};
+    };
+    const result=await client.api.generate('/api/ai/project-knowledge',{knowledgePrompt:'Abschnitt'});
+    assert.match(url,provider==='claude'?/anthropic\.com/:/openai\.com/);
+    assert.equal(request.messages[0].content,'Abschnitt');
+    assert.equal(result.markdown,'# Wissen');
+    assert(result.bytes>0);
+  });
+}

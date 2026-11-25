@@ -127,6 +127,7 @@ function jsonContext(payload){
 }
 
 function buildPrompt(path,payload){
+  if(path==='/api/ai/project-knowledge'&&payload&&payload.knowledgePrompt)return String(payload.knowledgePrompt);
   var supplied=payload&&payload.promptConfig&&String(payload.promptConfig.prompt||'').trim();
   var context='\n\nEingabedaten (JSON):\n'+jsonContext(payload);
   if(path==='/api/ai/dashboard-updates'&&supplied)return supplied;
@@ -409,6 +410,9 @@ function cloudComplete(provider,requestBody,options){
         var message=data&&data.error&&(data.error.message||data.error)||'HTTP '+response.status;
         throw new Error(PROVIDERS[provider].label+': '+(typeof message==='string'?message:JSON.stringify(message)));
       }
+      if(requestBody.requireComplete&&((provider==='claude'&&data.stop_reason==='max_tokens')||(provider==='openai'&&data.choices&&data.choices[0]&&data.choices[0].finish_reason==='length'))){
+        throw new Error('Die KI-Antwort wurde abgeschnitten. Bitte ein hoeheres Antwortbudget oder ein geeignetes Modell waehlen.');
+      }
       if(provider==='claude')return (Array.isArray(data.content)?data.content:[]).map(function(part){return part&&part.text||'';}).join('');
       return String(data&&data.choices&&data.choices[0]&&data.choices[0].message&&data.choices[0].message.content||'');
     });
@@ -430,7 +434,7 @@ function generateCloud(provider,path,payload,options){
   var config=configFrom(payload);
   var model=PROVIDERS[provider].model;
   applyModel(payload,model);
-  var requestBody={model:model,prompt:buildPrompt(path,payload),temperature:config.temperature,maxTokens:config.maxTokens,json:isJsonPath(path)};
+  var requestBody={model:model,prompt:buildPrompt(path,payload),temperature:config.temperature,maxTokens:config.maxTokens,json:isJsonPath(path),requireComplete:path==='/api/ai/project-knowledge'};
   return cloudComplete(provider,requestBody,options).then(function(text){
     try{return wrapResult(path,payload,text);}catch(firstError){
       if(!isJsonPath(path))throw firstError;
@@ -442,11 +446,11 @@ function generateCloud(provider,path,payload,options){
 }
 
 function generateCore(path,payload,options){
-  var provider=getProvider();
+  var provider=options&&options.provider||getProvider();
   if(isCloudProvider(provider))return generateCloud(provider,path,payload,options);
   payload=resolvedPayload(payload);
   var config=configFrom(payload||{});
-  return resolveModels().then(function(models){
+  return (path==='/api/ai/project-knowledge'&&payload.model?Promise.resolve([payload.model]):resolveModels()).then(function(models){
     var selectedModel=models[0];
     applyModel(payload,selectedModel);
     if(isRemoteProxyMode()){
@@ -464,6 +468,7 @@ function generateCore(path,payload,options){
       stream:false,
       options:{temperature:config.temperature,num_predict:config.maxTokens}
     };
+    if(path==='/api/ai/project-knowledge')requestBody.truncate=false;
     if(isJsonPath(path))requestBody.format='json';
     function generateWithModel(model){
       requestBody.model=model;
@@ -474,6 +479,7 @@ function generateCore(path,payload,options){
       if(models.length<2||!isModelUnavailableError(error))throw error;
       return generateWithModel(models[1]);
     }).then(function(result){
+    if(path==='/api/ai/project-knowledge'&&result.body.done_reason==='length')throw new Error('Die Ollama-Antwort wurde abgeschnitten. Bitte ein hoeheres Antwortbudget waehlen.');
     try{
       return wrapResult(path,payload||{},String(result.body.response||''));
     }catch(firstError){

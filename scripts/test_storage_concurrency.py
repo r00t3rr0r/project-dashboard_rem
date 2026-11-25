@@ -42,6 +42,19 @@ class GitHubCommitQueryTest(unittest.TestCase):
             handler._handle_github_commits_get(urllib.parse.urlparse('/api/github/commits?owner=acme'))
             self.assertEqual(send.call_args.kwargs['status'], 400)
 
+    def test_project_knowledge_ollama_rejects_truncated_or_interrupted_streams(self):
+        handler = object.__new__(storage.StorageHandler)
+        for pieces in ([{'response': 'Teil', 'done': True, 'done_reason': 'length'}],
+                       [{'response': 'Teil'}]):
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            response.__iter__.return_value = iter((json.dumps(piece) + '\n').encode() for piece in pieces)
+            with self.subTest(pieces=pieces), mock.patch.object(storage, 'OLLAMA_BASE_URLS', ['http://localhost:11434']), \
+                    mock.patch.object(storage.urllib.request, 'urlopen', return_value=response) as urlopen:
+                with self.assertRaises(RuntimeError):
+                    handler._call_ollama('model', 'prompt', require_complete=True)
+                self.assertFalse(json.loads(urlopen.call_args.args[0].data)['truncate'])
+
 
 class StorageConcurrencyTest(unittest.TestCase):
     @classmethod
@@ -155,6 +168,33 @@ class StorageConcurrencyTest(unittest.TestCase):
                 conn.execute('DELETE FROM kv_store WHERE key = ?', ('pd_projects',))
             conn.commit()
             conn.close()
+
+    def test_project_knowledge_save_validates_and_persists_markdown(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(storage, 'KNOWLEDGE_DIR', directory):
+            status, result = self.request_json('POST', '/api/project-knowledge', {
+                'projectId': 'p1', 'projectTitle': 'Demo', 'markdown': '# Wissen\n\nInhalt'
+            })
+            self.assertEqual(status, 200)
+            self.assertEqual(result['filePath'], 'data/project-knowledge/p1-Demo-ki-wissen.md')
+            with open(os.path.join(directory, 'p1-Demo-ki-wissen.md'), encoding='utf-8') as saved:
+                self.assertEqual(saved.read(), '# Wissen\n\nInhalt')
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.request_json('POST', '/api/project-knowledge', {
+                    'projectId': 'p1', 'projectTitle': 'Demo', 'markdown': ' '
+                })
+            self.assertEqual(caught.exception.code, 400)
+
+    def test_project_knowledge_analysis_only_returns_markdown_without_writing(self):
+        with mock.patch.object(storage.StorageHandler, '_call_ollama', return_value=('# Analyse', ['# Analyse'])) as call:
+            status, result = self.request_json('POST', '/api/ai/project-knowledge', {
+                'projectId': 'p1', 'projectTitle': 'Demo', 'model': 'test-model',
+                'analysisOnly': True, 'knowledgePrompt': 'Analysiere diesen Abschnitt'
+            })
+        self.assertEqual(status, 200)
+        self.assertEqual(result['markdown'], '# Analyse')
+        self.assertNotIn('filePath', result)
+        self.assertEqual(call.call_args.args, ('test-model', 'Analysiere diesen Abschnitt'))
+        self.assertTrue(call.call_args.kwargs['require_complete'])
 
     def test_hosting_checks_endpoint_is_available_to_a_session(self):
         status, payload = self.request_json('GET', '/api/hosting/checks')

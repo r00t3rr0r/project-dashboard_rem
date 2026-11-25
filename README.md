@@ -348,9 +348,11 @@ Diese Datei definiert:
 - Modul-Modale auf Theme-Variablen umgestellt (inklusive Employees, Labels, Templates)
 - Verbleibende Inline-Styles in den genannten Modulen weitgehend in semantische Klassen ueberfuehrt
 
-## Lokale KI-Funktion (Projektwissen)
+## KI-Funktion (Projektwissen)
 
-Die Anwendung kann pro Projekt KI-aufbereitetes Wissen erzeugen und als Markdown ablegen.
+Die Anwendung erzeugt pro GitHub-Projekt eine Markdown-Wissensdatei. In der Projektkarte kann Ollama, Claude oder ChatGPT gewählt werden. Claude und ChatGPT verwenden den API-Schlüssel aus dem Mitarbeiterprofil und senden Projektkontext und Repository-Dateinamen an den jeweiligen externen Dienst; der Schlüssel-Check bestätigt nur, dass ein Schlüssel hinterlegt ist. Vor der Nutzung insbesondere Notizen und Links auf sensible Inhalte prüfen. Secret-Werte und .env-Werte aus den vorgesehenen Feldern werden nicht übertragen.
+
+Der GitHub-Standardbranch wird auf einen Commit festgelegt und der vollständige Dateibaum geladen; bei gekürzten GitHub-Antworten werden Verzeichnisse einzeln nachgeladen. Projektkontext und Dateibaum werden abschnittsweise verarbeitet. Der aktuelle Arbeitsschritt, die verstrichene Zeit und bereits erzeugte Abschnitte erscheinen während der Erstellung direkt in der Projektkarte, auch bei Läufen über 30 Sekunden. Die Datei enthält den vollständigen Dateibaum, den Commit und Hinweise auf nicht belegte Informationen. **Dateiinhalte werden nicht gelesen oder analysiert**: Architektur, Abhängigkeiten und Implementierungsdetails können daher nicht vollständig belegt werden und müssen am Quellcode überprüft werden. Eine fehlgeschlagene oder abgeschnittene Erstellung ersetzt die bisherige Datei nicht. Der angemeldete Storage-Server speichert das Ergebnis unter `data/project-knowledge/`.
 
 ### Projektwissen und Hosting
 
@@ -402,7 +404,7 @@ python3 storage_server.py
 
 Standard-Port ist 8766 (konfigurierbar ueber PROJECT_DASHBOARD_STORAGE_PORT).
 
-Der Storage-Server startet und verwendet kein Ollama. Aufrufe an seine alten `/api/ai/*`-Routen werden mit HTTP 410 abgewiesen.
+Der Storage-Server stellt die KI-Endpunkte bereit und kann Anfragen an das konfigurierte Ollama weiterleiten. Bei lokal geöffnetem Dashboard spricht der Browser Ollama direkt an.
 
 ### 3) UI oeffnen
 
@@ -410,7 +412,7 @@ Beispiel:
 
 - [http://127.0.0.1:8766/app.html](http://127.0.0.1:8766/app.html)
 
-KI-Antworten werden direkt zwischen dem Browser und der lokalen Ollama-Instanz des Besuchers ausgetauscht. Der zentrale Server erhaelt weder Prompts noch KI-Antworten.
+Bei lokalen Ollama-Anfragen erfolgt die Generierung im Browser; bei Remote-Zugriff kann sie über den Server weitergeleitet werden. Die fertige Wissensdatei wird unabhängig vom Anbieter auf dem Storage-Server gespeichert.
 
 ## Projektstruktur
 
