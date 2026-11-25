@@ -7,14 +7,19 @@
   var UNASSIGNED_FILTER_VALUE = '__unassigned__';
   var CALENDAR_MODE_EVENTS = 'events';
   var CALENDAR_MODE_ACTIVITY = 'activity';
+  var CALENDAR_MODE_TIMELINE = 'timeline';
   var currentViewDate = new Date();
   var selectedEmployeeId = '';
+  var selectedProjectId = '';
+  var selectedStatus = '';
+  var timelineRange = 'month';
+  var timelineWeekStart = null;
   var currentCalendarMode = CALENDAR_MODE_EVENTS;
   var expandedDaySet = new Set();
   var expandAllOverflowDays = false;
   var disabledTypeSet = new Set();
 
-  var EVENT_TYPE_ORDER = ['meeting', 'deadline', 'release', 'training', 'holiday', 'sick', 'home-office', 'task', 'other'];
+  var EVENT_TYPE_ORDER = ['meeting', 'videoconference', 'deadline', 'release', 'training', 'holiday', 'sick', 'home-office', 'task', 'other'];
 
   var RSVP_META = {
     accepted: { label: 'Zugesagt', color: 'var(--accent-green)', icon: 'check_circle' },
@@ -83,6 +88,7 @@
   function getEventTypeMeta(type) {
     var map = {
       meeting: { label: 'Meeting', color: 'var(--accent-blue)', icon: 'groups' },
+      videoconference: { label: 'Videokonferenz', color: 'var(--accent-blue)', icon: 'videocam' },
       deadline: { label: 'Deadline', color: 'var(--accent-red)', icon: 'flag' },
       release: { label: 'Release', color: 'var(--accent-green)', icon: 'rocket_launch' },
       holiday: { label: 'Urlaub', color: 'var(--accent-purple)', icon: 'beach_access' },
@@ -328,6 +334,41 @@
     return getEmployeeName(selectedEmployeeId);
   }
 
+  function taskPassesWorkflowFilters(task) {
+    if (!task) return true;
+    if (selectedProjectId && String(task.projectId || '') !== selectedProjectId) return false;
+    if (selectedStatus && String(task.status || 'todo') !== selectedStatus) return false;
+    return true;
+  }
+
+  function populateWorkflowFilterOptions() {
+    var projectSelect = document.getElementById('cal-project-filter');
+    var statusSelect = document.getElementById('cal-status-filter');
+    if (projectSelect) {
+      var projects = window.DataLayer && window.DataLayer.getProjects ? window.DataLayer.getProjects() || [] : [];
+      projectSelect.innerHTML = '<option value="">Alle Projekte</option>' + projects.map(function (project) {
+        return '<option value="' + escapeHtml(project.id) + '">' + escapeHtml(project.title || project.name || project.id) + '</option>';
+      }).join('');
+      if (!projects.some(function (project) { return String(project.id) === selectedProjectId; })) selectedProjectId = '';
+      projectSelect.value = selectedProjectId;
+    }
+    if (statusSelect) statusSelect.value = selectedStatus;
+    var rangeWrap = document.getElementById('cal-timeline-range-wrap');
+    if (rangeWrap) rangeWrap.classList.toggle('hidden', currentCalendarMode !== CALENDAR_MODE_TIMELINE);
+    [projectSelect, statusSelect].forEach(function (el) {
+      var wrap = el && el.closest ? el.closest('.calendar-workflow-filter') : null;
+      if (wrap) wrap.classList.toggle('hidden', !isWorkflowMode());
+    });
+  }
+
+  function isWorkflowMode() {
+    return currentCalendarMode === CALENDAR_MODE_ACTIVITY || currentCalendarMode === CALENDAR_MODE_TIMELINE;
+  }
+
+  function normalizeMode(value) {
+    return value === CALENDAR_MODE_ACTIVITY || value === CALENDAR_MODE_TIMELINE ? value : CALENDAR_MODE_EVENTS;
+  }
+
   function getTaskStatusLabel(status) {
     var labels = {
       backlog: 'Backlog',
@@ -366,7 +407,7 @@
     if (!legendEl) return;
     legendEl.innerHTML = '';
 
-    if (currentCalendarMode === CALENDAR_MODE_ACTIVITY) {
+    if (isWorkflowMode()) {
       legendEl.classList.add('hidden');
       return;
     }
@@ -445,7 +486,7 @@
     panel.innerHTML = '';
 
     var user = getCurrentUser();
-    if (!user || currentCalendarMode === CALENDAR_MODE_ACTIVITY) {
+    if (!user || isWorkflowMode()) {
       panel.classList.add('hidden');
       applyInviteUrgency(panel, []);
       return;
@@ -594,7 +635,7 @@
     var sequence = 0;
 
     getTasks().forEach(function (task) {
-      if (!taskMatchesEmployeeFilter(task, selectedEmployeeId)) return;
+      if (!taskMatchesEmployeeFilter(task, selectedEmployeeId) || !taskPassesWorkflowFilters(task)) return;
       var previousProgress = 0;
       var dayStartProgressByDate = Object.create(null);
 
@@ -871,7 +912,7 @@
     return container;
   }
 
-  function createDayActivityChip(activity) {
+  function createDayActivityChip(activity, spans, dateKey) {
     var chip = document.createElement('div');
     var meta = getActivityTypeMeta(activity.type);
     var assigneeIds = Array.isArray(activity.assigneeIds) && activity.assigneeIds.length ? activity.assigneeIds : (activity.assigneeId ? [activity.assigneeId] : []);
@@ -920,6 +961,24 @@
     chip.appendChild(metaEl);
     chip.appendChild(gainEl);
     chip.appendChild(growthBar);
+
+    chip.dataset.taskId = String(activity.taskId || '');
+    chip.tabIndex = 0;
+    chip.setAttribute('role', 'button');
+    var span = spans && spans[String(activity.taskId || '')];
+    if (span && span.dates.length > 1) {
+      var pos = span.dates.indexOf(dateKey || activity.date);
+      var isFirst = (dateKey || activity.date) === span.first;
+      var isLast = (dateKey || activity.date) === span.last;
+      chip.classList.add('calendar-span-chip', isFirst ? 'span-start' : (isLast ? 'span-end' : 'span-mid'));
+      chip.appendChild(createSpanIndicator(span, dateKey || activity.date, isFirst, isLast));
+    }
+    chip.addEventListener('click', function (e) { e.stopPropagation(); openTaskFlowModal(activity.taskId, activity.date); });
+    chip.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTaskFlowModal(activity.taskId, activity.date); }
+    });
+    chip.addEventListener('mouseenter', function () { highlightTaskSpan(activity.taskId, true); });
+    chip.addEventListener('mouseleave', function () { highlightTaskSpan(activity.taskId, false); });
 
     requestAnimationFrame(function () {
       updateChipTooltip(chip, titleEl, projectText + ' | ' + (activity.taskTitle || 'Aufgabe') + ' | ' + metaParts.join(' | ') + (activity.type === 'github-commit' ? ' | Rueckwirkende Dokumentation' : ' | Gesamt ' + totalProgress + '% | Plus +' + dayGain + '%'));
@@ -982,7 +1041,7 @@
     var exportBtn = document.getElementById('cal-export-ics');
     var addBtn = document.getElementById('cal-add-event');
     var viewModeSelect = document.getElementById('cal-view-mode');
-    var isActivityMode = currentCalendarMode === CALENDAR_MODE_ACTIVITY;
+    var isActivityMode = isWorkflowMode();
     var auth = getAuthManager();
     var canCreate = !auth || typeof auth.canCreateCalendarEvent !== 'function' || auth.canCreateCalendarEvent();
 
@@ -1084,6 +1143,13 @@
       ? '<button type="button" class="btn btn-secondary" id="calendar-modal-remind"><span class="material-symbols-rounded" aria-hidden="true">notifications_active</span><span>Erinnerung senden</span></button>'
       : '';
 
+    var videoconfBlock = '';
+    if (evt.type === 'videoconference' && window.VideoConf) {
+      var vcUser = getCurrentUser();
+      var vcIsCreator = !!(vcUser && evt.createdByEmployeeId && String(vcUser.id) === String(evt.createdByEmployeeId));
+      videoconfBlock = window.VideoConf.buildTopicsHtml(evt) + window.VideoConf.buildLinksHtml(evt, vcIsCreator);
+    }
+
     var descriptionBlock = evt.description
       ? '<div class="calendar-detail-description"><h3>Beschreibung</h3><p>' + escapeHtml(evt.description) + '</p></div>'
       : '<div class="calendar-detail-description calendar-detail-description-muted"><h3>Beschreibung</h3><p>Keine Beschreibung hinterlegt.</p></div>';
@@ -1095,6 +1161,7 @@
       '<h2>' + escapeHtml(evt.title || 'Termin') + '</h2>' +
       '</div>' +
       '<div class="calendar-detail-grid">' + rows.join('') + '</div>' +
+      videoconfBlock +
       participantsBlock +
       rsvpActionsBlock +
       descriptionBlock +
@@ -1167,6 +1234,7 @@
       '<div class="calendar-attendee-list" id="evt-attendee-list">' + (attendeeCheckboxes || '<p class="text-muted">Keine Mitarbeiter angelegt.</p>') + '</div>' +
       '<small class="text-muted" id="evt-attendee-hint">Neue Teilnehmer erhalten den Status "Ausstehend" und koennen den Termin zu- oder absagen.</small>' +
       '</div>' +
+      '<div id="evt-videoconf-wrap" class="hidden">' + (window.VideoConf ? window.VideoConf.buildEditorHtml(event) : '') + '</div>' +
       '<div class="form-group" id="evt-description-group"><label for="evt-description">Beschreibung</label><textarea id="evt-description" rows="3">' + escapeHtml((event && event.description) || '') + '</textarea></div>' +
       '<p class="text-muted hidden" id="evt-sick-notice">Krankmeldungen sind im gemeinsamen Kalender und dessen Daten für alle angemeldeten Nutzer sichtbar. Keine Diagnosen oder medizinischen Details eintragen.</p>' +
       '<div class="form-group"><label><input type="checkbox" id="evt-all-day"' + ((event && event.allDay) ? ' checked' : '') + '> Ganztagstermin</label></div>' +
@@ -1192,6 +1260,7 @@
 
     var closeBtn = document.getElementById('calendar-modal-close');
     if (closeBtn) closeBtn.addEventListener('click', closeModal);
+    if (window.VideoConf) window.VideoConf.bindCopyButtons(content);
 
     var editBtn = document.getElementById('calendar-modal-edit');
     if (editBtn) {
@@ -1268,6 +1337,7 @@
     var locationGroup = document.getElementById('evt-location-group');
     var projectGroup = document.getElementById('evt-project-group');
     var projectTeamButton = document.getElementById('evt-attendees-project-team');
+    var videoconfWrap = document.getElementById('evt-videoconf-wrap');
     var startTime = document.getElementById('evt-start-time');
     var endTime = document.getElementById('evt-end-time');
 
@@ -1287,6 +1357,7 @@
       locationGroup.classList.toggle('hidden', sick);
       projectGroup.classList.toggle('hidden', sick);
       projectTeamButton.classList.toggle('hidden', sick);
+      if (videoconfWrap) videoconfWrap.classList.toggle('hidden', type !== 'videoconference');
       titleEl.readOnly = sick;
       if (sick) titleEl.value = 'Krankmeldung';
     }
@@ -1444,6 +1515,127 @@
     });
   }
 
+  function computeTaskSpans(workflowDays) {
+    var byTask = Object.create(null);
+    Object.keys(workflowDays).forEach(function (date) {
+      var day = workflowDays[date];
+      day.activities.concat(day.commits).forEach(function (entry) {
+        var id = String(entry.taskId || '');
+        if (!id) return;
+        if (!byTask[id]) byTask[id] = Object.create(null);
+        byTask[id][date] = true;
+      });
+    });
+    var spans = Object.create(null);
+    Object.keys(byTask).forEach(function (id) {
+      var dates = Object.keys(byTask[id]).sort();
+      var title = '';
+      var task = getTasks().find(function (t) { return String(t.id) === id; });
+      if (task) title = task.title || '';
+      spans[id] = { taskId: id, title: title, dates: dates, first: dates[0], last: dates[dates.length - 1] };
+    });
+    return spans;
+  }
+
+  function createSpanIndicator(span, dateKey, isFirst, isLast) {
+    var el = document.createElement('span');
+    el.className = 'calendar-span-indicator';
+    var index = span.dates.indexOf(dateKey) + 1;
+    el.textContent = (isFirst ? '' : '\u2190 ') + 'Tag ' + index + '/' + span.dates.length + (isLast ? '' : ' \u2192');
+    return el;
+  }
+
+  function createSpanContinuation(span, dateKey) {
+    var bar = document.createElement('div');
+    bar.className = 'calendar-span-continuation';
+    bar.dataset.taskId = span.taskId;
+    bar.tabIndex = 0;
+    bar.setAttribute('role', 'button');
+    bar.title = (span.title || 'Aufgabe') + ' \u2013 laeuft weiter (' + getDisplayDate(span.first) + ' \u2192 ' + getDisplayDate(span.last) + ')';
+    bar.textContent = '\u2190 ' + (span.title || 'Aufgabe') + ' \u2192';
+    bar.addEventListener('click', function (e) { e.stopPropagation(); openTaskFlowModal(span.taskId, dateKey); });
+    bar.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTaskFlowModal(span.taskId, dateKey); }
+    });
+    bar.addEventListener('mouseenter', function () { highlightTaskSpan(span.taskId, true); });
+    bar.addEventListener('mouseleave', function () { highlightTaskSpan(span.taskId, false); });
+    return bar;
+  }
+
+  function highlightTaskSpan(taskId, on) {
+    var grid = document.getElementById('calendar-grid');
+    if (!grid || !taskId) return;
+    Array.prototype.forEach.call(grid.querySelectorAll('[data-task-id]'), function (node) {
+      node.classList.toggle('span-highlight', on && node.dataset.taskId === String(taskId));
+    });
+  }
+
+  function openTaskFlowModal(taskId, focusDate) {
+    var overlay = document.getElementById('modal-overlay');
+    var content = document.getElementById('modal-content');
+    if (!overlay || !content) return;
+    var task = getTasks().find(function (t) { return String(t.id) === String(taskId); });
+    if (!task) return;
+
+    var activities = buildTaskActivityEntries().filter(function (a) { return String(a.taskId) === String(task.id); });
+    var commits = task.githubCommitImport && Array.isArray(task.githubCommitImport.commits) ? task.githubCommitImport.commits : [];
+    var dayMap = Object.create(null);
+    function dayEntry(date) {
+      if (!dayMap[date]) dayMap[date] = { activities: [], commits: [] };
+      return dayMap[date];
+    }
+    activities.forEach(function (a) { dayEntry(a.date).activities.push(a); });
+    commits.forEach(function (c) {
+      var date = c && (c.calendarDate || getDateKeyFromValue(c.date));
+      if (date) dayEntry(date).commits.push(c);
+    });
+    var dates = Object.keys(dayMap).sort();
+
+    var assigneeIds = Array.isArray(task.assigneeIds) && task.assigneeIds.length ? task.assigneeIds : (task.assigneeId ? [task.assigneeId] : []);
+    var subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
+    var doneCount = subtasks.filter(function (st) { return st && (st.done || st.completed); }).length;
+    var progress = clampProgress(task.progress);
+
+    var timeline = dates.length ? dates.map(function (date, i) {
+      var day = dayMap[date];
+      var items = day.activities.map(function (a) {
+        var m = getActivityTypeMeta(a.type);
+        return '<li><span class="calendar-flow-tag" style="color:' + m.color + '">' + escapeHtml(m.label) + '</span> ' + escapeHtml(String(a.progress)) + '%' + (a.calendarTime || a.updatedAt ? ' <em>' + escapeHtml(a.calendarTime || getDisplayTime(a.updatedAt)) + '</em>' : '') + '</li>';
+      }).concat(day.commits.map(function (c) {
+        var sha = String(c.sha || '').slice(0, 7);
+        var label = escapeHtml(c.title || c.message || 'Commit');
+        var link = c.url && /^https?:\/\//i.test(c.url) ? '<a href="' + escapeHtml(c.url) + '" target="_blank" rel="noopener noreferrer">' + label + '</a>' : label;
+        return '<li><span class="material-symbols-rounded" aria-hidden="true">commit</span> ' + link + (sha ? ' <code>' + escapeHtml(sha) + '</code>' : '') + (c.author ? ' <em>' + escapeHtml(c.author) + '</em>' : '') + '</li>';
+      }));
+      return '<li class="calendar-flow-day' + (date === focusDate ? ' is-focus' : '') + '">' +
+        '<div class="calendar-flow-day-head"><span class="calendar-flow-dot"></span><strong>' + escapeHtml(getDisplayDate(date)) + '</strong>' + (i < dates.length - 1 ? '<span class="calendar-flow-arrow" aria-hidden="true">\u2193</span>' : '') + '</div>' +
+        '<ul class="calendar-flow-items">' + items.join('') + '</ul></li>';
+    }).join('') : '<li class="calendar-flow-empty">Keine Aktivitaeten erfasst.</li>';
+
+    var subtaskHtml = subtasks.length ? '<ul class="calendar-flow-subtasks">' + subtasks.map(function (st) {
+      var done = !!(st && (st.done || st.completed));
+      var title = typeof st === 'string' ? st : (st && st.title) || 'Teilaufgabe';
+      return '<li class="' + (done ? 'is-done' : '') + '"><span class="material-symbols-rounded" aria-hidden="true">' + (done ? 'check_circle' : 'radio_button_unchecked') + '</span>' + escapeHtml(title) + '</li>';
+    }).join('') + '</ul>' : '<p class="calendar-detail-description-muted">Keine Teilaufgaben.</p>';
+
+    content.innerHTML = '' +
+      '<div class="calendar-detail-shell calendar-flow-modal">' +
+      '<div class="calendar-detail-hero"><h2>' + escapeHtml(task.title || 'Aufgabe') + '</h2>' +
+      '<p class="calendar-flow-sub">' + escapeHtml(getProjectLabel(task.projectId, 'Unbekanntes Projekt') || 'Ohne Projekt') + ' \u2022 ' + escapeHtml(getTaskStatusLabel(task.status)) + ' \u2022 ' +
+      escapeHtml(assigneeIds.length ? assigneeIds.map(getEmployeeName).join(', ') : 'Nicht zugewiesen') + '</p>' +
+      '<div class="calendar-activity-growth-bar"><span class="calendar-activity-growth-total" style="width:' + progress + '%"></span></div>' +
+      '<small>' + progress + '% abgeschlossen</small></div>' +
+      '<h3>Teilaufgaben (' + doneCount + '/' + subtasks.length + ')</h3>' + subtaskHtml +
+      '<h3>Verlauf &amp; Commits' + (dates.length > 1 ? ' \u2013 ' + dates.length + ' Tage' : '') + '</h3>' +
+      '<ol class="calendar-flow-timeline">' + timeline + '</ol>' +
+      '<div class="modal-actions"><button type="button" class="btn btn-secondary" id="calendar-modal-close">Schliessen</button></div>' +
+      '</div>';
+    overlay.classList.remove('hidden');
+    setSharedModalClosePolicy({ preventAccidentalClose: false, owner: 'calendar-task-flow' });
+    var closeBtn = document.getElementById('calendar-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', closeModal);
+  }
+
   function buildWorkflowDays(activities, events, commitDates) {
     var days = Object.create(null);
     var allTaskDays = Object.create(null);
@@ -1461,6 +1653,7 @@
       var taskKey = String(event.taskId || '') + '\n' + date;
       if (event.taskId) allTaskDays[taskKey] = true;
       if (!eventMatchesEmployeeFilter(event, selectedEmployeeId)) return;
+      if (event.taskId && !taskPassesWorkflowFilters(getTasks().find(function (t) { return String(t.id) === String(event.taskId); }))) return;
       if (event.taskId) visibleTaskDays[taskKey] = true;
       dayFor(date).commits.push(event);
     });
@@ -1488,24 +1681,218 @@
     return days;
   }
 
+  function getWeekStart(date) {
+    var d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return d;
+  }
+
+  function getISOWeek(date) {
+    var d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    var dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  }
+
+  function getTimelineDayKeys(year, month) {
+    var keys = [];
+    var count = timelineRange === 'week' ? 7 : getDaysInMonth(year, month);
+    var base = timelineRange === 'week' ? timelineWeekStart : new Date(year, month, 1);
+    for (var i = 0; i < count; i++) {
+      keys.push(getISODate(new Date(base.getFullYear(), base.getMonth(), base.getDate() + i)));
+    }
+    return keys;
+  }
+
+  function buildTimelineView(year, month, workflowDays, spans) {
+    var dayKeys = getTimelineDayKeys(year, month);
+    var monthDays = dayKeys.length;
+    var isWeek = timelineRange === 'week';
+    var monthStart = dayKeys[0];
+    var monthEnd = dayKeys[monthDays - 1];
+    var columnOf = function (key) { return dayKeys.indexOf(key) + 1; };
+    var todayKey = getISODate(new Date());
+    var tasksById = Object.create(null);
+    getTasks().forEach(function (t) { tasksById[String(t.id)] = t; });
+
+    var rows = Object.keys(spans).map(function (id) { return spans[id]; }).filter(function (sp) {
+      return sp.last >= monthStart && sp.first <= monthEnd;
+    }).sort(function (a, b) { return a.first.localeCompare(b.first) || String(a.title).localeCompare(String(b.title)); });
+
+    var root = document.createElement('div');
+    root.className = 'calendar-gantt' + (isWeek ? ' is-week' : '');
+    if (!rows.length) {
+      root.innerHTML = '<p class="calendar-gantt-empty">Keine Aufgabenaktivitaet in diesem Monat.</p>';
+      return root;
+    }
+
+    var board = document.createElement('div');
+    board.className = 'calendar-gantt-board';
+    board.style.setProperty('--gantt-days', monthDays);
+
+    var head = document.createElement('div');
+    head.className = 'calendar-gantt-row calendar-gantt-head';
+    head.innerHTML = '<div class="calendar-gantt-label">Aufgabe</div>';
+    var track = document.createElement('div');
+    track.className = 'calendar-gantt-track';
+    var weekdayNames = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+    for (var d = 1; d <= monthDays; d++) {
+      var key = dayKeys[d - 1];
+      var wd = new Date(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, Number(key.slice(8, 10))).getDay();
+      var cellEl = document.createElement('span');
+      cellEl.className = 'calendar-gantt-day' + (wd === 0 || wd === 6 ? ' is-weekend' : '') + (key === todayKey ? ' is-today' : '');
+      cellEl.textContent = isWeek ? weekdayNames[wd] + ' ' + key.slice(8, 10) + '.' + key.slice(5, 7) + '.' : Number(key.slice(8, 10));
+      track.appendChild(cellEl);
+    }
+    head.appendChild(track);
+    board.appendChild(head);
+
+    rows.forEach(function (sp) {
+      var task = tasksById[sp.taskId] || {};
+      var row = document.createElement('div');
+      row.className = 'calendar-gantt-row';
+      row.dataset.taskId = sp.taskId;
+
+      var label = document.createElement('button');
+      label.type = 'button';
+      label.className = 'calendar-gantt-label';
+      label.title = (sp.title || 'Aufgabe') + ' \u2013 ' + getTaskStatusLabel(task.status);
+      var projectName = getProjectLabel(task.projectId, '') || '';
+      label.innerHTML = '<strong>' + escapeHtml(sp.title || 'Aufgabe') + '</strong><small>' + escapeHtml(projectName) + '</small>';
+      label.addEventListener('click', function () { openTaskFlowModal(sp.taskId, sp.first); });
+      row.appendChild(label);
+
+      var lane = document.createElement('div');
+      lane.className = 'calendar-gantt-track';
+      var startKey = sp.first < monthStart ? monthStart : sp.first;
+      var endKey = sp.last > monthEnd ? monthEnd : sp.last;
+      var startDay = columnOf(startKey);
+      var endDay = columnOf(endKey);
+      var progress = clampProgress(task.progress);
+      var bar = document.createElement('div');
+      bar.className = 'calendar-gantt-bar status-' + String(task.status || 'todo') +
+        (sp.first < monthStart ? ' continues-left' : '') + (sp.last > monthEnd ? ' continues-right' : '') +
+        (sp.first === sp.last ? ' single-day' : '');
+      bar.dataset.taskId = sp.taskId;
+      bar.style.gridColumn = startDay + ' / ' + (endDay + 1);
+      bar.tabIndex = 0;
+      bar.setAttribute('role', 'button');
+      bar.title = (sp.title || 'Aufgabe') + ' | ' + getDisplayDate(sp.first) + ' \u2192 ' + getDisplayDate(sp.last) + ' | ' + progress + '%';
+      bar.innerHTML = '<span class="calendar-gantt-fill" style="width:' + progress + '%"></span>' +
+        '<span class="calendar-gantt-bar-text">' + (sp.first < monthStart ? '\u25C0 ' : '') + progress + '%' + (sp.last > monthEnd ? ' \u25B6' : '') + '</span>';
+      bar.addEventListener('click', function () { openTaskFlowModal(sp.taskId, sp.first); });
+      bar.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTaskFlowModal(sp.taskId, sp.first); }
+      });
+      lane.appendChild(bar);
+
+      sp.dates.forEach(function (date) {
+        if (date < monthStart || date > monthEnd) return;
+        var day = workflowDays[date];
+        var commitCount = day ? day.commits.filter(function (c) { return String(c.taskId || '') === sp.taskId; }).length : 0;
+        if (!commitCount) return;
+        var dot = document.createElement('span');
+        dot.className = 'calendar-gantt-commit';
+        dot.style.gridColumn = String(columnOf(date));
+        dot.title = commitCount + ' Commit(s) am ' + getDisplayDate(date);
+        dot.textContent = commitCount;
+        lane.appendChild(dot);
+      });
+      row.appendChild(lane);
+      board.appendChild(row);
+    });
+
+    var svgNs = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(svgNs, 'svg');
+    svg.setAttribute('class', 'calendar-gantt-deps');
+    svg.setAttribute('aria-hidden', 'true');
+    board.appendChild(svg);
+    root.appendChild(board);
+
+    var legend = document.createElement('div');
+    legend.className = 'calendar-gantt-legend';
+    legend.textContent = 'Balken = Zeitraum der Aktivitaet, Fuellung = Fortschritt, Zahl = Commits, Pfeil = Abhaengigkeit';
+    root.appendChild(legend);
+
+    var drawDeps = function () {
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      var boardRect = board.getBoundingClientRect();
+      if (!boardRect.width) return;
+      svg.setAttribute('width', boardRect.width);
+      svg.setAttribute('height', boardRect.height);
+      var defs = document.createElementNS(svgNs, 'defs');
+      defs.innerHTML = '<marker id="gantt-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="currentColor"></path></marker>';
+      svg.appendChild(defs);
+      rows.forEach(function (sp) {
+        var task = tasksById[sp.taskId] || {};
+        var deps = Array.isArray(task.dependencyTaskIds) ? task.dependencyTaskIds : [];
+        var toBar = board.querySelector('.calendar-gantt-bar[data-task-id="' + sp.taskId + '"]');
+        if (!toBar) return;
+        deps.forEach(function (depId) {
+          var fromBar = board.querySelector('.calendar-gantt-bar[data-task-id="' + String(depId) + '"]');
+          if (!fromBar) return;
+          var a = fromBar.getBoundingClientRect();
+          var b = toBar.getBoundingClientRect();
+          var x1 = a.right - boardRect.left, y1 = a.top + a.height / 2 - boardRect.top;
+          var x2 = b.left - boardRect.left, y2 = b.top + b.height / 2 - boardRect.top;
+          var mid = Math.max(x1 + 8, x2 - 8);
+          var path = document.createElementNS(svgNs, 'path');
+          path.setAttribute('d', 'M' + x1 + ',' + y1 + ' H' + mid + ' V' + y2 + ' H' + (x2 - 1));
+          path.setAttribute('marker-end', 'url(#gantt-arrow)');
+          svg.appendChild(path);
+        });
+      });
+    };
+    requestAnimationFrame(drawDeps);
+    if (typeof window.addEventListener === 'function') {
+      var onResize = function () {
+        if (!board.isConnected) { window.removeEventListener('resize', onResize); return; }
+        drawDeps();
+      };
+      window.addEventListener('resize', onResize);
+    }
+    return root;
+  }
+
   function renderCalendar(date) {
     try {
       if (!date) date = currentViewDate || new Date();
       currentViewDate = new Date(date.getFullYear(), date.getMonth(), 1);
 
       populateEmployeeFilterOptions();
+      populateWorkflowFilterOptions();
       updateCalendarControlState();
 
       var year = currentViewDate.getFullYear();
       var month = currentViewDate.getMonth();
-      var isActivityMode = currentCalendarMode === CALENDAR_MODE_ACTIVITY;
+      var isTimelineMode = currentCalendarMode === CALENDAR_MODE_TIMELINE;
+      var isActivityMode = isWorkflowMode();
 
       var monthEl = document.getElementById('cal-current-month');
       if (monthEl) monthEl.textContent = getMonthLabel(currentViewDate);
+      if (isTimelineMode && timelineRange === 'week') {
+        if (!timelineWeekStart) timelineWeekStart = getWeekStart(date);
+        var weekEnd = new Date(timelineWeekStart.getFullYear(), timelineWeekStart.getMonth(), timelineWeekStart.getDate() + 6);
+        if (monthEl) monthEl.textContent = 'KW ' + getISOWeek(timelineWeekStart) + ' \u00b7 ' + getDisplayDate(getISODate(timelineWeekStart)) + ' \u2013 ' + getDisplayDate(getISODate(weekEnd));
+      }
 
       var grid = document.getElementById('calendar-grid');
       if (!grid) return;
       grid.innerHTML = '';
+      grid.classList.toggle('calendar-grid-timeline', isTimelineMode);
+
+      if (isTimelineMode) {
+        var tlActivities = buildTaskActivityEntries();
+        var tlDays = buildWorkflowDays(tlActivities, getCalendarEvents(), getCommitEventDates());
+        if (timelineRange === 'week' && !timelineWeekStart) timelineWeekStart = getWeekStart(date);
+        grid.appendChild(buildTimelineView(year, month, tlDays, computeTaskSpans(tlDays)));
+        renderTypeLegend([]);
+        renderPendingInvites();
+        updateOverflowToggleButton(0);
+        renderActivityList(currentViewDate, tlActivities, tlDays);
+        return;
+      }
 
       var headers = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
       headers.forEach(function (dayName) {
@@ -1527,6 +1914,7 @@
       var activityEntries = buildTaskActivityEntries();
       var commitDates = isActivityMode ? getCommitEventDates() : null;
       var workflowDays = isActivityMode ? buildWorkflowDays(activityEntries, allEvents, commitDates) : null;
+      var workflowSpans = isActivityMode ? computeTaskSpans(workflowDays) : null;
       var overflowDaysCount = 0;
 
       var startOffset = getFirstDayOfMonth(year, month);
@@ -1543,11 +1931,22 @@
 
       for (var day = 1; day <= daysInMonth; day++) {
         var dateStr = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+        var continuations = [];
+        if (isActivityMode) {
+          var dayData = workflowDays[dateStr];
+          Object.keys(workflowSpans).forEach(function (id) {
+            var sp = workflowSpans[id];
+            if (dateStr <= sp.first || dateStr >= sp.last) return;
+            var present = dayData && dayData.activities.concat(dayData.commits).some(function (e) { return String(e.taskId || '') === id; });
+            if (!present) continuations.push(sp);
+          });
+        }
         var dayItems = isActivityMode ? (workflowDays[dateStr] ? workflowDays[dateStr].items : []) : visibleEvents.filter(function (item) {
           return eventOverlaps(item, dateStr, dateStr);
         });
 
         var hasOverflow = dayItems.length > 3;
+        var cellDateStr = dateStr;
         if (hasOverflow) overflowDaysCount += 1;
         var isExpanded = hasOverflow && (expandAllOverflowDays || expandedDaySet.has(dateStr));
 
@@ -1571,8 +1970,10 @@
 
         var itemsToRender = isExpanded ? dayItems : dayItems.slice(0, 3);
         itemsToRender.forEach(function (item) {
-          eventList.appendChild(item.commitGroup ? createCommitGroup(item, true, isActivityMode) : (isActivityMode ? createDayActivityChip(item) : createDayEventChip(item)));
+          eventList.appendChild(item.commitGroup ? createCommitGroup(item, true, isActivityMode) : (isActivityMode ? createDayActivityChip(item, workflowSpans, cellDateStr) : createDayEventChip(item)));
         });
+
+        continuations.forEach(function (sp) { eventList.appendChild(createSpanContinuation(sp, cellDateStr)); });
 
         if (hasOverflow && !isExpanded) {
           eventList.appendChild(createOverflowMoreButton(dateStr, dayItems.length - 3));
@@ -1852,6 +2253,7 @@
         employeeStatus: status,
         projectId: type !== 'sick' && projectEl && projectEl.value ? projectEl.value : null,
         location: type !== 'sick' && locationEl ? locationEl.value.trim() : '',
+        videoconf: type === 'videoconference' && window.VideoConf ? window.VideoConf.readEditor() : null,
         description: type !== 'sick' && descriptionEl ? descriptionEl.value.trim() : '',
         startTime: !allDay && startEl ? startEl.value : '',
         endTime: !allDay && endEl ? endEl.value : '',
@@ -2010,6 +2412,10 @@
           exportDescription = 'Mitarbeiter: ' + getEventParticipants(evt).map(getEmployeeName).join(', ') + (exportDescription ? '\n' + exportDescription : '');
         }
         if (exportDescription) lines.push('DESCRIPTION:' + escapeICSText(exportDescription));
+        if (evt.type === 'videoconference' && evt.videoconf && window.VideoConf) {
+          var vcLinks = window.VideoConf.buildLinks(evt.videoconf);
+          if (vcLinks) lines.push('URL:' + escapeICSText(vcLinks.invite));
+        }
         if (evt.type) lines.push('CATEGORIES:' + escapeICSText(getEventTypeMeta(normalizeEventType(evt.type)).label.toUpperCase()));
         if (!isEmployeeStatus(evt)) getEventParticipants(evt).forEach(function (id) {
           lines.push('ATTENDEE;CN=' + escapeICSText(getEmployeeName(id)) + ':MAILTO:noreply@projekt-dashboard.local');
@@ -2034,10 +2440,31 @@
     }
   }
 
+  function shiftTimelineWeek(direction) {
+    if (currentCalendarMode !== CALENDAR_MODE_TIMELINE || timelineRange !== 'week') return false;
+    var base = timelineWeekStart || getWeekStart(currentViewDate);
+    timelineWeekStart = new Date(base.getFullYear(), base.getMonth(), base.getDate() + direction * 7);
+    renderCalendar(timelineWeekStart);
+    return true;
+  }
+
   function setupCalendarNav() {
+    var rangeSelect = document.getElementById('cal-timeline-range');
+    if (rangeSelect) {
+      rangeSelect.addEventListener('change', function () {
+        timelineRange = rangeSelect.value === 'week' ? 'week' : 'month';
+        if (timelineRange === 'week') {
+          var today = new Date();
+          timelineWeekStart = getWeekStart(today.getFullYear() === currentViewDate.getFullYear() && today.getMonth() === currentViewDate.getMonth() ? today : currentViewDate);
+        }
+        renderCalendar(timelineRange === 'week' ? timelineWeekStart : currentViewDate);
+      });
+    }
+
     var prev = document.getElementById('cal-prev-month');
     if (prev) {
       prev.addEventListener('click', function () {
+        if (shiftTimelineWeek(-1)) return;
         renderCalendar(new Date(currentViewDate.getFullYear(), currentViewDate.getMonth() - 1, 1));
       });
     }
@@ -2045,6 +2472,7 @@
     var next = document.getElementById('cal-next-month');
     if (next) {
       next.addEventListener('click', function () {
+        if (shiftTimelineWeek(1)) return;
         renderCalendar(new Date(currentViewDate.getFullYear(), currentViewDate.getMonth() + 1, 1));
       });
     }
@@ -2052,6 +2480,7 @@
     var todayBtn = document.getElementById('cal-today');
     if (todayBtn) {
       todayBtn.addEventListener('click', function () {
+        timelineWeekStart = getWeekStart(new Date());
         renderCalendar(new Date());
       });
     }
@@ -2059,7 +2488,7 @@
     var addBtn = document.getElementById('cal-add-event');
     if (addBtn) {
       addBtn.addEventListener('click', function () {
-        if (currentCalendarMode === CALENDAR_MODE_ACTIVITY) return;
+        if (isWorkflowMode()) return;
         openEventEditorModal(null, getISODate(new Date()));
       });
     }
@@ -2070,12 +2499,22 @@
     var viewModeSelect = document.getElementById('cal-view-mode');
     if (viewModeSelect) {
       viewModeSelect.addEventListener('change', function () {
-        currentCalendarMode = viewModeSelect.value === CALENDAR_MODE_ACTIVITY ? CALENDAR_MODE_ACTIVITY : CALENDAR_MODE_EVENTS;
+        currentCalendarMode = normalizeMode(viewModeSelect.value);
         expandedDaySet.clear();
         expandAllOverflowDays = false;
         renderCalendar(currentViewDate);
       });
     }
+
+    [['cal-project-filter', 'project'], ['cal-status-filter', 'status']].forEach(function (pair) {
+      var el = document.getElementById(pair[0]);
+      if (!el) return;
+      el.addEventListener('change', function () {
+        if (pair[1] === 'project') selectedProjectId = el.value || '';
+        else selectedStatus = el.value || '';
+        renderCalendar(currentViewDate);
+      });
+    });
 
     var employeeFilter = document.getElementById('cal-employee-filter');
     if (employeeFilter) {
@@ -2135,7 +2574,7 @@
       return getEventTypeMeta(normalizeEventType(event.type || 'meeting'));
     },
     setMode: function (mode) {
-      currentCalendarMode = mode === CALENDAR_MODE_ACTIVITY ? CALENDAR_MODE_ACTIVITY : CALENDAR_MODE_EVENTS;
+      currentCalendarMode = normalizeMode(mode);
       renderCalendar(currentViewDate);
     }
   };

@@ -30,7 +30,8 @@
 <script src="modules/app.js?v=20261125g"></script>
 <!-- Feature Modules (alphabetical) -->
 <script src="modules/analytics.js?v=20261117c"></script>
-<script src="modules/calendar.js?v=20261125a"></script>
+<script src="modules/videoconf.js?v=20261125a"></script>
+<script src="modules/calendar.js?v=20261125b"></script>
 <script src="modules/dashboard.js?v=20261125c"></script>
 <script src="modules/documentation.js?v=20261123c"></script>
 <script src="modules/employees.js?v=20261123d"></script>
@@ -541,12 +542,21 @@
             <select id="cal-view-mode" class="calendar-filter-select" aria-label="Kalenderansicht waehlen">
               <option value="events">Termine</option>
               <option value="activity">Arbeitsfluss</option>
+              <option value="timeline">Zeitleiste</option>
             </select>
             <label for="cal-employee-filter" class="calendar-filter-label">Mitarbeiter</label>
             <select id="cal-employee-filter" class="calendar-filter-select" aria-label="Kalender nach Mitarbeiter filtern">
               <option value="">Alle Mitarbeiter</option>
               <option value="__unassigned__">Ohne Mitarbeiter</option>
             </select>
+            <span id="cal-timeline-range-wrap" class="hidden"><label for="cal-timeline-range" class="calendar-filter-label">Zeitraum</label>
+            <select id="cal-timeline-range" class="calendar-filter-select" aria-label="Zeitraum der Zeitleiste waehlen"><option value="month">Monat</option><option value="week">Woche</option></select></span>
+            <span class="calendar-workflow-filter hidden"><label for="cal-project-filter" class="calendar-filter-label">Projekt</label>
+            <select id="cal-project-filter" class="calendar-filter-select" aria-label="Arbeitsfluss nach Projekt filtern"><option value="">Alle Projekte</option></select></span>
+            <span class="calendar-workflow-filter hidden"><label for="cal-status-filter" class="calendar-filter-label">Status</label>
+            <select id="cal-status-filter" class="calendar-filter-select" aria-label="Arbeitsfluss nach Status filtern">
+              <option value="">Alle Status</option><option value="backlog">Backlog</option><option value="todo">Offen</option><option value="in-progress">In Bearbeitung</option><option value="review">Review</option><option value="done">Erledigt</option>
+            </select></span>
             <button id="cal-toggle-overflow-days" class="btn btn-secondary" type="button" aria-expanded="false">Alle Tage aufklappen</button>
             <button id="cal-export-ics" class="btn btn-secondary"><span class="material-symbols-rounded" aria-hidden="true">download</span><span>iCal export</span></button>
           </div>
