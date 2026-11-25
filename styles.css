@@ -4371,7 +4371,7 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   outline-offset: 2px;
 }
 
-.project-head-timeline-week-day.is-past {
+.project-head-timeline-week-day.is-past > summary {
   opacity: 0.5;
 }
 

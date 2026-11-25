@@ -94,20 +94,39 @@ test('draft milestones use the release color and an empty week stays empty', () 
   assert.match(html, /border-left:3px solid var\(--accent-green\)/);
 });
 
-test('only today and future appointments and tasks appear, not past entries or commit documentation', () => {
+test('past day entries are selectable but excluded from the upcoming timeline and agenda', () => {
   const api = harness([
     event(dateOffset(1), 'Vergangener Termin', 'meeting'),
+    event(dateOffset(1), 'Vergangene Aufgabe', 'task', 'task'),
+    event(dateOffset(1), 'Vergangener Commit', 'task', 'github-commit'),
     event(dateOffset(2), 'Heutige Aufgabe', 'task', 'task'),
     event(dateOffset(3), 'Zukünftiger Termin', 'meeting'),
     event(dateOffset(2), 'Heutiger Commit', 'task', 'github-commit'),
     event(dateOffset(4), 'Zukünftiger Commit', 'task', 'github-commit')
   ]);
   const html = api.renderProjectCardHeadTimeline({id:'p1'});
+  const agenda = html.split('<ul class="project-head-timeline-week-agenda">')[1];
+  const preview = html.split('<div class="project-head-timeline-week">')[0];
   assert.match(html, /Heutige Aufgabe/);
   assert.match(html, /Zukünftiger Termin/);
-  assert.doesNotMatch(html, /Vergangener Termin|Heutiger Commit|Zukünftiger Commit/);
-  assert.match(html, /class="project-head-timeline-week-day is-past"/);
+  assert.doesNotMatch(html, /Heutiger Commit|Zukünftiger Commit/);
+  assert.doesNotMatch(preview + agenda, /Vergangener Termin|Vergangene Aufgabe|Vergangener Commit/);
+  assert.match(html, /<details class="project-head-timeline-week-day has-entry is-past"><summary aria-label="Di 01\. 3 Termine">/);
+  assert.match(html, /Vergangener Termin/);
+  assert.match(html, /Vergangene Aufgabe/);
+  assert.match(html, /Vergangener Commit/);
   assert.match(html, /<details class="project-head-timeline-week-day has-entry is-today"><summary aria-label="Mi 02\. 1 Termin">/);
+});
+
+test('past empty days are selectable and past overflow remains expandable', () => {
+  const entries = Array.from({length:7}, (_, i) => event(dateOffset(1), 'Alter Termin '+i, 'meeting'));
+  const api = harness(entries);
+  const html = api.renderProjectTimelineWeekCalendar(api.buildProjectTimelinePreview({id:'p1'}, 3));
+  assert.match(html, /<details class="project-head-timeline-week-day is-past"><summary aria-label="Mo 31\. Keine Termine">/);
+  assert.match(html, /\+2 weitere Termine \(Di\)/);
+  const agenda = html.split('<ul class="project-head-timeline-week-agenda">')[1];
+  assert.match(agenda, /Keine Termine in dieser Woche/);
+  assert.doesNotMatch(agenda, /Alter Termin/);
 });
 
 test('only past entries leave the current week empty instead of displaying a past week', () => {

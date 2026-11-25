@@ -1635,8 +1635,9 @@ function renderProjectTimelineWeekCalendar(preview){
     dayDate.setDate(dayDate.getDate()+dayIndex);
     var dayTs=dayDate.getTime();
     var dayStart=getStartOfDayTimestamp(dayTs);
-    var entries=upcoming.filter(function(item){
-      return getStartOfDayTimestamp(item.timestamp)===dayStart;
+    var entries=merged.filter(function(item){
+      return getStartOfDayTimestamp(item.timestamp)===dayStart
+        &&(dayStart<todayStart||item.source!=='github-commit');
     }).sort(function(a,b){return a.timestamp-b.timestamp;});
     var isToday=dayStart===todayStart;
     var badgeHtml=entries.length?'<span class="project-head-timeline-week-count">'+entries.length+'</span>':'';
@@ -1647,19 +1648,15 @@ function renderProjectTimelineWeekCalendar(preview){
     var dayContent='<span class="project-head-timeline-weekday">'+dayLabel+'</span>'
       +'<span class="project-head-timeline-weekdate">'+dateLabel+'</span>'
       +badgeHtml;
-    if(dayStart<todayStart){
-      dayCells.push('<div class="project-head-timeline-week-day is-past" aria-label="'+escapeHtml(dayLabel+' '+dateLabel+'. Vergangen')+'">'+dayContent+'</div>');
-    }else{
-      dayCells.push(
-      '<details class="project-head-timeline-week-day'+(entries.length?' has-entry':'')+(isToday?' is-today':'')+'">'
+    dayCells.push(
+      '<details class="project-head-timeline-week-day'+(entries.length?' has-entry':'')+(isToday?' is-today':'')+(dayStart<todayStart?' is-past':'')+'">'
         +'<summary aria-label="'+escapeHtml(dayAria)+'">'
         +dayContent
         +'</summary>'
         +popoverHtml
       +'</details>');
-    }
 
-    if(entries.length)agendaItems.push(renderProjectTimelineWeekEntries(entries,dayLabel,false));
+    if(dayStart>=todayStart&&entries.length)agendaItems.push(renderProjectTimelineWeekEntries(entries,dayLabel,false));
   }
 
   if(!agendaItems.length){
@@ -1686,10 +1683,9 @@ function buildProjectTimelinePreview(project, limit){
   var seen={};
 
   function pushItem(raw, sourceKind){
-    if(raw&&raw.source==='github-commit')return;
     var date=String(raw&&raw.date||raw&&raw.startDate||raw&&raw.releaseDate||'').trim();
     var ts=getProjectTimelineDayTimestamp(date);
-    if(!date||isNaN(ts)||getStartOfDayTimestamp(ts)<todayStart)return;
+    if(!date||isNaN(ts))return;
     var title=String(raw&&raw.title||'').trim();
     if(!title)return;
     var normalizedTitle=title.replace(/^Meilenstein:\s*/i,'').trim();
@@ -1726,7 +1722,7 @@ function buildProjectTimelinePreview(project, limit){
     });
   }
 
-  var upcoming=merged.filter(function(item){return item.dayDelta>=0;}).sort(function(a,b){
+  var upcoming=merged.filter(function(item){return item.dayDelta>=0&&item.source!=='github-commit';}).sort(function(a,b){
     return a.timestamp-b.timestamp;
   });
   var items=upcoming.slice(0,maxItems);
@@ -1734,7 +1730,7 @@ function buildProjectTimelinePreview(project, limit){
   return {
     items:items,
     allItems:merged.slice().sort(function(a,b){return a.timestamp-b.timestamp;}),
-    totalCount:merged.length,
+    totalCount:upcoming.length,
     upcomingCount:upcoming.length,
     thisWeekCount:upcoming.filter(function(item){return item.isThisWeek;}).length
   };
