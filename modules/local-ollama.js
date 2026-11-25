@@ -323,7 +323,7 @@ function privateLocalGenerate(prompt,model,options){
   var operation=beginOperation('/api/ai/dashboard-analysis',options&&options.signal);
   return privateLocalRequest('/api/generate',{
     method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:taggedModel+':local',prompt:prompt,stream:false,format:'json',truncate:false,
+    body:JSON.stringify({model:taggedModel+':local',prompt:prompt,stream:false,format:options&&options.schema||'json',truncate:false,
       options:{temperature:0.1,num_predict:4096,num_ctx:16384}}),
     signal:operation.controller?operation.controller.signal:undefined
   }).then(function(body){

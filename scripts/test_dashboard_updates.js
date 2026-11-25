@@ -90,3 +90,25 @@ test('invalid analysis stops rather than presenting a partial selection',async()
   const h=harness({ai:()=>({topics:[{title:'Neu',description:'Text',category:'unknown'}]})});
   await assert.rejects(h.api.analyze('test'),/ungültiges Thema/);
 });
+
+test('manually added topics are selected and retain their commit association',()=>{
+  const h=harness();
+  const title={value:'<b>Übersehen</b>'},description={value:'Ein weiterer Fix'};
+  const editor={open:true,html:'',querySelector(selector){return selector.endsWith('title')?title:description;},
+    insertAdjacentHTML(where,html){this.html=html;}};
+  const root={querySelector:()=>editor};
+  const analysis={commits:[commit],topics:[]};
+  h.api.addManualTopic(root,analysis,0);
+  assert.equal(analysis.topics[0].sha,sha);
+  assert.equal(analysis.topics[0].selected,true);
+  assert.match(editor.html,/&lt;b&gt;Übersehen&lt;\/b&gt;/);
+  assert.equal(title.value,'');
+  assert.equal(editor.open,false);
+});
+
+test('an aborted analysis does not issue local AI requests',async()=>{
+  const h=harness(),controller=new AbortController();
+  controller.abort();
+  await assert.rejects(h.api.analyze('test',controller.signal),/abgebrochen/);
+  assert.equal(h.prompts.length,0);
+});

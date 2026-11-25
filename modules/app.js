@@ -541,6 +541,11 @@ function setupDashboardUpdate(){
         Array.prototype.forEach.call(preview.querySelectorAll('[data-update-topic]'),function(input){input.checked=checked;});
         return;
       }
+      if(target.classList.contains('update-topic-add')){
+        try{window.DashboardUpdates.addManualTopic(preview,analysis,Number(target.getAttribute('data-commit-index')));status.textContent='Thema hinzugefügt.';}
+        catch(error){status.textContent=error.message;}
+        return;
+      }
       if(!target.classList.contains('update-publish'))return;
       var selection;
       try{selection=window.DashboardUpdates.readSelection(preview,analysis);}

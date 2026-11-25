@@ -1,6 +1,11 @@
 (function(){'use strict';
 
 var requestVersion=0;
+var categories=['Neuerung','Bugfix','Verbesserung','Internes','Sonstiges'];
+var topicSchema={type:'object',properties:{topics:{type:'array',items:{type:'object',properties:{
+  category:{type:'string',enum:categories},title:{type:'string',minLength:1,maxLength:120},
+  description:{type:'string',minLength:1,maxLength:1800}
+},required:['category','title','description'],additionalProperties:false}}},required:['topics'],additionalProperties:false};
 
 function escapeHtml(value){
   return String(value==null?'':value).replace(/[&<>"']/g,function(char){
@@ -91,12 +96,12 @@ function analyze(model,signal,onProgress){
         +'Antworte als JSON: {"topics":[{"category":"Neuerung|Bugfix|Verbesserung|Internes|Sonstiges","title":"kurzer Titel","description":"konkrete Änderung"}]}. '
         +'Für irrelevante Ausschnitte ein leeres Array. Ein Thema je unabhängiger Änderung; nicht zusammenfassen, wenn dadurch Details verloren gehen.\n'
         +JSON.stringify({subject:job.commit.subject,message:job.commit.message,files:job.commit.files,patchPart:job.part});
-      var result=await localClient().privateLocalGenerate(prompt,model,{signal:signal});
+      var result=await localClient().privateLocalGenerate(prompt,model,{signal:signal,schema:topicSchema});
       if(!result||!Array.isArray(result.topics))throw new Error('Die lokale KI hat eine ungültige Themenliste geliefert (Abschnitt '+(i+1)+'/'+jobs.length+').');
       result.topics.forEach(function(item){
         if(!item||typeof item.title!=='string'||!item.title.trim()||item.title.trim().length>120
             ||typeof item.description!=='string'||!item.description.trim()||item.description.trim().length>1800
-            ||['Neuerung','Bugfix','Verbesserung','Internes','Sonstiges'].indexOf(item.category)===-1){
+            ||categories.indexOf(item.category)===-1){
           throw new Error('Die lokale KI hat ein ungültiges Thema geliefert (Abschnitt '+(i+1)+'/'+jobs.length+').');
         }
         topics.push({title:item.title.trim(),description:item.description.trim(),category:item.category,
@@ -117,13 +122,16 @@ function selectionHtml(analysis){
   var topics=analysis.topics;
   return '<p>'+analysis.commits.length+' Commits analysiert. Bitte Themen prüfen und auswählen. Die Zuordnung ist ein KI-Vorschlag; jeder Commit ist zusätzlich einzeln auswählbar.</p>'
     +'<div class="update-topic-actions"><button type="button" class="btn btn-secondary update-select-all">Alle auswählen</button><button type="button" class="btn btn-secondary update-select-none">Auswahl aufheben</button></div>'
-    +'<div class="update-topic-list">'+analysis.commits.map(function(commit){
+    +'<div class="update-topic-list">'+analysis.commits.map(function(commit,commitIndex){
       var items=topics.map(function(topic,index){return {topic:topic,index:index};}).filter(function(entry){return entry.topic.sha===commit.sha;});
       return '<details class="update-topic-commit" open><summary><code>'+escapeHtml(commit.sha.slice(0,7))+'</code> '+escapeHtml(commit.subject)+'</summary>'
         +'<p class="update-topic-files">Dateien: '+escapeHtml(commit.files.join(', ')||'keine')+'</p>'
         +'<details class="update-commit-detail"><summary>Commit-Inhalt und Änderungen anzeigen</summary><pre>'+escapeHtml(commit.message)+'\n\n'+escapeHtml(commit.patch||'Keine Textänderungen vorhanden.')+'</pre></details>'
-        +items.map(function(entry){return '<label class="update-topic"><input type="checkbox" data-update-topic="'+entry.index+'"'+(entry.topic.selected?' checked':'')+'>'
-          +'<span><strong>'+escapeHtml(entry.topic.title)+'</strong><small>'+escapeHtml(entry.topic.category)+' · '+escapeHtml(entry.topic.description)+'</small></span></label>';}).join('')+'</details>';
+        +items.map(function(entry){return topicHtml(entry.topic,entry.index);}).join('')
+        +'<details class="update-manual-topic" data-commit-index="'+commitIndex+'"><summary>Übersehenes Thema hinzufügen</summary>'
+        +'<label>Titel<input class="update-manual-title" type="text" maxlength="120"></label>'
+        +'<label>Beschreibung<textarea class="update-manual-description" maxlength="1800" rows="2"></textarea></label>'
+        +'<button type="button" class="btn btn-secondary update-topic-add" data-commit-index="'+commitIndex+'">Thema hinzufügen</button></details></details>';
     }).join('')+'</div>'
     +'<div class="update-options"><label>Zielgruppe<select class="update-audience"><option value="plain">Nichtfachpersonal</option><option value="technical">Fachpersonal</option></select></label>'
     +'<label>Sprache<select class="update-language"><option value="de">Deutsch</option><option value="en">Englisch</option></select></label>'
@@ -131,6 +139,26 @@ function selectionHtml(analysis){
     +'<label>Commit-Bezug<select class="update-sources"><option value="none">Ohne Anzeige</option><option value="short" selected>Kurzkennung</option><option value="full">Vollständig mit Commit-Nachricht</option></select></label></div>'
     +'<label class="update-hints">Hinweise für die KI<textarea class="update-hints-input" maxlength="1500" rows="3" placeholder="Optional: Schwerpunkte, Begriffe oder Hinweise"></textarea></label>'
     +'<button type="button" class="btn btn-primary update-publish"><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span> Auswahl erstellen und veröffentlichen</button>';
+}
+
+function topicHtml(topic,index){
+  return '<label class="update-topic"><input type="checkbox" data-update-topic="'+index+'"'+(topic.selected?' checked':'')+'>'
+    +'<span><strong>'+escapeHtml(topic.title)+'</strong><small>'+escapeHtml(topic.category)+' · '+escapeHtml(topic.description)+'</small></span></label>';
+}
+
+function addManualTopic(root,analysis,index){
+  if(!Number.isInteger(index)||index<0||index>=analysis.commits.length)throw new Error('Commit nicht gefunden.');
+  var editor=root.querySelector('.update-manual-topic[data-commit-index="'+index+'"]');
+  var title=editor.querySelector('.update-manual-title').value.trim();
+  var description=editor.querySelector('.update-manual-description').value.trim();
+  if(!title||!description||title.length>120||description.length>1800)throw new Error('Bitte Titel und Beschreibung für das Thema eingeben.');
+  var commit=analysis.commits[index];
+  var topic={title:title,description:description,category:'Manuell',sha:commit.sha,subject:commit.subject,selected:true};
+  editor.insertAdjacentHTML('beforebegin',topicHtml(topic,analysis.topics.length));
+  analysis.topics.push(topic);
+  editor.querySelector('.update-manual-title').value='';
+  editor.querySelector('.update-manual-description').value='';
+  editor.open=false;
 }
 
 function readSelection(root,analysis){
@@ -161,7 +189,11 @@ async function generate(analysis,selection,model,signal,onProgress){
       +'Sprache: '+(selection.language==='en'?'Englisch':'Deutsch')+'. Detailgrad: '
       +({short:'kurz, ein Satz',normal:'ausgewogen, ein bis zwei Sätze',detailed:'ausführlich, mehrere konkrete Sätze'}[selection.detail]||'ausgewogen')
       +'. Beachte die folgenden zusätzlichen Hinweise, soweit sie den belegten Änderungen nicht widersprechen: '+JSON.stringify(selection.hints||'')+'. Themen: '+JSON.stringify(batch);
-    var result=await localClient().privateLocalGenerate(prompt,model,{signal:signal});
+    var schema={type:'object',properties:{features:{type:'array',minItems:batch.length,maxItems:batch.length,items:{
+      type:'object',properties:{id:{type:'string',enum:batch.map(function(item){return item.id;})},
+        title:{type:'string',minLength:1,maxLength:120},description:{type:'string',minLength:1,maxLength:1800}},
+      required:['id','title','description'],additionalProperties:false}}},required:['features'],additionalProperties:false};
+    var result=await localClient().privateLocalGenerate(prompt,model,{signal:signal,schema:schema});
     if(!result||!Array.isArray(result.features)||result.features.length!==batch.length)throw new Error('Die KI hat nicht alle ausgewählten Themen ausgegeben. Bitte erneut versuchen.');
     var byId={};
     result.features.forEach(function(item){
@@ -192,7 +224,7 @@ async function generate(analysis,selection,model,signal,onProgress){
   return {count:saved.update.features.length};
 }
 
-window.DashboardUpdates={analyze:analyze,loadModels:loadModels,selectionHtml:selectionHtml,readSelection:readSelection,generate:generate,refresh:refresh};
+window.DashboardUpdates={analyze:analyze,loadModels:loadModels,selectionHtml:selectionHtml,addManualTopic:addManualTopic,readSelection:readSelection,generate:generate,refresh:refresh};
 document.addEventListener('DOMContentLoaded',function(){
   refresh();
   window.addEventListener('authChanged',refresh);
