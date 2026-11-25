@@ -6,6 +6,7 @@ import json
 import socket
 import ssl
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 
@@ -26,6 +27,8 @@ def is_public_address(value):
 
 def check_url(url):
     started = time.monotonic()
+    dns = None
+    certificate = None
     try:
         parsed = urlsplit(url)
         if (parsed.scheme not in ('http', 'https') or not parsed.hostname
@@ -38,6 +41,7 @@ def check_url(url):
         addresses = socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)
         if not addresses or any(not is_public_address(item[4][0]) for item in addresses):
             raise ValueError('Das Ziel muss ausschließlich öffentliche IP-Adressen verwenden.')
+        dns = {'host': parsed.hostname, 'addresses': list(dict.fromkeys(item[4][0] for item in addresses))[:16]}
         family, socktype, proto, _, address = addresses[0]
         sock = socket.socket(family, socktype, proto)
         try:
@@ -45,6 +49,18 @@ def check_url(url):
             sock.connect(address)
             if parsed.scheme == 'https':
                 sock = ssl.create_default_context().wrap_socket(sock, server_hostname=parsed.hostname)
+                peer = sock.getpeercert()
+                issuer = dict(part for group in peer.get('issuer', ()) for part in group)
+                subject = dict(part for group in peer.get('subject', ()) for part in group)
+                not_after = peer.get('notAfter')
+                not_before = peer.get('notBefore')
+                certificate = {
+                    'issuer': issuer.get('organizationName') or issuer.get('commonName') or '',
+                    'subject': subject.get('commonName') or '',
+                    'notAfter': datetime.fromtimestamp(ssl.cert_time_to_seconds(not_after), timezone.utc).isoformat() if not_after else '',
+                    'notBefore': datetime.fromtimestamp(ssl.cert_time_to_seconds(not_before), timezone.utc).isoformat() if not_before else '',
+                    'tlsVersion': sock.version() or '',
+                }
             host = parsed.hostname
             if ':' in host:
                 host = '[' + host + ']'
@@ -67,11 +83,13 @@ def check_url(url):
             'httpStatus': status,
             'responseMs': round((time.monotonic() - started) * 1000),
             'error': '',
+            'dns': dns,
+            'certificate': certificate,
         }
     except (ValueError, UnicodeError, OSError, ssl.SSLError, http.client.HTTPException) as exc:
         return {'status': 'down', 'httpStatus': None,
                 'responseMs': round((time.monotonic() - started) * 1000),
-                'error': str(exc)[:240]}
+                'error': str(exc)[:240], 'dns': dns, 'certificate': certificate}
 
 
 def init_table(connection):

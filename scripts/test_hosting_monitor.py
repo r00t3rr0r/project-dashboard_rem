@@ -40,6 +40,46 @@ class HostingMonitorTest(unittest.TestCase):
         fake_socket.connect.assert_called_once_with(('8.8.8.8', 80))
         fake_socket.sendall.assert_called_once()
 
+    def test_https_check_records_dns_and_verified_certificate(self):
+        raw_socket = mock.MagicMock()
+        tls_socket = mock.MagicMock()
+        tls_socket.getpeercert.return_value = {
+            'issuer': ((('organizationName', 'Example CA'),),),
+            'subject': ((('commonName', 'example.com'),),),
+            'notBefore': 'Jan  1 00:00:00 2030 GMT',
+            'notAfter': 'Apr  1 00:00:00 2030 GMT',
+        }
+        tls_socket.version.return_value = 'TLSv1.3'
+        context = mock.MagicMock()
+        context.wrap_socket.return_value = tls_socket
+        response = mock.MagicMock(status=200)
+        with mock.patch.object(monitor.socket, 'getaddrinfo', return_value=[
+            (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.4.4', 443)),
+        ]), mock.patch.object(monitor.socket, 'socket', return_value=raw_socket), \
+                mock.patch.object(monitor.ssl, 'create_default_context', return_value=context), \
+                mock.patch.object(monitor.http.client, 'HTTPResponse', return_value=response):
+            result = monitor.check_url('https://example.com/')
+        self.assertEqual(result['status'], 'up')
+        self.assertEqual(result['dns'], {'host': 'example.com', 'addresses': ['8.8.8.8', '8.8.4.4']})
+        self.assertEqual(result['certificate']['issuer'], 'Example CA')
+        self.assertEqual(result['certificate']['notAfter'], '2030-04-01T00:00:00+00:00')
+        self.assertEqual(result['certificate']['tlsVersion'], 'TLSv1.3')
+        context.wrap_socket.assert_called_once_with(raw_socket, server_hostname='example.com')
+
+    def test_failed_tls_does_not_claim_certificate_is_valid(self):
+        context = mock.MagicMock()
+        context.wrap_socket.side_effect = monitor.ssl.SSLCertVerificationError('certificate expired')
+        with mock.patch.object(monitor.socket, 'getaddrinfo', return_value=[
+            (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('8.8.8.8', 443)),
+        ]), mock.patch.object(monitor.socket, 'socket'), \
+                mock.patch.object(monitor.ssl, 'create_default_context', return_value=context):
+            result = monitor.check_url('https://example.com/')
+        self.assertEqual(result['status'], 'down')
+        self.assertIsNone(result['certificate'])
+        self.assertEqual(result['dns']['addresses'], ['8.8.8.8'])
+        self.assertIn('certificate expired', result['error'])
+
     def test_checks_are_persisted_and_history_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, 'test.sqlite')

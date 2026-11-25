@@ -3323,18 +3323,37 @@ function renderHostingStatus(project){
   if(!history.length)return '<span class="hosting-status is-unknown">Noch nicht geprüft</span><p>Automatische Prüfung alle 5 Minuten.</p>';
   var latest=history[0];
   var age=Date.now()-Date.parse(latest.checkedAt);
-  if(!isFinite(age)||age>12*60*1000)return '<span class="hosting-status is-warning">Prüfung veraltet</span><p>Letzte Prüfung: '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>';
+  if(!isFinite(age)||age>12*60*1000)return '<span class="hosting-status is-warning">Prüfung veraltet</span><p>Letzte Prüfung: '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>'+renderHostingCheckDetails(latest);
   var label=latest.status==='up'?'Erreichbar':(latest.status==='redirect'?'Weiterleitung ungeprüft':'Nicht erreichbar');
   var html='<span class="hosting-status '+(latest.status==='up'?'is-up':(latest.status==='redirect'?'is-warning':'is-down'))+'">'+label+'</span>'
     +'<p>HTTP '+escapeHtml(latest.httpStatus||'–')+' · '+escapeHtml(latest.responseMs)+' ms · '+escapeHtml(formatDateTime(latest.checkedAt))+'</p>';
   if(latest.error)html+='<p>'+escapeHtml(latest.error)+'</p>';
   if(latest.status==='redirect')html+='<p>Das Weiterleitungsziel wird nicht geprüft.</p>';
+  html+=renderHostingCheckDetails(latest);
   html+='<details><summary>Prüfverlauf ('+history.length+')</summary><ul class="hosting-history">'
     +history.slice(0,10).map(function(item){
       return '<li>'+escapeHtml(formatDateTime(item.checkedAt))+' · '+escapeHtml(item.status==='up'?'OK':(item.status==='redirect'?'Weiterleitung':'Fehler'))
         +' · '+escapeHtml(item.httpStatus||'–')+' · '+escapeHtml(item.responseMs)+' ms</li>';
     }).join('')+'</ul></details>';
   return html;
+}
+
+function renderHostingCheckDetails(check){
+  var dns=check.dns;
+  var certificate=check.certificate;
+  var html='<div class="hosting-check-details">';
+  if(dns&&dns.host)html+='<div class="hosting-check-row"><span>Geprüfter Host</span><strong>'+escapeHtml(dns.host)+'</strong></div>';
+  html+='<div class="hosting-check-row"><span>DNS · Live-Host</span><strong>'
+    +(dns&&Array.isArray(dns.addresses)&&dns.addresses.length?escapeHtml(dns.addresses.join(', ')):'Nicht verfügbar')+'</strong></div>';
+  html+='<div class="hosting-check-row"><span>SSL / TLS · geprüft</span><strong>'
+    +(certificate?escapeHtml(certificate.issuer||'Aussteller unbekannt'):'Nicht verfügbar')+'</strong></div>';
+  if(certificate){
+    if(certificate.subject)html+='<div class="hosting-check-row"><span>Zertifikat für</span><strong>'+escapeHtml(certificate.subject)+'</strong></div>';
+    if(certificate.tlsVersion)html+='<div class="hosting-check-row"><span>Protokoll</span><strong>'+escapeHtml(certificate.tlsVersion)+'</strong></div>';
+    if(certificate.notBefore)html+='<div class="hosting-check-row"><span>Gültig ab</span><strong>'+escapeHtml(formatDate(certificate.notBefore))+'</strong></div>';
+    if(certificate.notAfter)html+=renderHostingExpiry('SSL läuft ab',certificate.notAfter.slice(0,10));
+  }
+  return html+'</div>';
 }
 
 function safeHostingUrl(value){
@@ -3346,14 +3365,80 @@ function safeHostingUrl(value){
   }
 }
 
-function renderHostingExpiry(label,value){
+function renderHostingExpiry(label,value,invoice){
   if(!value)return '';
   var end=new Date(value+'T23:59:59');
   if(isNaN(end.getTime()))return '<p class="hosting-expiry-warning is-warning">'+escapeHtml(label)+': ungültiges Datum</p>';
   var remaining=end.getTime()-Date.now();
   var days=Math.ceil(remaining/86400000);
   return '<p'+(days<=30?' class="hosting-expiry-warning '+(remaining<0?'is-down':'is-warning')+'"':'')+'>'+escapeHtml(label)+': '+escapeHtml(formatDate(value))
-    +(remaining<0?' · abgelaufen':(days<=30?' · läuft bald ab':''))+'</p>';
+    +(remaining<0?(invoice?' · überfällig':' · abgelaufen'):(days<=30?(invoice?' · steht bald an':' · läuft bald ab'):''))+'</p>';
+}
+
+var HOSTING_FIELD_GROUPS=[
+  {title:'Hosting & Server',icon:'dns',fields:[
+    ['url','Live-URL','url','https://example.com'],
+    ['provider','Anbieter','text','Hosting-Anbieter'],
+    ['plan','Tarif / Paket','text','z. B. VPS'],
+    ['environment','Umgebung','text','Produktion'],
+    ['server','Server / IP','text','Servername oder IP'],
+    ['region','Standort / Region','text','z. B. Frankfurt'],
+    ['runtime','Plattform / Laufzeit','text','z. B. Linux, Node.js'],
+    ['contact','Ansprechpartner','text','Name oder Kontakt'],
+    ['adminUrl','Verwaltungslink','url','https://...']
+  ]},
+  {title:'Domain & DNS',icon:'language',fields:[
+    ['domain','Domain','text','example.com'],
+    ['registrar','Domain-Registrar','text','Registrar'],
+    ['domainExpiry','Domain läuft ab','date',''],
+    ['dnsProvider','DNS-Anbieter','text','DNS-Anbieter'],
+    ['nameServers','Nameserver','textarea','Ein Nameserver pro Zeile'],
+    ['dnsRecords','DNS-Einträge / Hinweise','textarea','z. B. A, AAAA, CNAME, MX']
+  ]},
+  {title:'SSL / TLS',icon:'verified_user',fields:[
+    ['certificateProvider','Zertifikatsanbieter','text','z. B. Let’s Encrypt'],
+    ['certificateExpiry','Zertifikat läuft ab (manuell)','date',''],
+    ['certificateRenewal','Automatische SSL-Verlängerung','select',''],
+    ['certificateNotes','Zertifikatsdetails / Hinweise','textarea','z. B. verwaltetes Zertifikat']
+  ]},
+  {title:'Vertrag & Abrechnung',icon:'receipt_long',fields:[
+    ['paidUntil','Bezahlt bis','date',''],
+    ['nextInvoiceDate','Nächste Rechnung','date',''],
+    ['billingAmount','Betrag','number','0.00'],
+    ['billingCurrency','Währung','text','EUR'],
+    ['billingInterval','Abrechnungsintervall','text','z. B. monatlich'],
+    ['autoRenew','Automatische Vertragsverlängerung','select',''],
+    ['contractId','Vertrags- / Kundennummer','text','Referenz'],
+    ['billingNotes','Abrechnungshinweise','textarea','Keine Zahlungsdaten eintragen']
+  ]}
+];
+
+function renderHostingEditorGroup(group,hosting,canEdit){
+  var disabled=canEdit?'':'disabled';
+  return '<details class="hosting-editor-group"><summary><span class="material-symbols-rounded" aria-hidden="true">'+group.icon+'</span>'+group.title+'</summary><div class="hosting-fields">'
+    +group.fields.map(function(field){
+      var value=hosting[field[0]]||'';
+      var attr=' data-hosting-field="'+field[0]+'" '+disabled;
+      var control;
+      if(field[2]==='textarea'){
+        control='<textarea rows="3"'+attr+' placeholder="'+escapeHtml(field[3])+'">'+escapeHtml(value)+'</textarea>';
+      }else if(field[2]==='select'){
+        control='<select'+attr+'><option value="">Nicht angegeben</option><option value="yes"'+(value==='yes'?' selected':'')+'>Ja</option><option value="no"'+(value==='no'?' selected':'')+'>Nein</option></select>';
+      }else{
+        control='<input type="'+field[2]+'"'+attr+' value="'+escapeHtml(value)+'" placeholder="'+escapeHtml(field[3])+'"'+(field[2]==='number'?' min="0" step="0.01"':'')+'>';
+      }
+      return '<label'+(field[2]==='textarea'?' class="hosting-field-wide"':'')+'>'+escapeHtml(field[1])+control+'</label>';
+    }).join('')+'</div></details>';
+}
+
+function renderHostingSummary(title,icon,items){
+  var rows=items.filter(function(item){return item[1]!==undefined&&item[1]!==null&&String(item[1]).trim()!=='';});
+  return '<section class="hosting-summary-card"><h5><span class="material-symbols-rounded" aria-hidden="true">'+icon+'</span>'+title+'</h5>'
+    +(rows.length?'<dl>'+rows.map(function(item){return '<div><dt>'+escapeHtml(item[0])+'</dt><dd>'+escapeHtml(item[1])+'</dd></div>';}).join('')+'</dl>':'<p>Noch keine Angaben hinterlegt.</p>')+'</section>';
+}
+
+function hostingYesNo(value){
+  return value==='yes'?'Ja':(value==='no'?'Nein':'');
 }
 
 function renderProjectHeadResources(project,flow,canEdit){
@@ -3362,32 +3447,34 @@ function renderProjectHeadResources(project,flow,canEdit){
   var knowledgePath=/^data\/project-knowledge\/[A-Za-z0-9._-]+\.md$/.test(ai.filePath)?ai.filePath:'';
   var liveUrl=safeHostingUrl(hosting.url);
   var adminUrl=safeHostingUrl(hosting.adminUrl);
-  var fields=[
-    ['url','Live-URL','url','https://example.com'],
-    ['provider','Anbieter','text','Hosting-Anbieter'],
-    ['environment','Umgebung','text','Produktion'],
-    ['server','Server / IP','text','Servername oder IP'],
-    ['domain','Domain','text','example.com'],
-    ['domainExpiry','Domain-Ablauf','date',''],
-    ['certificateExpiry','Zertifikat-Ablauf','date',''],
-    ['contact','Ansprechpartner','text','Name oder Kontakt'],
-    ['adminUrl','Verwaltungslink','url','https://...']
-  ];
   var html='<section class="project-head-resources" aria-label="Projektwissen und Hosting">'
     +'<div class="project-resources-heading"><span class="material-symbols-rounded" aria-hidden="true">folder_open</span><strong>Projektwissen</strong></div>'
     +(knowledgePath?'<a href="/api/ai/project-knowledge?projectId='+encodeURIComponent(project.id)+'" target="_blank" rel="noopener noreferrer">Wissensdatei öffnen</a><p>Aktualisiert: '+escapeHtml(formatDateTime(ai.lastGeneratedAt))+'</p>':'<p>Noch keine Wissensdatei verfügbar.</p>')
     +'<button type="button" class="project-resources-link" data-action="open-infohub" data-id="'+escapeHtml(project.id)+'">Verwalten · '+flow.attachmentCount+' Anhänge · '+flow.secretCount+' Secrets · '+flow.noteCount+' Notizen · '+flow.linkCount+' Links</button>'
-    +'<div class="project-resources-heading hosting-heading"><span class="material-symbols-rounded" aria-hidden="true">dns</span><strong>Hosting &amp; Live-Status</strong></div>'
-    +'<div data-hosting-status="'+escapeHtml(project.id)+'">'+renderHostingStatus(project)+'</div>'
-    +((hosting.provider||hosting.environment)?'<p>'+escapeHtml([hosting.provider,hosting.environment].filter(Boolean).join(' · '))+'</p>':'')
-    +renderHostingExpiry('Domain',hosting.domainExpiry)+renderHostingExpiry('Zertifikat',hosting.certificateExpiry)
-    +(liveUrl?'<a href="'+escapeHtml(liveUrl)+'" target="_blank" rel="noopener noreferrer">Live-Projekt öffnen ↗</a>':'')
-    +(adminUrl?'<br><a href="'+escapeHtml(adminUrl)+'" target="_blank" rel="noopener noreferrer">Verwaltung öffnen ↗</a>':'')
-    +'<details class="hosting-editor" data-project-state-key="hosting-editor-'+escapeHtml(project.id)+'"><summary>Hosting-Daten '+(canEdit?'bearbeiten':'anzeigen')+'</summary><div class="hosting-fields">';
-  fields.forEach(function(field){
-    html+='<label>'+escapeHtml(field[1])+'<input type="'+field[2]+'" data-hosting-field="'+field[0]+'" value="'+escapeHtml(hosting[field[0]]||'')+'" placeholder="'+escapeHtml(field[3])+'" '+(canEdit?'':'disabled')+'></label>';
-  });
-  html+='</div><p>Nur öffentliche HTTP(S)-Ziele; Weiterleitungen werden nicht verfolgt. Ablaufdaten werden manuell gepflegt. Keine Zugangsdaten in URLs speichern.</p>'
+    +'<div class="project-resources-heading hosting-heading"><span class="material-symbols-rounded" aria-hidden="true">dns</span><div><strong>Hosting &amp; Live-Status</strong><small>Projektbetrieb im Überblick</small></div></div>'
+    +'<div class="hosting-live-panel"><div class="hosting-panel-kicker">Live-Überwachung</div><div data-hosting-status="'+escapeHtml(project.id)+'">'+renderHostingStatus(project)+'</div>'
+    +'<div class="hosting-quick-links">'+(liveUrl?'<a href="'+escapeHtml(liveUrl)+'" target="_blank" rel="noopener noreferrer">Live-Projekt ↗</a>':'')
+    +(adminUrl?'<a href="'+escapeHtml(adminUrl)+'" target="_blank" rel="noopener noreferrer">Verwaltung ↗</a>':'')+'</div></div>'
+    +'<div class="hosting-summary-grid">'
+    +renderHostingSummary('Hosting & Server','dns',[
+      ['Anbieter',hosting.provider],['Tarif',hosting.plan],['Umgebung',hosting.environment],['Server / IP',hosting.server],['Region',hosting.region],['Plattform',hosting.runtime],['Kontakt',hosting.contact]])
+    +renderHostingSummary('Domain & DNS','language',[
+      ['Domain',hosting.domain],['Registrar',hosting.registrar],['DNS-Anbieter',hosting.dnsProvider],['Nameserver',hosting.nameServers],['DNS-Hinweise',hosting.dnsRecords]])
+    +renderHostingSummary('SSL / TLS','verified_user',[
+      ['Anbieter',hosting.certificateProvider],['Autom. Verlängerung',hostingYesNo(hosting.certificateRenewal)],['Hinweise',hosting.certificateNotes]])
+    +renderHostingSummary('Vertrag & Abrechnung','receipt_long',[
+      ['Betrag',hosting.billingAmount?[hosting.billingAmount,hosting.billingCurrency].filter(Boolean).join(' '):''],
+      ['Intervall',hosting.billingInterval],
+      ['Autom. Verlängerung',hostingYesNo(hosting.autoRenew)],['Vertrag / Kunde',hosting.contractId],['Hinweise',hosting.billingNotes]])
+    +'</div><div class="hosting-deadlines"><span class="hosting-panel-kicker">Termine · manuell gepflegt</span>'
+    +(hosting.domainExpiry?renderHostingExpiry('Domain',hosting.domainExpiry):'')
+    +(hosting.certificateExpiry?renderHostingExpiry('SSL (manuell)',hosting.certificateExpiry):'')
+    +(hosting.paidUntil?renderHostingExpiry('Bezahlt bis',hosting.paidUntil):'')
+    +(hosting.nextInvoiceDate?renderHostingExpiry('Nächste Rechnung',hosting.nextInvoiceDate,true):'')
+    +(!hosting.domainExpiry&&!hosting.certificateExpiry&&!hosting.paidUntil&&!hosting.nextInvoiceDate?'<p>Keine Termine hinterlegt.</p>':'')+'</div>'
+    +'<details class="hosting-editor" data-project-state-key="hosting-editor-'+escapeHtml(project.id)+'"><summary>Hosting-Daten '+(canEdit?'bearbeiten':'anzeigen')+'</summary>'
+    +HOSTING_FIELD_GROUPS.map(function(group){return renderHostingEditorGroup(group,hosting,canEdit);}).join('')
+    +'<p>DNS und SSL beziehen sich auf die Live-URL. Alle übrigen Angaben werden manuell gepflegt. Keine Passwörter oder Zahlungsdaten speichern.</p>'
     +(canEdit?'<button type="button" class="btn btn-secondary" data-action="save-hosting" data-id="'+escapeHtml(project.id)+'">Hosting speichern</button>':'')
     +'</details></section>';
   return html;
@@ -3411,10 +3498,13 @@ function refreshHostingChecks(){
 }
 
 function saveHosting(project,card){
-  var next={};
+  var next=Object.assign({},project.hosting||{});
+  var invalid=null;
   card.querySelectorAll('[data-hosting-field]').forEach(function(input){
+    if(!invalid&&input.checkValidity&&!input.checkValidity())invalid=input;
     next[input.getAttribute('data-hosting-field')]=input.value.trim();
   });
+  if(invalid){invalid.reportValidity();notify('Bitte die Eingaben prüfen.','error');return;}
   for(var i=0;i<2;i++){
     var key=i?'adminUrl':'url';
     if(!next[key])continue;
