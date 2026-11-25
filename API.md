@@ -224,6 +224,8 @@ Response (Beispiel):
 
 Für Remote-Ollama erzeugt `POST /api/ai/project-knowledge` mit `analysisOnly: true` und `knowledgePrompt` einen Abschnitt und liefert `markdown` und `model`, ohne eine Datei zu schreiben. Die Projektoberfläche speichert die zusammengefügten Abschnitte erst nach erfolgreicher Erstellung. Die Erhebung umfasst den GitHub-Dateibaum und Dashboard-Projektkontext, aber keine Dateiinhalte.
 
+Die Oberfläche verwendet dafür `promptConfig: {temperature: 0.2, maxTokens: 4096, contextTokens: 8192}`. Das eigene Antwortbudget wird bei Projektwissen nicht durch das globale Budget ersetzt. Der Server reserviert 1024 Tokens und prüft konservativ `UTF-8-Bytes(knowledgePrompt) + maxTokens + 1024 <= 8192`; Ollama erhält `num_ctx=8192`. Fehler enthalten zusätzlich `code: "AI_CONTEXT_LIMIT"` oder `code: "AI_OUTPUT_TRUNCATED"`, wenn eine kleinere Eingabe erforderlich ist. Der Client halbiert betroffene Chunks mit begrenzter Wiederholung. Andere Fehler werden nicht automatisch wiederholt.
+
 ### `GET /api/health`
 
 Liefert Basis-Health plus Bootstrap-Status beim Serverstart.

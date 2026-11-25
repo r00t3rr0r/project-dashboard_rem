@@ -54,6 +54,7 @@ class GitHubCommitQueryTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     handler._call_ollama('model', 'prompt', require_complete=True)
                 self.assertFalse(json.loads(urlopen.call_args.args[0].data)['truncate'])
+                self.assertEqual(json.loads(urlopen.call_args.args[0].data)['options']['num_ctx'], 8192)
 
 
 class StorageConcurrencyTest(unittest.TestCase):
@@ -195,6 +196,25 @@ class StorageConcurrencyTest(unittest.TestCase):
         self.assertNotIn('filePath', result)
         self.assertEqual(call.call_args.args, ('test-model', 'Analysiere diesen Abschnitt'))
         self.assertTrue(call.call_args.kwargs['require_complete'])
+        self.assertEqual(call.call_args.kwargs['max_tokens'], 4096)
+
+    def test_project_knowledge_rejects_context_overflow_before_generation(self):
+        with mock.patch.object(storage.StorageHandler, '_call_ollama') as call:
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.request_json('POST', '/api/ai/project-knowledge', {
+                    'projectId': 'p1', 'projectTitle': 'Demo', 'analysisOnly': True,
+                    'knowledgePrompt': '漢' * 1100, 'promptConfig': {'maxTokens': 4096}
+                })
+            self.assertEqual(json.loads(caught.exception.read())['code'], 'AI_CONTEXT_LIMIT')
+            call.assert_not_called()
+
+    def test_project_knowledge_returns_retryable_truncation_code(self):
+        with mock.patch.object(storage.StorageHandler, '_call_ollama', side_effect=RuntimeError('Antwort abgeschnitten')):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.request_json('POST', '/api/ai/project-knowledge', {
+                    'projectId': 'p1', 'projectTitle': 'Demo', 'analysisOnly': True, 'knowledgePrompt': 'Chunk'
+                })
+            self.assertEqual(json.loads(caught.exception.read())['code'], 'AI_OUTPUT_TRUNCATED')
 
     def test_hosting_checks_endpoint_is_available_to_a_session(self):
         status, payload = self.request_json('GET', '/api/hosting/checks')

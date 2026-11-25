@@ -192,12 +192,48 @@ test('cloud project knowledge rejects truncated output',async()=>{
   client.window.localStorage={getItem:()=> 'openai'};
   client.window.AuthManager={getCurrentUser:()=>({aiKeys:{openai:'test-key'}})};
   client.sandbox.fetch=async()=>({ok:true,json:async()=>({choices:[{finish_reason:'length',message:{content:'unvollstaendig'}}]})});
-  await assert.rejects(client.api.generate('/api/ai/project-knowledge',{knowledgePrompt:'Abschnitt'}),/abgeschnitten/);
+  await assert.rejects(client.api.generate('/api/ai/project-knowledge',{knowledgePrompt:'Abschnitt'}),{code:'AI_OUTPUT_TRUNCATED'});
+});
+
+for(const hostname of ['127.0.0.1','178.105.213.50']){
+  test(hostname+': scoped knowledge budget overrides a low global budget',async()=>{
+    const client=makeClient(hostname,{maxTokens:200,temperature:0.9});
+    let request;
+    client.sandbox.fetch=async(url,init)=>{
+      request=JSON.parse(init.body);
+      return {ok:true,json:async()=>hostname==='127.0.0.1'?{response:'Wissen'}:{markdown:'Wissen'}};
+    };
+    await client.api.generate('/api/ai/project-knowledge',{model:'test',knowledgePrompt:'Abschnitt',
+      promptConfig:{maxTokens:4096,temperature:0.2,contextTokens:8192}});
+    if(hostname==='127.0.0.1'){
+      assert.equal(request.options.num_predict,4096);
+      assert.equal(request.options.num_ctx,8192);
+      assert.equal(request.options.temperature,0.2);
+    }else{
+      assert.equal(request.promptConfig.maxTokens,4096);
+      assert.equal(request.promptConfig.contextTokens,8192);
+    }
+  });
+}
+
+test('remote knowledge retains structured context limit errors',async()=>{
+  const client=makeClient('178.105.213.50');
+  client.sandbox.fetch=async()=>({ok:false,status:400,json:async()=>({error:'Kontextlimit',code:'AI_CONTEXT_LIMIT'})});
+  await assert.rejects(client.api.generate('/api/ai/project-knowledge',{model:'test',knowledgePrompt:'Abschnitt'}),{code:'AI_CONTEXT_LIMIT'});
+});
+
+test('aborted local knowledge requests do not retry other Ollama endpoints',async()=>{
+  const client=makeClient('127.0.0.1');
+  let calls=0;
+  client.sandbox.fetch=async()=>{calls++;throw Object.assign(new Error('Abbruch'),{name:'AbortError'});};
+  await assert.rejects(client.api.generate('/api/ai/project-knowledge',{model:'test',knowledgePrompt:'Abschnitt'}),{name:'AbortError'});
+  assert.equal(calls,1);
 });
 
 for(const provider of ['claude','openai']){
   test(provider+': project knowledge uses the selected provider and returns markdown',async()=>{
     const client=makeClient('127.0.0.1');
+    client.window.AIConfModule={getConfiguration:()=>({maxTokens:200})};
     client.window.localStorage={getItem:()=>provider};
     client.window.AuthManager={getCurrentUser:()=>({aiKeys:{[provider]:'test-key'}})};
     let url,request;
@@ -207,9 +243,10 @@ for(const provider of ['claude','openai']){
         ?{stop_reason:'end_turn',content:[{text:'# Wissen'}]}
         :{choices:[{finish_reason:'stop',message:{content:'# Wissen'}}]}};
     };
-    const result=await client.api.generate('/api/ai/project-knowledge',{knowledgePrompt:'Abschnitt'});
+    const result=await client.api.generate('/api/ai/project-knowledge',{knowledgePrompt:'Abschnitt',promptConfig:{maxTokens:4096}});
     assert.match(url,provider==='claude'?/anthropic\.com/:/openai\.com/);
     assert.equal(request.messages[0].content,'Abschnitt');
+    assert.equal(request.max_tokens,4096);
     assert.equal(result.markdown,'# Wissen');
     assert(result.bytes>0);
   });

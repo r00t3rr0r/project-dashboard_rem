@@ -47,7 +47,7 @@ function harness(provider, tree) {
     'window[NAMESPACE]={',
     `render=window.testOverrides.render; refreshAiHealthStatus=window.testOverrides.refreshAiHealthStatus;
      notify=window.testOverrides.notify; openAiKnowledgeTaskDialog=window.testOverrides.openAiKnowledgeTaskDialog;
-     buildProjectKnowledgeSnapshot=window.testOverrides.buildProjectKnowledgeSnapshot;
+     buildProjectKnowledgeSnapshot=function(){return window.testOverrides.buildProjectKnowledgeSnapshot.apply(null,arguments);};
      fetchRepoMeta=window.testOverrides.fetchRepoMeta;
      fetchGitHubJson=function(){return window.testOverrides.fetchGitHubJson.apply(null,arguments);};
      postBackendJson=function(){return window.testOverrides.postBackendJson.apply(null,arguments);};

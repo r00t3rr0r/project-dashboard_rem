@@ -5239,7 +5239,7 @@ function openKnowledgeProgressDialog(project,run){
   run.ui.stop.addEventListener('click',function(){
     if(run.saving||run.finished)return;
     run.controller.abort();
-    updateKnowledgeProgress(project.id,'Abbruch angefordert; laufende KI-Anfrage wird beendet.');
+    updateKnowledgeProgress(project.id,'Abbruch angefordert; keine weiteren Chunks werden verarbeitet.');
   });
   run.ui.close.addEventListener('click',function(){dialog.close();});
   run.ui.tasks.addEventListener('click',function(){
