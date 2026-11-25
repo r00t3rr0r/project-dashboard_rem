@@ -4236,12 +4236,23 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   border-radius: 0.72rem;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(138, 165, 204, 0.14);
-  cursor: pointer;
   transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
 }
 
-.project-head-timeline-week-day:hover,
-.project-head-timeline-week-day:focus-visible,
+.project-head-timeline-week-day > summary {
+  display: grid;
+  justify-items: center;
+  gap: 0.15rem;
+  width: 100%;
+  cursor: pointer;
+  list-style: none;
+}
+
+.project-head-timeline-week-day > summary::-webkit-details-marker {
+  display: none;
+}
+
+.project-head-timeline-week-day[open],
 .project-head-timeline-week-day:focus-within {
   z-index: 4;
   transform: translateY(-2px);
@@ -4250,8 +4261,13 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   box-shadow: 0 10px 22px rgba(8, 16, 31, 0.36);
 }
 
-.project-head-timeline-week-day:focus-visible {
-  outline: 0;
+.project-head-timeline-week-day > summary:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+.project-head-timeline-week-day.is-past {
+  opacity: 0.5;
 }
 
 .project-head-timeline-week-day.has-entry {
@@ -4309,13 +4325,27 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   transition: opacity 180ms ease, transform 180ms ease;
 }
 
-.project-head-timeline-week-day:hover .project-head-timeline-week-day-popover,
-.project-head-timeline-week-day:focus-visible .project-head-timeline-week-day-popover,
-.project-head-timeline-week-day:focus-within .project-head-timeline-week-day-popover {
+.project-head-timeline-week-day[open] > .project-head-timeline-week-day-popover {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
   transform: translate(-50%, 0) scale(1);
+}
+
+.project-head-timeline-week-day:nth-child(-n+2) > .project-head-timeline-week-day-popover {
+  left: 0;
+  transform: translate(0, 0.45rem) scale(0.98);
+}
+
+.project-head-timeline-week-day:nth-last-child(-n+2) > .project-head-timeline-week-day-popover {
+  left: auto;
+  right: 0;
+  transform: translate(0, 0.45rem) scale(0.98);
+}
+
+.project-head-timeline-week-day:nth-child(-n+2)[open] > .project-head-timeline-week-day-popover,
+.project-head-timeline-week-day:nth-last-child(-n+2)[open] > .project-head-timeline-week-day-popover {
+  transform: translate(0, 0) scale(1);
 }
 
 .project-head-timeline-week-day-popover-list {

@@ -1622,16 +1622,18 @@ function renderProjectTimelineWeekCalendar(preview){
   var merged=Array.isArray(preview&&preview.allItems)?preview.allItems:[];
   var now=Date.now();
   var todayStart=getStartOfDayTimestamp(now);
-  var upcoming=merged.filter(function(item){return item.dayDelta>=0;});
-  var anchorTimestamp=upcoming[0]?upcoming[0].timestamp:(merged[0]?merged[0].timestamp:now);
+  var upcoming=merged.filter(function(item){return getStartOfDayTimestamp(item.timestamp)>=todayStart&&item.source!=='github-commit';});
+  var anchorTimestamp=upcoming[0]?upcoming[0].timestamp:now;
   var weekStart=getStartOfWeekTimestamp(anchorTimestamp);
   var agendaItems=[];
   var dayCells=[];
 
   for(var dayIndex=0;dayIndex<7;dayIndex++){
-    var dayTs=weekStart+(dayIndex*24*60*60*1000);
+    var dayDate=new Date(weekStart);
+    dayDate.setDate(dayDate.getDate()+dayIndex);
+    var dayTs=dayDate.getTime();
     var dayStart=getStartOfDayTimestamp(dayTs);
-    var entries=merged.filter(function(item){
+    var entries=upcoming.filter(function(item){
       return getStartOfDayTimestamp(item.timestamp)===dayStart;
     }).sort(function(a,b){return a.timestamp-b.timestamp;});
     var isToday=dayStart===todayStart;
@@ -1640,14 +1642,20 @@ function renderProjectTimelineWeekCalendar(preview){
     var dateLabel=new Date(dayTs).toLocaleDateString('de-DE',{day:'2-digit'});
     var popoverHtml=renderProjectTimelineDayPopover(entries,dayLabel);
     var dayAria=dayLabel+' '+dateLabel+'. '+(entries.length?(entries.length+' Termin'+(entries.length===1?'':'e')):'Keine Termine');
-    dayCells.push(
-      '<div class="project-head-timeline-week-day'+(entries.length?' has-entry':'')+(isToday?' is-today':'')+'" tabindex="0" aria-label="'+escapeHtml(dayAria)+'">'
-        +'<span class="project-head-timeline-weekday">'+dayLabel+'</span>'
-        +'<span class="project-head-timeline-weekdate">'+dateLabel+'</span>'
-        +badgeHtml
+    var dayContent='<span class="project-head-timeline-weekday">'+dayLabel+'</span>'
+      +'<span class="project-head-timeline-weekdate">'+dateLabel+'</span>'
+      +badgeHtml;
+    if(dayStart<todayStart){
+      dayCells.push('<div class="project-head-timeline-week-day is-past" aria-label="'+escapeHtml(dayLabel+' '+dateLabel+'. Vergangen')+'">'+dayContent+'</div>');
+    }else{
+      dayCells.push(
+      '<details class="project-head-timeline-week-day'+(entries.length?' has-entry':'')+(isToday?' is-today':'')+'">'
+        +'<summary aria-label="'+escapeHtml(dayAria)+'">'
+        +dayContent
+        +'</summary>'
         +popoverHtml
-      +'</div>'
-    );
+      +'</details>');
+    }
 
     if(entries.length)agendaItems.push(renderProjectTimelineWeekEntries(entries,dayLabel,false));
   }
@@ -1676,9 +1684,10 @@ function buildProjectTimelinePreview(project, limit){
   var seen={};
 
   function pushItem(raw, sourceKind){
+    if(raw&&raw.source==='github-commit')return;
     var date=String(raw&&raw.date||raw&&raw.startDate||raw&&raw.releaseDate||'').trim();
     var ts=getProjectTimelineDayTimestamp(date);
-    if(!date||isNaN(ts))return;
+    if(!date||isNaN(ts)||getStartOfDayTimestamp(ts)<todayStart)return;
     var title=String(raw&&raw.title||'').trim();
     if(!title)return;
     var normalizedTitle=title.replace(/^Meilenstein:\s*/i,'').trim();
@@ -1718,11 +1727,7 @@ function buildProjectTimelinePreview(project, limit){
   var upcoming=merged.filter(function(item){return item.dayDelta>=0;}).sort(function(a,b){
     return a.timestamp-b.timestamp;
   });
-  var recentPast=merged.filter(function(item){return item.dayDelta<0;}).sort(function(a,b){
-    return b.timestamp-a.timestamp;
-  });
   var items=upcoming.slice(0,maxItems);
-  if(items.length<maxItems)items=items.concat(recentPast.slice(0,maxItems-items.length));
 
   return {
     items:items,
@@ -1738,7 +1743,7 @@ function renderProjectCardHeadTimeline(project){
   var summaryParts=[];
   if(preview.upcomingCount)summaryParts.push(preview.upcomingCount+' anstehend');
   if(preview.thisWeekCount)summaryParts.push(preview.thisWeekCount+' diese Woche');
-  var summaryText=preview.totalCount?(summaryParts.join(' · ')||'Zuletzt geplant'):'Keine Termine geplant';
+  var summaryText=preview.totalCount?summaryParts.join(' · '):'Keine Termine geplant';
   var itemsHtml='';
   if(preview.items.length){
     itemsHtml=preview.items.map(function(item){

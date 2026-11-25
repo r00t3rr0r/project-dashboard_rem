@@ -4,6 +4,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {test} = require('node:test');
 
+const now = new Date(2030, 0, 2, 12);
+class FixedDate extends Date {
+  constructor(...args) { super(...(args.length ? args : [now.getTime()])); }
+  static now() { return now.getTime(); }
+}
+
 function harness(events) {
   const document = {
     readyState:'loading', addEventListener(){}, getElementById(){return null;},
@@ -21,11 +27,11 @@ function harness(events) {
     location:{origin:'http://localhost'},
     DataLayer:{getCalendarEvents:()=>events}
   };
-  const context = vm.createContext({window, document, console});
+  const context = vm.createContext({window, document, console, Date:FixedDate});
   const calendar = fs.readFileSync(path.join(__dirname, '../modules/calendar.js'), 'utf8');
   const projects = fs.readFileSync(path.join(__dirname, '../modules/projects.js'), 'utf8').replace(
     'function renderProjectCardHeadTimeline(project){',
-    'window.testTimeline={buildProjectTimelinePreview,renderProjectTimelineWeekCalendar};\nfunction renderProjectCardHeadTimeline(project){'
+    'window.testTimeline={buildProjectTimelinePreview,renderProjectTimelineWeekCalendar,renderProjectCardHeadTimeline};\nfunction renderProjectCardHeadTimeline(project){'
   );
   vm.runInContext(calendar, context);
   vm.runInContext(projects, context);
@@ -33,7 +39,7 @@ function harness(events) {
 }
 
 function dateOffset(days) {
-  const date = new Date();
+  const date = new Date(now);
   date.setHours(12, 0, 0, 0);
   date.setDate(date.getDate() - (date.getDay() + 6) % 7 + days);
   return [date.getFullYear(), String(date.getMonth()+1).padStart(2,'0'), String(date.getDate()).padStart(2,'0')].join('-');
@@ -44,29 +50,30 @@ function event(date, title, type, source) {
 }
 
 test('each day limits agenda and popover to five entries with separate expandable remainder', () => {
-  const monday = Array.from({length:7}, (_, i) => event(dateOffset(0), 'Montag '+i, 'meeting'));
-  const tuesday = Array.from({length:6}, (_, i) => event(dateOffset(1), 'Dienstag '+i, 'task'));
-  const api = harness([...monday, ...tuesday]);
+  const today = Array.from({length:7}, (_, i) => event(dateOffset(2), 'Heute '+i, 'meeting'));
+  const tomorrow = Array.from({length:6}, (_, i) => event(dateOffset(3), 'Morgen '+i, 'task'));
+  const api = harness([...today, ...tomorrow]);
   const html = api.renderProjectTimelineWeekCalendar(api.buildProjectTimelinePreview({id:'p1'}, 3));
   const agenda = html.split('<ul class="project-head-timeline-week-agenda">')[1];
-  assert.match(agenda, /\+2 weitere Termine \(Mo\)/);
-  assert.match(agenda, /\+1 weiterer Termin \(Di\)/);
-  assert.equal((html.match(/<details>/g) || []).length, 4);
+  assert.match(agenda, /\+2 weitere Termine \(Mi\)/);
+  assert.match(agenda, /\+1 weiterer Termin \(Do\)/);
+  assert.equal((agenda.match(/<details>/g) || []).length, 2);
   assert.equal((agenda.split('<details>')[0].match(/week-agenda-item/g) || []).length, 5);
-  assert.match(agenda, /Montag 5/);
-  assert.match(agenda, /Dienstag 5/);
-  const mondayPopover = html.slice(html.indexOf('<ul class="project-head-timeline-week-day-popover-list">')).split('</details>')[0];
-  assert.equal((mondayPopover.split('<details>')[0].match(/week-day-popover-item/g) || []).length, 5);
-  assert.match(mondayPopover, /Montag 6/);
+  assert.match(agenda, /Heute 5/);
+  assert.match(agenda, /Morgen 5/);
+  const todayPopover = html.slice(html.indexOf('<ul class="project-head-timeline-week-day-popover-list">')).split('</details>')[0];
+  assert.equal((todayPopover.split('<details>')[0].match(/week-day-popover-item/g) || []).length, 5);
+  assert.match(todayPopover, /Heute 6/);
+  assert.match(html, /<details class="project-head-timeline-week-day has-entry is-today"><summary/);
 });
 
 test('five entries need no expansion and event types use team calendar colors', () => {
   const entries = [
-    event(dateOffset(0), 'Meeting', 'meeting'),
-    event(dateOffset(0), 'Deadline', 'deadline'),
-    event(dateOffset(0), 'Task <Titel>', 'task'),
-    event(dateOffset(0), 'Commit', 'other', 'github-commit'),
-    event(dateOffset(0), 'Unbekannt', 'unknown')
+    event(dateOffset(2), 'Meeting', 'meeting'),
+    event(dateOffset(2), 'Deadline', 'deadline'),
+    event(dateOffset(2), 'Task <Titel>', 'task'),
+    event(dateOffset(2), 'Release', 'release'),
+    event(dateOffset(2), 'Unbekannt', 'unknown')
   ];
   const api = harness(entries);
   const html = api.renderProjectTimelineWeekCalendar(api.buildProjectTimelinePreview({id:'p1'}, 3));
@@ -82,7 +89,31 @@ test('draft milestones use the release color and an empty week stays empty', () 
   const api = harness([]);
   const empty = api.renderProjectTimelineWeekCalendar(api.buildProjectTimelinePreview({id:'p1'}, 3));
   assert.match(empty, /Keine Termine in dieser Woche/);
-  const project = {id:'p1', executionPlanDraft:{milestoneDraft:{items:[{date:dateOffset(0), title:'Meilenstein'}]}}};
+  const project = {id:'p1', executionPlanDraft:{milestoneDraft:{items:[{date:dateOffset(2), title:'Meilenstein'}]}}};
   const html = api.renderProjectTimelineWeekCalendar(api.buildProjectTimelinePreview(project, 3));
   assert.match(html, /border-left:3px solid var\(--accent-green\)/);
+});
+
+test('only today and future appointments and tasks appear, not past entries or commit documentation', () => {
+  const api = harness([
+    event(dateOffset(1), 'Vergangener Termin', 'meeting'),
+    event(dateOffset(2), 'Heutige Aufgabe', 'task', 'task'),
+    event(dateOffset(3), 'Zukünftiger Termin', 'meeting'),
+    event(dateOffset(2), 'Heutiger Commit', 'task', 'github-commit'),
+    event(dateOffset(4), 'Zukünftiger Commit', 'task', 'github-commit')
+  ]);
+  const html = api.renderProjectCardHeadTimeline({id:'p1'});
+  assert.match(html, /Heutige Aufgabe/);
+  assert.match(html, /Zukünftiger Termin/);
+  assert.doesNotMatch(html, /Vergangener Termin|Heutiger Commit|Zukünftiger Commit/);
+  assert.match(html, /class="project-head-timeline-week-day is-past"/);
+  assert.match(html, /<details class="project-head-timeline-week-day has-entry is-today"><summary aria-label="Mi 02\. 1 Termin">/);
+});
+
+test('only past entries leave the current week empty instead of displaying a past week', () => {
+  const api = harness([event(dateOffset(-7), 'Alter Termin', 'meeting')]);
+  const html = api.renderProjectCardHeadTimeline({id:'p1'});
+  assert.doesNotMatch(html, /Alter Termin|Zuletzt geplant/);
+  assert.match(html, /31\.12\. - 06\.01\./);
+  assert.match(html, /Keine Termine in dieser Woche/);
 });

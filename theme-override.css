@@ -7381,8 +7381,8 @@ body.light-mode .project-head-timeline-week {
   border-top-color: #d1d9e0;
 }
 
-body.light-mode .project-head-timeline-week-day:hover,
-body.light-mode .project-head-timeline-week-day:focus-visible,
+body.light-mode .project-head-timeline-week-day[open],
+body.light-mode .project-head-timeline-week-day:focus-within,
 body.light-mode .project-head-timeline-week-day.has-entry {
   background: #f0f6fc;
   border-color: #0969da;
