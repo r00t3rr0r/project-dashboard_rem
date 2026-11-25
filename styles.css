@@ -2107,7 +2107,7 @@ body.kanban-touch-dragging {
 }
 
 /* Wippendes Brief-Icon in der Überschrift */
-.calendar-pending-invites.has-pending .calendar-invites-heading:not(.dashboard-invites-answered-heading) > .material-symbols-rounded {
+.calendar-pending-invites.has-pending .calendar-invites-heading > .material-symbols-rounded {
   animation: invites-icon-ring calc(3s - var(--invite-urgency, 0) * 1.8s) ease-in-out infinite;
   transform-origin: top center;
 }
@@ -2182,6 +2182,7 @@ body.kanban-touch-dragging {
   cursor: pointer;
   padding: 0;
   min-width: 0;
+  flex: 1 1 100%;
 }
 
 .calendar-invite-info strong {
@@ -2208,10 +2209,39 @@ body.kanban-touch-dragging {
   color: var(--text-muted);
 }
 
+.calendar-invite-participant-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.3rem;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.calendar-invite-participant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+
+.calendar-invite-participant-row .calendar-participant-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .calendar-invite-actions {
   display: flex;
   gap: 0.4rem;
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .calendar-invites-more {
@@ -6798,19 +6828,6 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
   font-size: 0.9rem;
 }
 
-.dashboard-invites .dashboard-invites-answered-heading {
-  margin-top: 0.9rem;
-  flex-wrap: wrap;
-}
-
-.dashboard-invites .dashboard-invites-answered-heading:first-child {
-  margin-top: 0;
-}
-
-.dashboard-invites .dashboard-invites-answered-heading span[class^="calendar-rsvp-count"] {
-  font-size: 0.74rem;
-  font-weight: 600;
-}
 .commit-selection { display: grid; gap: .6rem; min-width: 0; border: 0; padding: 0; margin: 0; }
 .commit-selection legend { font-weight: 600; }
 .commit-selection-filters { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; }

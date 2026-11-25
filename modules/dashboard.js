@@ -1243,10 +1243,12 @@
   function getEventTypeLabel(type) {
     var map = {
       meeting: 'Meeting',
+      videoconference: 'Videokonferenz',
       deadline: 'Deadline',
       release: 'Release',
       holiday: 'Urlaub',
-      task: 'Task'
+      task: 'Task',
+      training: 'Schulung'
     };
     return map[String(type || '').toLowerCase()] || 'Termin';
   }
@@ -2674,18 +2676,49 @@
     pending: { label: 'Ausstehend', icon: 'schedule' }
   };
   var INVITE_TYPE_COLORS = {
-    meeting: 'var(--accent-blue)', deadline: 'var(--accent-red)', release: 'var(--accent-green)',
+    meeting: 'var(--accent-blue)', videoconference: 'var(--accent-blue)', deadline: 'var(--accent-red)', release: 'var(--accent-green)',
     holiday: 'var(--accent-purple)', task: 'var(--accent-yellow)', training: 'var(--accent-cyan, #22b8cf)'
   };
 
+  var INVITE_TYPE_ICONS = {
+    meeting: 'groups', videoconference: 'videocam', deadline: 'flag', release: 'rocket_launch',
+    holiday: 'beach_access', task: 'task_alt', training: 'school'
+  };
+
+  function getInviteParticipantRows(evt) {
+    var dataLayer = window.DataLayer || null;
+    var employees = dataLayer && typeof dataLayer.getEmployees === 'function' ? dataLayer.getEmployees() || [] : [];
+    var employeeById = {};
+    employees.forEach(function(employee) {
+      if (employee && employee.id) employeeById[String(employee.id)] = employee;
+    });
+    var responses = evt.responses && typeof evt.responses === 'object' ? evt.responses : {};
+    return getEventParticipants(evt).map(function(id) {
+      var employee = employeeById[id];
+      var response = responses[id];
+      var status = response && INVITE_RSVP[response.status] ? response.status : 'pending';
+      var meta = INVITE_RSVP[status];
+      var name = employee ? String(employee.name || employee.title || id) : id;
+      return '<li class="calendar-invite-participant-row">' +
+        '<span class="calendar-participant-name">' + escapeHtml(name) + '</span>' +
+        '<span class="calendar-rsvp-badge calendar-rsvp-badge-' + status + '">' +
+        '<span class="material-symbols-rounded" aria-hidden="true">' + meta.icon + '</span>' + escapeHtml(meta.label) +
+        '</span></li>';
+    }).join('');
+  }
+
   function buildInviteRow(evt, status) {
     var color = INVITE_TYPE_COLORS[evt.type] || 'var(--text-muted)';
+    var typeLabel = getEventTypeLabel(evt.type);
+    var typeIcon = INVITE_TYPE_ICONS[evt.type] || 'event';
     var dateKey = String(evt.date || evt.startDate || '');
     var when = formatDate(dateKey + 'T12:00:00') + (evt.startTime ? ', ' + evt.startTime + ' Uhr' : '');
     var html = '<div class="calendar-invite-row" style="--invite-color:' + color + '">' +
-      '<button type="button" class="calendar-invite-info" data-invite-open="' + escapeHtml(evt.id) + '">' +
+      '<button type="button" class="calendar-invite-info" data-invite-open="' + escapeHtml(evt.id) + '" aria-label="Termin öffnen: ' + escapeHtml(evt.title || 'Termin') + '">' +
+      '<span class="calendar-invite-type"><span class="material-symbols-rounded" aria-hidden="true">' + typeIcon + '</span>' + escapeHtml(typeLabel) + '</span>' +
       '<strong>' + escapeHtml(evt.title || 'Termin') + '</strong>' +
       '<span class="calendar-invite-date">' + escapeHtml(when + (evt.location ? ' · ' + evt.location : '')) + '</span></button>' +
+      '<ul class="calendar-invite-participant-list" aria-label="Teilnehmer">' + getInviteParticipantRows(evt) + '</ul>' +
       '<div class="calendar-invite-actions">';
     [['accepted', 'Zusagen'], ['tentative', 'Vielleicht'], ['declined', 'Absagen']].forEach(function(pair) {
       html += '<button type="button" class="calendar-rsvp-btn calendar-rsvp-' + pair[0] + (status === pair[0] ? ' selected' : '') +
@@ -2711,7 +2744,6 @@
     var events = window.DataLayer && window.DataLayer.getCalendarEvents ? (window.DataLayer.getCalendarEvents() || []) : [];
     var todayKey = getLocalDateKey(new Date());
     var pending = [];
-    var answered = [];
     if (user) {
       events.forEach(function(evt) {
         if (!evt || evt.type === 'sick' || evt.type === 'home-office' || (evt.type === 'holiday' && evt.employeeStatus === true)) return;
@@ -2720,7 +2752,7 @@
         if (getEventParticipants(evt).indexOf(String(user.id)) === -1) return;
         var entry = evt.responses && evt.responses[String(user.id)];
         var status = entry && INVITE_RSVP[entry.status] ? entry.status : 'pending';
-        (status === 'pending' ? pending : answered).push({ evt: evt, status: status });
+        if (status === 'pending') pending.push({ evt: evt, status: status });
       });
     }
     var byDate = function(a, b) {
@@ -2729,8 +2761,7 @@
       return x.localeCompare(y);
     };
     pending.sort(byDate);
-    answered.sort(byDate);
-    if (!pending.length && !answered.length) {
+    if (!pending.length) {
       setHtmlIfChanged(host, '');
       host.classList.add('hidden');
       applyDashboardInviteUrgency(host, []);
@@ -2745,19 +2776,6 @@
         '<div class="calendar-invites-list">' +
         pending.slice(0, 5).map(function(item) { return buildInviteRow(item.evt, item.status); }).join('') +
         (pending.length > 5 ? '<div class="calendar-invites-more">+' + (pending.length - 5) + ' weitere Einladung(en) im Kalender</div>' : '') +
-        '</div>';
-    }
-    if (answered.length) {
-      var counts = { accepted: 0, tentative: 0, declined: 0 };
-      answered.forEach(function(item) { counts[item.status] += 1; });
-      html += '<div class="calendar-invites-heading dashboard-invites-answered-heading"><span class="material-symbols-rounded" aria-hidden="true">event_available</span>' +
-        '<strong>Deine Antworten</strong>' +
-        '<span class="calendar-rsvp-count-accepted">' + counts.accepted + ' Zusagen</span>' +
-        '<span class="calendar-rsvp-count-tentative">' + counts.tentative + ' Vielleicht</span>' +
-        '<span class="calendar-rsvp-count-declined">' + counts.declined + ' Absagen</span></div>' +
-        '<div class="calendar-invites-list">' +
-        answered.slice(0, 5).map(function(item) { return buildInviteRow(item.evt, item.status); }).join('') +
-        (answered.length > 5 ? '<div class="calendar-invites-more">+' + (answered.length - 5) + ' weitere Termine im Kalender</div>' : '') +
         '</div>';
     }
     setHtmlIfChanged(host, html);

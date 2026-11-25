@@ -16,6 +16,21 @@ function harness(initialEvents = []) {
   };
   fields['calendar-events-list'] = list;
   fields['evt-attendee-list'] = {querySelectorAll: () => checkboxes};
+  const inviteClasses = new Set(['hidden']);
+  const invitePanel = {
+    innerHTML: '',
+    style: {setProperty() {}, removeProperty() {}},
+    classList: {
+      add(name) { inviteClasses.add(name); },
+      remove(name) { inviteClasses.delete(name); },
+      toggle(name, force) {
+        if (force === undefined ? !inviteClasses.has(name) : force) inviteClasses.add(name);
+        else inviteClasses.delete(name);
+      },
+      contains(name) { return inviteClasses.has(name); }
+    }
+  };
+  fields['calendar-pending-invites'] = invitePanel;
   const document = {
     addEventListener() {},
     getElementById: id => fields[id] || null,
@@ -42,10 +57,11 @@ function harness(initialEvents = []) {
     }
   };
   let exported = '';
-  const window = {DataLayer: data};
+  let currentUser = {id: 'alice', name: 'Alice'};
+  const window = {DataLayer: data, AuthManager: {getCurrentUser: () => currentUser}};
   const source = fs.readFileSync(path.join(__dirname, '../modules/calendar.js'), 'utf8').replace(
     'window.CalendarModule = {',
-    'window.testCalendar = {eventOverlaps, isEmployeeStatus, buildEventEditorHtml, buildEventDetailsHtml, setupEventEditor, renderEventList, createDayEventChip}; window.CalendarModule = {'
+    'window.testCalendar = {eventOverlaps, isEmployeeStatus, buildEventEditorHtml, buildEventDetailsHtml, setupEventEditor, renderEventList, createDayEventChip, buildCalendarInviteRow, renderPendingInvites}; window.CalendarModule = {'
   );
   const URL = {createObjectURL(blob) { exported = blob.parts.join(''); return 'blob:test'; }, revokeObjectURL() {}};
   const Blob = class { constructor(parts) { this.parts = parts; } };
@@ -60,7 +76,10 @@ function harness(initialEvents = []) {
     fields['evt-all-day'] = {checked: true};
     checkboxes.splice(0, checkboxes.length, {value: 'alice', checked: true});
   }
-  return {api: window.testCalendar, window, events, alerts, fields, checkboxes, list, form, exported: () => exported};
+  return {
+    api: window.testCalendar, window, events, alerts, fields, checkboxes, list, invitePanel,
+    setCurrentUser(user) { currentUser = user; }, form, exported: () => exported
+  };
 }
 
 test('employee status saves without invitations and appears across month boundaries', () => {
@@ -128,6 +147,26 @@ test('switching between appointments and status entries does not retain invitati
   h.window.saveCalendarEvent();
   assert.equal(h.events[0].responses.alice, undefined);
   assert.equal(h.api.isEmployeeStatus(h.events[0]), false);
+});
+
+test('pending invitation shows event type and participant responses, then disappears after answering', () => {
+  const event = {
+    id: 'invite-1', type: 'videoconference', title: 'Projektstart', date: '2099-01-30',
+    attendeeIds: ['alice', 'bob'],
+    responses: {bob: {status: 'tentative'}}
+  };
+  const h = harness([event]);
+  h.api.renderPendingInvites();
+  assert.match(h.invitePanel.innerHTML, /Videokonferenz/);
+  assert.match(h.invitePanel.innerHTML, /data-invite-open="invite-1"/);
+  assert.match(h.invitePanel.innerHTML, /Alice[\s\S]*Ausstehend/);
+  assert.match(h.invitePanel.innerHTML, /Bob[\s\S]*Vielleicht/);
+  assert.doesNotMatch(h.invitePanel.innerHTML, /Deine Antworten/);
+
+  event.responses.alice = {status: 'accepted'};
+  h.api.renderPendingInvites();
+  assert.equal(h.invitePanel.innerHTML, '');
+  assert.equal(h.invitePanel.classList.contains('hidden'), true);
 });
 
 test('status editor defaults to all day and hides medical detail fields for sickness', () => {

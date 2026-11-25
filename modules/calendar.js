@@ -483,12 +483,25 @@
   function buildCalendarInviteRow(evt, status) {
     var dateKey = String(evt.date || evt.startDate || '');
     var when = getDisplayDate(dateKey) + (evt.startTime ? ', ' + evt.startTime + ' Uhr' : '');
-    var color = 'var(--text-muted)';
-    var html = '<div class="calendar-invite-row" style="--invite-color:' + color + '">' +
-      '<button type="button" class="calendar-invite-info" data-invite-open="' + escapeHtml(evt.id) + '">' +
+    var typeMeta = getEventTypeMeta(normalizeEventType(evt.type || 'meeting'));
+    var responses = getEventResponses(evt);
+    var participants = getEventParticipants(evt);
+    var html = '<div class="calendar-invite-row" style="--invite-color:' + typeMeta.color + '">' +
+      '<button type="button" class="calendar-invite-info" data-invite-open="' + escapeHtml(evt.id) + '" aria-label="Termin öffnen: ' + escapeHtml(evt.title || 'Termin') + '">' +
+      '<span class="calendar-invite-type" style="color:' + typeMeta.color + '"><span class="material-symbols-rounded" aria-hidden="true">' + typeMeta.icon + '</span>' + escapeHtml(typeMeta.label) + '</span>' +
       '<strong>' + escapeHtml(evt.title || 'Termin') + '</strong>' +
       '<span class="calendar-invite-date">' + escapeHtml(when + (evt.location ? ' · ' + evt.location : '')) + '</span></button>' +
-      '<div class="calendar-invite-actions">';
+      '<ul class="calendar-invite-participant-list" aria-label="Teilnehmer">' +
+      participants.map(function (id) {
+        var response = responses[id];
+        var meta = getRsvpMeta(response.status);
+        return '<li class="calendar-invite-participant-row">' +
+          '<span class="calendar-participant-name">' + escapeHtml(getEmployeeName(id)) + '</span>' +
+          '<span class="calendar-rsvp-badge calendar-rsvp-badge-' + response.status + '">' +
+          '<span class="material-symbols-rounded" aria-hidden="true">' + meta.icon + '</span>' + escapeHtml(meta.label) +
+          '</span></li>';
+      }).join('') +
+      '</ul><div class="calendar-invite-actions">';
     [['accepted', 'Zusagen'], ['tentative', 'Vielleicht'], ['declined', 'Absagen']].forEach(function (pair) {
       var rsvp = getRsvpMeta(pair[0]);
       html += '<button type="button" class="calendar-rsvp-btn calendar-rsvp-' + pair[0] + (status === pair[0] ? ' selected' : '') +
@@ -512,7 +525,6 @@
 
     var todayKey = getISODate(new Date());
     var pendingEvents = [];
-    var answeredEvents = [];
     getCalendarEvents().forEach(function (evt) {
       if (isEmployeeStatus(evt)) return false;
       var dateKey = String(evt.date || evt.startDate || '');
@@ -522,12 +534,11 @@
       var status = response && ['accepted', 'tentative', 'declined'].indexOf(response.status) !== -1
         ? response.status
         : 'pending';
-      (status === 'pending' ? pendingEvents : answeredEvents).push({ evt: evt, status: status });
+      if (status === 'pending') pendingEvents.push({ evt: evt, status: status });
     });
     pendingEvents.sort(function (a, b) { return sortEvents(a.evt, b.evt); });
-    answeredEvents.sort(function (a, b) { return sortEvents(a.evt, b.evt); });
 
-    if (!pendingEvents.length && !answeredEvents.length) {
+    if (!pendingEvents.length) {
       panel.classList.add('hidden');
       applyInviteUrgency(panel, []);
       return;
@@ -542,19 +553,6 @@
         '<div class="calendar-invites-list">' +
         pendingEvents.slice(0, 5).map(function (item) { return buildCalendarInviteRow(item.evt, item.status); }).join('') +
         (pendingEvents.length > 5 ? '<div class="calendar-invites-more">+' + (pendingEvents.length - 5) + ' weitere Einladung(en) in der Terminliste</div>' : '') +
-        '</div>';
-    }
-    if (answeredEvents.length) {
-      var counts = { accepted: 0, tentative: 0, declined: 0 };
-      answeredEvents.forEach(function (item) { counts[item.status] += 1; });
-      html += '<div class="calendar-invites-heading dashboard-invites-answered-heading"><span class="material-symbols-rounded" aria-hidden="true">event_available</span>' +
-        '<strong>Deine Antworten</strong>' +
-        '<span class="calendar-rsvp-count-accepted">' + counts.accepted + ' Zusagen</span>' +
-        '<span class="calendar-rsvp-count-tentative">' + counts.tentative + ' Vielleicht</span>' +
-        '<span class="calendar-rsvp-count-declined">' + counts.declined + ' Absagen</span></div>' +
-        '<div class="calendar-invites-list">' +
-        answeredEvents.slice(0, 5).map(function (item) { return buildCalendarInviteRow(item.evt, item.status); }).join('') +
-        (answeredEvents.length > 5 ? '<div class="calendar-invites-more">+' + (answeredEvents.length - 5) + ' weitere Termine im Kalender</div>' : '') +
         '</div>';
     }
     panel.innerHTML = html;
