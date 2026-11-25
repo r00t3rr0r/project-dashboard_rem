@@ -21,6 +21,8 @@ var PROJECT_PAGE_STATE_KEY='projektDashboard.projectPageState';
 var SECRET_VIEW_STATE={};
 var HOSTING_CHECKS={};
 var HOSTING_CHECKS_ERROR='';
+var HOSTING_SCREENSHOTS={};
+var HOSTING_SCREENSHOT_QUEUE=Promise.resolve();
 var AI_HEALTH_STATE={
   backendStatus:'unknown',
   ollamaStatus:'unknown',
@@ -3493,6 +3495,101 @@ function renderHostingCertificateSummary(project){
     +'</dl></section>';
 }
 
+function hostingScreenshotImageUrl(project,state){
+  return '/api/hosting/screenshot?projectId='+encodeURIComponent(project.id)+'&v='+encodeURIComponent(state.createdAt);
+}
+
+function renderHostingScreenshot(project,canEdit){
+  var url=project.hosting&&project.hosting.url;
+  if(!url)return '<p>Für eine Vorschau zuerst eine Live-URL hinterlegen.</p>';
+  var state=HOSTING_SCREENSHOTS[project.id];
+  if(!state||state.url!==url)return '<p>Screenshot wird vorbereitet …</p>';
+  var html='';
+  if(state.createdAt){
+    html+='<button type="button" class="hosting-screenshot-zoom" data-action="view-hosting-screenshot" data-id="'+escapeHtml(project.id)+'" aria-label="Screenshot vergrößern">'
+      +'<img src="'+escapeHtml(hostingScreenshotImageUrl(project,state))+'" alt="Screenshot der Live-URL" loading="lazy">'
+      +'<span>Vergrößern</span></button>'
+      +'<p>Aufgenommen: '+escapeHtml(formatDateTime(state.createdAt))+'</p>';
+  }
+  if(state.loading)html+='<p>Screenshot wird erstellt …</p>';
+  else if(state.error)html+='<p class="hosting-screenshot-error" role="status">'+escapeHtml(state.error)+'</p>';
+  else if(!state.createdAt)html+='<p>Noch kein Screenshot vorhanden.</p>';
+  if(canEdit&&!state.loading)html+='<button type="button" class="btn btn-secondary" data-action="refresh-hosting-screenshot" data-id="'+escapeHtml(project.id)+'">'+(state.createdAt?'Screenshot aktualisieren':'Screenshot erstellen')+'</button>';
+  return html;
+}
+
+function updateHostingScreenshot(project){
+  document.querySelectorAll('[data-hosting-screenshot]').forEach(function(element){
+    if(element.getAttribute('data-hosting-screenshot')!==String(project.id))return;
+    var auth=getAuthManager();
+    var canEdit=!auth||typeof auth.canEditProject!=='function'||auth.canEditProject(project);
+    element.innerHTML=renderHostingScreenshot(project,canEdit);
+  });
+}
+
+function ensureHostingScreenshot(project,canEdit,force){
+  var url=project.hosting&&project.hosting.url;
+  if(!url)return;
+  var id=String(project.id);
+  var state=HOSTING_SCREENSHOTS[id];
+  if(!state||state.url!==url)state=HOSTING_SCREENSHOTS[id]={url:url,loading:false,createdAt:'',error:'',checked:false};
+  if(state.loading||(!force&&state.checked))return;
+  state.loading=true;
+  state.error='';
+  updateHostingScreenshot(project);
+  HOSTING_SCREENSHOT_QUEUE=HOSTING_SCREENSHOT_QUEUE.then(function(){
+    if(HOSTING_SCREENSHOTS[id]!==state)return null;
+    function create(){
+      if(!canEdit)return Promise.resolve(null);
+      return fetch('/api/hosting/screenshot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({projectId:id})}).then(function(response){
+        return response.json().then(function(body){
+          if(!response.ok)throw new Error(body.error||'Screenshot konnte nicht erstellt werden.');
+          return body;
+        });
+      });
+    }
+    if(force)return create();
+    return fetch('/api/hosting/screenshot?meta=1&projectId='+encodeURIComponent(id),{cache:'no-store'}).then(function(response){
+      if(response.status===404)return create();
+      return response.json().then(function(body){
+        if(!response.ok)throw new Error(body.error||'Screenshot konnte nicht geladen werden.');
+        return body;
+      });
+    });
+  }).then(function(body){
+    if(HOSTING_SCREENSHOTS[id]!==state)return;
+    if(body&&body.createdAt)state.createdAt=body.createdAt;
+    state.checked=true;
+  }).catch(function(err){
+    if(HOSTING_SCREENSHOTS[id]!==state)return;
+    state.error=err&&err.message?err.message:String(err);
+    state.checked=true;
+  }).then(function(){
+    state.loading=false;
+    if(HOSTING_SCREENSHOTS[id]===state)updateHostingScreenshot(project);
+  });
+}
+
+function openHostingScreenshot(project){
+  var state=HOSTING_SCREENSHOTS[project.id];
+  if(!state||!state.createdAt||!project.hosting||state.url!==project.hosting.url)return;
+  var dialog=document.createElement('dialog');
+  dialog.className='hosting-screenshot-dialog';
+  var close=document.createElement('button');
+  close.type='button';
+  close.className='btn btn-secondary';
+  close.textContent='Schließen';
+  close.addEventListener('click',function(){dialog.close();});
+  var image=document.createElement('img');
+  image.src=hostingScreenshotImageUrl(project,state);
+  image.alt='Screenshot der Live-URL';
+  dialog.appendChild(close);
+  dialog.appendChild(image);
+  dialog.addEventListener('close',function(){dialog.remove();});
+  document.body.appendChild(dialog);
+  dialog.showModal();
+}
+
 function renderProjectHeadResources(project,flow,canEdit){
   var ai=ensureProjectAiKnowledge(project);
   var hosting=project.hosting||{};
@@ -3505,6 +3602,7 @@ function renderProjectHeadResources(project,flow,canEdit){
     +'<button type="button" class="project-resources-link" data-action="open-infohub" data-id="'+escapeHtml(project.id)+'">Verwalten · '+flow.attachmentCount+' Anhänge · '+flow.secretCount+' Secrets · '+flow.noteCount+' Notizen · '+flow.linkCount+' Links</button>'
     +'<div class="project-resources-heading hosting-heading"><span class="material-symbols-rounded" aria-hidden="true">dns</span><div><strong>Hosting &amp; Live-Status</strong><small>Projektbetrieb im Überblick</small></div></div>'
     +'<div class="hosting-live-panel"><div class="hosting-panel-kicker">Live-Überwachung</div><div data-hosting-status="'+escapeHtml(project.id)+'">'+renderHostingStatus(project)+'</div>'
+    +'<div class="hosting-screenshot"><div class="hosting-panel-kicker">Live-URL Screenshot</div><div data-hosting-screenshot="'+escapeHtml(project.id)+'">'+renderHostingScreenshot(project,canEdit)+'</div></div>'
     +'<div class="hosting-quick-links">'+(liveUrl?'<a href="'+escapeHtml(liveUrl)+'" target="_blank" rel="noopener noreferrer">Live-Projekt ↗</a>':'')
     +(adminUrl?'<a href="'+escapeHtml(adminUrl)+'" target="_blank" rel="noopener noreferrer">Verwaltung ↗</a>':'')+'</div></div>'
     +'<div class="hosting-summary-grid">'
@@ -3840,6 +3938,13 @@ function render(){
 
   var projectsPage=byId('projects');
   var projectsPageIsActive=!!(projectsPage&&projectsPage.classList.contains('active'));
+  if(projectsPageIsActive){
+    getVisibleProjects().forEach(function(project){
+      var auth=getAuthManager();
+      var canEdit=!auth||typeof auth.canEditProject!=='function'||auth.canEditProject(project);
+      ensureHostingScreenshot(project,canEdit,false);
+    });
+  }
   var shouldRestoreState=projectsPageIsActive&&!projectPageWasActive&&config.restoreState!==false;
   projectPageWasActive=projectsPageIsActive;
 
@@ -5643,6 +5748,8 @@ function bindListActions(){
 
   list.addEventListener('click',function(evt){
     var target=evt.target;
+    var screenshotButton=target&&target.closest?target.closest('[data-action="view-hosting-screenshot"], [data-action="refresh-hosting-screenshot"]'):null;
+    if(screenshotButton)target=screenshotButton;
     if(!target||!target.dataset)return;
 
     var action=target.dataset.action;
@@ -5654,6 +5761,15 @@ function bindListActions(){
     var canEdit=!auth||typeof auth.canEditProject!=='function'||auth.canEditProject(project);
     var canDelete=!auth||typeof auth.canDeleteProject!=='function'||auth.canDeleteProject();
 
+    if(action==='view-hosting-screenshot'){
+      if(project)openHostingScreenshot(project);
+      return;
+    }
+    if(action==='refresh-hosting-screenshot'){
+      if(!canEdit){notify('Dieses Projekt kann nicht bearbeitet werden.','error');return;}
+      if(project)ensureHostingScreenshot(project,true,true);
+      return;
+    }
     if(action==='open-infohub'){
       var hub=target.closest('.project-card').querySelector('.project-infohub');
       if(hub){hub.open=true;hub.scrollIntoView({behavior:'smooth',block:'start'});}

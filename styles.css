@@ -3166,6 +3166,79 @@ body.projects-modal-open {
   margin-top: 0.5rem;
 }
 
+.hosting-screenshot {
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.hosting-screenshot-zoom {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin-top: 0.45rem;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  cursor: zoom-in;
+}
+
+.hosting-screenshot-zoom img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 8 / 5;
+  object-fit: cover;
+  border-radius: 7px;
+}
+
+.hosting-screenshot-zoom span {
+  position: absolute;
+  right: 0.4rem;
+  bottom: 0.4rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 0.7rem;
+}
+
+@media (hover: hover) {
+  .hosting-screenshot-zoom:hover {
+    z-index: 20;
+    transform: scale(1.6);
+    transform-origin: top right;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  }
+}
+
+.project-head-resources .hosting-screenshot-error {
+  color: var(--accent-red);
+}
+
+.hosting-screenshot-dialog {
+  width: min(94vw, 1280px);
+  max-width: 94vw;
+  max-height: 94vh;
+  margin: auto;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.hosting-screenshot-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.hosting-screenshot-dialog img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 0.5rem;
+}
+
 .project-resources-link {
   max-width: 100%;
   border: 1px solid color-mix(in srgb, var(--accent-purple) 55%, var(--border-color));

@@ -21,6 +21,7 @@ import tempfile
 import time
 import urllib.request
 import hosting_monitor
+import screenshot_capture
 from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse, quote
@@ -56,6 +57,7 @@ BOOTSTRAP_STATUS = {
     'ollama': {'status': 'unknown', 'autostart': OLLAMA_AUTOSTART, 'detail': ''}
 }
 STORAGE_LOCK = threading.RLock()
+SCREENSHOT_LOCK = threading.Lock()
 BACKUP_SCHEDULE_LOCK = threading.Lock()
 BACKUP_RUN_LOCK = threading.Lock()
 BACKUP_TIMER = None
@@ -622,6 +624,9 @@ class StorageHandler(BaseHTTPRequestHandler):
             except (sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
                 self._send_json({'error': 'Hosting-Prüfungen konnten nicht geladen werden: ' + str(exc)}, status=500)
             return
+        if parsed.path == '/api/hosting/screenshot':
+            self._handle_hosting_screenshot_get(parsed)
+            return
         if parsed.path == '/api/health':
             self._send_json({
                 'status': 'ok',
@@ -662,6 +667,9 @@ class StorageHandler(BaseHTTPRequestHandler):
         if parsed.path == '/api/kv':
             self._handle_kv_post()
             return
+        if parsed.path == '/api/hosting/screenshot':
+            self._handle_hosting_screenshot_post()
+            return
         if parsed.path == '/api/ai/project-knowledge':
             self._handle_project_knowledge_post()
             return
@@ -691,6 +699,94 @@ class StorageHandler(BaseHTTPRequestHandler):
             return
         self.send_response(404)
         self.end_headers()
+
+    def _hosting_screenshot_project(self, connection, project_id):
+        project = next((item for item in hosting_monitor.get_projects(connection)
+                        if isinstance(item, dict) and str(item.get('id', '')) == project_id), None)
+        hosting = project.get('hosting') if project else None
+        url = hosting.get('url', '') if isinstance(hosting, dict) else ''
+        if not isinstance(url, str) or not url:
+            raise ValueError('Projekt oder Live-URL nicht gefunden.')
+        screenshot_capture.parse_target(url)
+        return url
+
+    def _hosting_screenshot_table(self, connection):
+        connection.execute('CREATE TABLE IF NOT EXISTS hosting_screenshots '
+                           '(project_id TEXT PRIMARY KEY, url TEXT NOT NULL, created_at TEXT NOT NULL, image BLOB NOT NULL)')
+        connection.commit()
+
+    def _handle_hosting_screenshot_get(self, parsed):
+        project_id = (parse_qs(parsed.query).get('projectId') or [''])[0]
+        try:
+            connection = open_db_connection()
+            try:
+                self._hosting_screenshot_table(connection)
+                url = self._hosting_screenshot_project(connection, project_id)
+                row = connection.execute('SELECT created_at, image FROM hosting_screenshots '
+                                         'WHERE project_id = ? AND url = ?', (project_id, url)).fetchone()
+            finally:
+                connection.close()
+            if not row:
+                self._send_json({'error': 'Noch kein Screenshot vorhanden.'}, status=404)
+                return
+            if parse_qs(parsed.query).get('meta') == ['1']:
+                self._send_json({'createdAt': row[0]})
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/png')
+            self.send_header('Content-Length', str(len(row[1])))
+            self.send_header('Cache-Control', 'no-store')
+            self._apply_security_headers()
+            self.end_headers()
+            self.wfile.write(row[1])
+        except ValueError as exc:
+            self._send_json({'error': str(exc)}, status=404)
+        except (sqlite3.Error, OSError) as exc:
+            self._send_json({'error': 'Screenshot konnte nicht geladen werden: ' + str(exc)}, status=500)
+
+    def _handle_hosting_screenshot_post(self):
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if length <= 0 or length > 8192:
+                raise ValueError('Ungültige Anfragegröße.')
+            payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict) or not isinstance(payload.get('projectId'), str):
+                raise ValueError('Projektkennung fehlt.')
+            project_id = payload['projectId']
+            connection = open_db_connection()
+            try:
+                url = self._hosting_screenshot_project(connection, project_id)
+            finally:
+                connection.close()
+        except (ValueError, json.JSONDecodeError) as exc:
+            self._send_json({'error': str(exc)}, status=400)
+            return
+        except sqlite3.Error as exc:
+            self._send_json({'error': 'Projekt konnte nicht geladen werden: ' + str(exc)}, status=500)
+            return
+        if not SCREENSHOT_LOCK.acquire(blocking=False):
+            self._send_json({'error': 'Eine Screenshot-Erstellung läuft bereits. Bitte erneut versuchen.'}, status=409)
+            return
+        try:
+            image = screenshot_capture.capture(url)
+            created_at = utc_now_iso_z()
+            connection = open_db_connection()
+            try:
+                self._hosting_screenshot_table(connection)
+                if self._hosting_screenshot_project(connection, project_id) != url:
+                    self._send_json({'error': 'Die Live-URL wurde während der Aufnahme geändert.'}, status=409)
+                    return
+                connection.execute('INSERT OR REPLACE INTO hosting_screenshots VALUES (?, ?, ?, ?)',
+                                   (project_id, url, created_at, image))
+                connection.commit()
+            finally:
+                connection.close()
+            schedule_full_backup()
+            self._send_json({'createdAt': created_at})
+        except (RuntimeError, ValueError, sqlite3.Error, OSError, subprocess.SubprocessError) as exc:
+            self._send_json({'error': 'Screenshot-Erstellung fehlgeschlagen: ' + str(exc)}, status=502)
+        finally:
+            SCREENSHOT_LOCK.release()
 
     def _handle_task_attachment_post(self):
         try:

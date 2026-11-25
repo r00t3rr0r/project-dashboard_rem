@@ -115,7 +115,8 @@ class StorageConcurrencyTest(unittest.TestCase):
 
     def test_authentication_required_and_pin_removed(self):
         for path in ('/api/kv', '/api/kv/stream?pin=1337', '/api/auth/session',
-                     '/api/hosting/checks', '/api/ai/project-knowledge?projectId=p1'):
+                     '/api/hosting/checks', '/api/hosting/screenshot?projectId=p1',
+                     '/api/ai/project-knowledge?projectId=p1'):
             request = urllib.request.Request(self.base_url + path, headers={'X-Admin-Pin': '1337'})
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 urllib.request.urlopen(request, timeout=10)
@@ -159,6 +160,46 @@ class StorageConcurrencyTest(unittest.TestCase):
         status, payload = self.request_json('GET', '/api/hosting/checks')
         self.assertEqual(status, 200)
         self.assertIsInstance(payload['checks'], dict)
+
+    def test_screenshot_is_saved_for_the_current_project_url(self):
+        project = {'id': 'screenshot-test', 'hosting': {'url': 'https://example.com/'}}
+        conn = storage.open_db_connection()
+        old = conn.execute('SELECT value, updatedAt FROM kv_store WHERE key = ?', ('pd_projects',)).fetchone()
+        conn.execute('INSERT OR REPLACE INTO kv_store VALUES (?, ?, ?)',
+                     ('pd_projects', json.dumps([project]), storage.utc_now_iso_z()))
+        conn.commit()
+        conn.close()
+        image = b'\x89PNG\r\n\x1a\nfixture'
+        try:
+            with mock.patch.object(storage.screenshot_capture, 'capture', return_value=image) as capture:
+                status, result = self.request_json('POST', '/api/hosting/screenshot', {'projectId': 'screenshot-test'})
+            self.assertEqual(status, 200)
+            self.assertIn('createdAt', result)
+            capture.assert_called_once_with('https://example.com/')
+            status, metadata = self.request_json('GET', '/api/hosting/screenshot?meta=1&projectId=screenshot-test')
+            self.assertEqual(metadata['createdAt'], result['createdAt'])
+            request = urllib.request.Request(self.base_url + '/api/hosting/screenshot?projectId=screenshot-test',
+                                             headers={'Cookie': self.cookie.split(';')[0]})
+            with urllib.request.urlopen(request) as response:
+                self.assertEqual(response.headers.get_content_type(), 'image/png')
+                self.assertEqual(response.read(), image)
+            project['hosting']['url'] = 'https://changed.example/'
+            conn = storage.open_db_connection()
+            conn.execute('UPDATE kv_store SET value = ? WHERE key = ?', (json.dumps([project]), 'pd_projects'))
+            conn.commit()
+            conn.close()
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request)
+            self.assertEqual(caught.exception.code, 404)
+        finally:
+            conn = storage.open_db_connection()
+            if old:
+                conn.execute('UPDATE kv_store SET value = ?, updatedAt = ? WHERE key = ?', (*old, 'pd_projects'))
+            else:
+                conn.execute('DELETE FROM kv_store WHERE key = ?', ('pd_projects',))
+            conn.execute('DELETE FROM hosting_screenshots WHERE project_id = ?', ('screenshot-test',))
+            conn.commit()
+            conn.close()
 
     def test_update_progress_requires_admin_session(self):
         with self.assertRaises(urllib.error.HTTPError) as caught:

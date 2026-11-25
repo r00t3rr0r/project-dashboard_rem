@@ -18,7 +18,7 @@ function harness() {
   const context = vm.createContext({window, document, console, URL, Date, fetch:(...args)=>window.testFetch(...args)});
   const source = fs.readFileSync(path.join(__dirname, '../modules/projects.js'), 'utf8').replace(
     'function renderProjectHeadResources(project,flow,canEdit){',
-    'window.hostingTest={renderHostingStatus,renderHostingExpiry,renderProjectHeadResources,renderHostingServerSummary,renderHostingCertificateSummary,renderAutomaticCertificateExpiry,refreshHostingChecks,safeHostingUrl,saveHosting,setChecks:function(value){HOSTING_CHECKS=value;},setError:function(value){HOSTING_CHECKS_ERROR=value;}};\nfunction renderProjectHeadResources(project,flow,canEdit){'
+    'window.hostingTest={renderHostingStatus,renderHostingExpiry,renderProjectHeadResources,renderHostingServerSummary,renderHostingCertificateSummary,renderAutomaticCertificateExpiry,refreshHostingChecks,safeHostingUrl,saveHosting,renderHostingScreenshot,ensureHostingScreenshot,screenshotQueue:function(){return HOSTING_SCREENSHOT_QUEUE;},setChecks:function(value){HOSTING_CHECKS=value;},setError:function(value){HOSTING_CHECKS_ERROR=value;}};\nfunction renderProjectHeadResources(project,flow,canEdit){'
   ).replace(
     "notify('Hosting-Daten gespeichert. Die automatische Prüfung erfolgt innerhalb von fünf Minuten.','info');\n  render();",
     "notify('Hosting-Daten gespeichert. Die automatische Prüfung erfolgt innerhalb von fünf Minuten.','info');"
@@ -29,8 +29,49 @@ function harness() {
     window.testFetch = () => Promise.resolve({ok:true,json:()=>Promise.resolve(response)});
     Object.assign(nodes, targets);
   };
+  window.hostingTest.setFetch = value => { window.testFetch = value; };
   return window.hostingTest;
 }
+
+test('screenshots are created once, refreshed manually and hidden after a URL change', async () => {
+  const api = harness();
+  const project = {id:'p1', hosting:{url:'https://example.com/'}};
+  const calls = [];
+  api.setFetch((url, options) => {
+    calls.push([url, options]);
+    if (options.method === 'POST') return Promise.resolve({ok:true,json:async()=>({createdAt:'2030-01-01T00:00:00Z'})});
+    return Promise.resolve({status:404});
+  });
+  api.ensureHostingScreenshot(project, true, false);
+  await api.screenshotQueue();
+  assert.equal(calls.length, 2);
+  assert.match(api.renderHostingScreenshot(project, true), /Screenshot vergrößern/);
+  api.ensureHostingScreenshot(project, true, false);
+  await api.screenshotQueue();
+  assert.equal(calls.length, 2);
+  api.ensureHostingScreenshot(project, true, true);
+  await api.screenshotQueue();
+  assert.equal(calls.length, 3);
+  project.hosting.url='https://other.example/';
+  assert.doesNotMatch(api.renderHostingScreenshot(project, true), /Screenshot vergrößern/);
+});
+
+test('screenshot errors are visible and viewers do not initiate creation', async () => {
+  const api = harness();
+  const project = {id:'p2', hosting:{url:'https://example.com/'}};
+  let calls = 0;
+  api.setFetch(() => { calls++; return Promise.resolve({status:404}); });
+  api.ensureHostingScreenshot(project, false, false);
+  await api.screenshotQueue();
+  assert.equal(calls, 1);
+  assert.match(api.renderHostingScreenshot(project, false), /Noch kein Screenshot vorhanden/);
+  assert.doesNotMatch(api.renderHostingScreenshot(project, false), /Screenshot erstellen/);
+  api.setFetch(() => Promise.resolve({ok:false,json:async()=>({error:'Docker nicht erreichbar'})}));
+  api.ensureHostingScreenshot(project, true, true);
+  await api.screenshotQueue();
+  assert.match(api.renderHostingScreenshot(project, true), /Docker nicht erreichbar/);
+  assert.match(api.renderHostingScreenshot(project, true), /Screenshot erstellen/);
+});
 
 test('hosting status ignores results for an old URL and warns when results are stale', () => {
   const api = harness();

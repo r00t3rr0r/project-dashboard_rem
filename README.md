@@ -67,6 +67,18 @@ Aus dem lokalen Netzwerk:
 
 - Beispiel: http://192.168.1.50:8766/app.html
 
+### Live-URL-Screenshots
+
+Für die eigene Screenshot-Funktion muss Docker auf dem Storage-Server laufen und das Image einmal sowie nach Änderungen an `scripts/screenshot` erneut gebaut werden:
+
+```bash
+docker build -t project-dashboard-screenshot:1 scripts/screenshot
+```
+
+Anschließend den Storage-Server neu starten. Sein Benutzer benötigt Zugriff auf Docker; dieser Zugriff gewährt weitreichende Rechte auf dem Host. Beim ersten Öffnen einer Projektkarte erstellt ein bearbeitungsberechtigter Benutzer automatisch eine Vorschau, die sich auch manuell aktualisieren und per Maus oder Klick vergrößern lässt. Der Screenshot wird zusammen mit der aktuellen Live-URL in SQLite gespeichert und ist im SQLite-Backup enthalten.
+
+Der Browser läuft ohne eigenes Netzwerk. Der Relay erlaubt nur öffentliche IP-Adressen und Anfragen an den Host der Live-URL; externe Ressourcen, Weiterleitungen auf andere Hosts, private Adressen und Seiten mit Anmeldung können daher fehlen oder nicht funktionieren. Bei nicht laufendem Docker oder fehlendem Image erscheint ein Fehler in der Projektkarte.
+
 ## Internetbetrieb (Mehrere Mitarbeiter gleichzeitig)
 
 Empfohlene Struktur fuer den produktiven Betrieb:

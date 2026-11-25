@@ -52,7 +52,7 @@ def capture(url):
     host, port = parse_target(url)
     name = 'pd-screenshot-' + uuid.uuid4().hex
     command = [
-        'docker', 'run', '--rm', '-i', '--name', name, '--network', 'none',
+        'docker', 'run', '--pull', 'never', '--rm', '-i', '--name', name, '--network', 'none',
         '--read-only', '--tmpfs', '/tmp:rw,nosuid,nodev,size=128m',
         '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
         '--pids-limit', '128', '--memory', '768m', '--cpus', '1',
@@ -126,7 +126,8 @@ def capture(url):
         finally:
             output.put(None)
 
-    threading.Thread(target=read_output, daemon=True).start()
+    output_thread = threading.Thread(target=read_output, daemon=True)
+    output_thread.start()
     deadline = time.monotonic() + TIMEOUT_SECONDS
     send({'type': 'init', 'url': url})
     try:
@@ -196,5 +197,8 @@ def capture(url):
         if process.poll() is None:
             process.kill()
         process.wait(timeout=5)
+        output_thread.join(timeout=5)
+        process.stdin.close()
+        process.stdout.close()
         subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL, timeout=10, check=False)
