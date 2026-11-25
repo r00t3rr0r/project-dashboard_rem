@@ -3004,6 +3004,7 @@ body.projects-modal-open {
 }
 
 .project-card {
+  container: project-card / inline-size;
   background: var(--bg-card);
   border-radius: 10px;
   box-shadow: 0 2px 8px var(--shadow-color);
@@ -3330,6 +3331,7 @@ body.projects-modal-open {
 }
 
 .project-card-head-main {
+  container: project-head-main / inline-size;
   min-width: 0;
   flex: 1 1 20rem;
   display: grid;
@@ -3384,21 +3386,17 @@ body.projects-modal-open {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow: visible;
-  display: flex;
+  overflow-x: auto;
+  display: grid;
+  gap: 0.35rem;
   position: static;
-  justify-content: center;
-  align-items: start;
+  justify-items: start;
   align-self: start;
   opacity: 0.75;
 }
 
 .project-card-head-matrix-label {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 2;
+  position: static;
   font-size: 0.62rem;
   color: var(--text-muted);
   letter-spacing: 0.03em;
@@ -4827,6 +4825,11 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   height: 4px;
   border-radius: 1px;
   border: none;
+}
+
+.project-card-head-matrix .employee-github-week {
+  grid-template-rows: repeat(7, 4px);
+  gap: 2px;
 }
 
 .project-card-head-actions {
@@ -6724,3 +6727,101 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
 .commit-selection-item > span { display: grid; gap: .2rem; min-width: 0; }
 .commit-selection-item small { color: var(--text-muted); overflow-wrap: anywhere; }
 .commit-selection-message { white-space: pre-wrap; }
+
+.dashboard-project-row > .project-card .project-card-head .project-card-head-rail {
+  flex: 0 1 22rem;
+  width: min(100%, 22rem);
+}
+
+.project-card-head h3,
+.project-head-task-title,
+.project-head-task-meta,
+.project-head-contact-name {
+  overflow-wrap: anywhere;
+}
+
+.project-card-head-inline-chips .badge {
+  max-width: 100%;
+  white-space: normal;
+}
+
+@container project-card (max-width: 66rem) {
+  .project-card-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .project-card-head-main {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    width: 100%;
+  }
+
+  .project-card-head-titlebar {
+    padding-right: 3.25rem;
+  }
+
+  .project-card-head-actions {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+    align-self: start;
+    width: auto;
+  }
+
+  .project-card-head-rail,
+  .dashboard-project-row > .project-card .project-card-head .project-card-head-rail {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .project-card-head-inline,
+  .project-card-head-inline-chips {
+    justify-content: flex-start;
+  }
+}
+
+@container project-head-main (max-width: 46rem) {
+  .project-card-head-summary {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 9.25rem);
+  }
+
+  .project-head-task-list {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  .project-head-side {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  .project-head-contact {
+    min-width: 0;
+  }
+
+  .project-head-matrix-slot {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+}
+
+@container project-head-main (max-width: 22rem) {
+  .project-card-head-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-head-side {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .project-head-matrix-slot {
+    grid-row: 3;
+  }
+}

@@ -328,7 +328,7 @@ function renderProjectGitHubMatrixHeader(project){
       return '<span class="employee-github-cell lvl-'+level+'" title="'+escapeHtml(day.label+': '+day.count+' Commits')+'"></span>';
     }).join('')+'</div>';
   }).join('');
-  return '<div class="project-card-head-matrix">'
+  return '<div class="project-card-head-matrix" tabindex="0" role="region" aria-label="GitHub Matrix">'
     +'<span class="project-card-head-matrix-label">GitHub Matrix</span>'
     +'<div class="employee-github-matrix" aria-label="GitHub Matrix">'+matrixHtml+'</div>'
     +'</div>';
