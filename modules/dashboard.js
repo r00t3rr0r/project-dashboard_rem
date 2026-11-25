@@ -417,16 +417,10 @@
     var wrapper = document.createElement('div');
     wrapper.innerHTML = source.innerHTML || '';
 
-    // Im Dashboard keine Projektwissen-Verwaltung anzeigen.
-    var infohubNode = wrapper.querySelector('.project-infohub');
-    while (infohubNode) {
-      if (typeof infohubNode.remove === 'function') {
-        infohubNode.remove();
-      } else if (infohubNode.parentNode) {
-        infohubNode.parentNode.removeChild(infohubNode);
-      }
-      infohubNode = wrapper.querySelector('.project-infohub');
-    }
+    // Verwaltung und Hosting-Editor bleiben der Projektseite vorbehalten.
+    wrapper.querySelectorAll('.project-infohub, .hosting-editor').forEach(function(node) {
+      node.remove();
+    });
 
     // Duplicate IDs wuerden Inputs/Labels in zwei Seitenbereichen kollidieren.
     wrapper.querySelectorAll('[id]').forEach(function(node) {
@@ -436,6 +430,22 @@
     // Dashboard zeigt die Projekte als Uebersicht im Lesemodus.
     wrapper.querySelectorAll('input, select, textarea, button').forEach(function(node) {
       if (node.hasAttribute('data-project-task-dialog')) return;
+      if (node.matches('button[data-action="open-infohub"]')) {
+        var projectId = node.getAttribute('data-id');
+        var project = window.DataLayer.getProjectById(projectId);
+        var auth = getAuthManager();
+        node.removeAttribute('data-action');
+        node.removeAttribute('data-id');
+        node.textContent = node.textContent.replace(/^Verwalten/, 'Anzeigen');
+        if (project && (!auth || typeof auth.canViewProject !== 'function' || auth.canViewProject(project))) {
+          node.setAttribute('data-project-knowledge-dialog', '');
+          node.setAttribute('data-project-id', projectId);
+        } else {
+          node.disabled = true;
+          node.title = 'Projektwissen ist für dieses Projekt nicht freigegeben.';
+        }
+        return;
+      }
       node.disabled = true;
       node.removeAttribute('data-action');
       node.removeAttribute('data-id');

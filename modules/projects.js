@@ -3181,6 +3181,84 @@ function renderNotes(notes,projectId){
   return html;
 }
 
+function renderDashboardKnowledge(project){
+  var hub=ensureProjectInfoHub(project);
+  function section(title,icon,items,empty,notice){
+    return '<section class="project-knowledge-section"><h3><span class="material-symbols-rounded" aria-hidden="true">'+icon+'</span>'+title+' <span>'+items.length+'</span></h3>'
+      +(notice?'<p class="security-warning">'+notice+'</p>':'')
+      +(items.length?'<ul class="project-knowledge-list">'+items.join('')+'</ul>':'<p class="text-muted">'+empty+'</p>')+'</section>';
+  }
+  var attachments=hub.attachments.map(function(item,index){
+    return '<li><div><strong>'+escapeHtml(item.name||'Anhang')+'</strong><small>'+escapeHtml(formatBytes(item.size))+(item.uploadedAt?' · '+escapeHtml(formatDateTime(item.uploadedAt)):'')+'</small></div>'
+      +'<button type="button" class="btn btn-secondary" data-knowledge-download="'+index+'">Download</button></li>';
+  });
+  var secrets=hub.secrets.map(function(item,index){
+    return '<li><div><strong>'+escapeHtml(item.label||'Eintrag')+'</strong><small>'+escapeHtml(item.category||'Secret')+'</small><span class="project-knowledge-secret">••••••••</span></div>'
+      +'<button type="button" class="btn btn-secondary" data-knowledge-secret="'+index+'" aria-pressed="false">Anzeigen</button></li>';
+  });
+  var notes=hub.notes.map(function(item){
+    return '<li><div><strong>'+escapeHtml(item.title||'Notiz')+'</strong><p class="project-knowledge-text">'+escapeHtml(item.text||'')+'</p></div></li>';
+  });
+  var links=hub.links.map(function(item){
+    var url='';
+    try {
+      var parsed=new URL(item.url);
+      if(/^https?:$/.test(parsed.protocol)&&!parsed.username&&!parsed.password)url=parsed.href;
+    } catch(err) {}
+    return '<li><div><strong>'+(url?'<a href="'+escapeHtml(url)+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(item.label||item.url)+' ↗</a>':escapeHtml(item.label||item.url||'Ungültiger Link'))+'</strong>'
+      +'<small>'+escapeHtml(item.kind||'Link')+(url?'':' · Ungültige URL')+'</small></div></li>';
+  });
+  return section('Anhänge','attach_file',attachments,'Keine Anhänge vorhanden.')
+    +section('Secrets','lock',secrets,'Keine Secrets vorhanden.',secrets.length?'Diese bestehende Ablage ist nicht verschlüsselt.':'')
+    +section('Notizen','description',notes,'Keine Notizen vorhanden.')
+    +section('Links','link',links,'Keine Links vorhanden.')
+    +(hub.scratchpad?'<section class="project-knowledge-section project-knowledge-wide"><h3><span class="material-symbols-rounded" aria-hidden="true">edit_note</span>Schmierzettel</h3><p class="project-knowledge-text">'+escapeHtml(hub.scratchpad)+'</p></section>':'')
+    +(hub.envText?'<section class="project-knowledge-section project-knowledge-wide"><h3><span class="material-symbols-rounded" aria-hidden="true">terminal</span>.env Inhalt</h3><p class="text-muted">Der Inhalt kann sensible Daten enthalten.</p><button type="button" class="btn btn-secondary" data-knowledge-env aria-pressed="false">Inhalt anzeigen</button><pre class="project-knowledge-env" hidden></pre></section>':'');
+}
+
+function openDashboardKnowledgeDialog(projectId){
+  var project=window.DataLayer.getProjectById(projectId);
+  var auth=getAuthManager();
+  if(!project || (auth&&typeof auth.canViewProject==='function'&&!auth.canViewProject(project))){
+    notify('Projektwissen ist für dieses Projekt nicht verfügbar.','error');
+    return;
+  }
+  var hub=ensureProjectInfoHub(project);
+  var dialog=document.createElement('dialog');
+  dialog.className='project-knowledge-dialog';
+  dialog.setAttribute('aria-labelledby','project-knowledge-dialog-title');
+  dialog.innerHTML='<header class="project-knowledge-header"><div><p class="section-kicker">Projektwissen · Leseansicht</p><h2 id="project-knowledge-dialog-title">'+escapeHtml(getProjectTitle(project))+'</h2><p>Gesammelte Informationen und Ressourcen zum Projekt</p></div>'
+    +'<button type="button" class="toolbar-icon-btn" data-knowledge-close aria-label="Dialog schließen" title="Dialog schließen"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></header>'
+    +'<div class="project-knowledge-grid">'+renderDashboardKnowledge(project)+'</div>';
+  dialog.addEventListener('click',function(evt){
+    var button=evt.target.closest('button');
+    if(!button)return;
+    if(button.hasAttribute('data-knowledge-close'))dialog.close();
+    else if(button.hasAttribute('data-knowledge-download')){
+      var attachment=hub.attachments[Number(button.getAttribute('data-knowledge-download'))];
+      if(attachment)downloadAttachment(project.id,attachment.id);
+      else notify('Anhang nicht gefunden.','error');
+    } else if(button.hasAttribute('data-knowledge-secret')){
+      var secret=hub.secrets[Number(button.getAttribute('data-knowledge-secret'))];
+      if(!secret){notify('Secret nicht gefunden.','error');return;}
+      var show=button.getAttribute('aria-pressed')!=='true';
+      button.parentNode.querySelector('.project-knowledge-secret').textContent=show?(secret.value||'leer'):'••••••••';
+      button.setAttribute('aria-pressed',String(show));
+      button.textContent=show?'Maskieren':'Anzeigen';
+    } else if(button.hasAttribute('data-knowledge-env')){
+      var visible=button.getAttribute('aria-pressed')!=='true';
+      var env=dialog.querySelector('.project-knowledge-env');
+      env.textContent=visible?hub.envText:'';
+      env.hidden=!visible;
+      button.setAttribute('aria-pressed',String(visible));
+      button.textContent=visible?'Inhalt verbergen':'Inhalt anzeigen';
+    }
+  });
+  dialog.addEventListener('close',function(){dialog.remove();});
+  document.body.appendChild(dialog);
+  dialog.showModal();
+}
+
 function renderAiProjectContext(project,flow){
   var team=Array.isArray(flow.teamMembers)?flow.teamMembers:[];
   var github=project.github||{};
@@ -5697,6 +5775,13 @@ function bindForm(){
     if(!trigger)return;
     evt.preventDefault();
     openProjectTaskDetailsDialog(trigger.getAttribute('data-project-id')||'');
+  });
+
+  document.addEventListener('click',function(evt){
+    var trigger=evt.target&&evt.target.closest?evt.target.closest('[data-project-knowledge-dialog]'):null;
+    if(!trigger||trigger.disabled)return;
+    evt.preventDefault();
+    openDashboardKnowledgeDialog(trigger.getAttribute('data-project-id')||'');
   });
 
   document.addEventListener('toggle',function(evt){
