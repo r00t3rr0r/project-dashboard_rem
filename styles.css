@@ -4127,8 +4127,7 @@ body.projects-modal-open {
   min-width: 0;
 }
 
-.team-load-task-project,
-.team-load-done-project {
+.team-load-task-project {
   overflow: hidden;
   color: var(--text-muted);
   font-size: 0.65rem;
@@ -4432,6 +4431,46 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
 .team-load-done-copy {
   display: grid;
   min-width: 0;
+}
+
+.team-load-done-project {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 0.3rem;
+  max-width: 100%;
+  min-width: 0;
+  margin-bottom: 0.2rem;
+  padding: 0.12rem 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 30%, transparent);
+  border-radius: 999px;
+  background: linear-gradient(110deg, color-mix(in srgb, var(--accent-blue) 18%, transparent), color-mix(in srgb, var(--accent-cyan, #63e2ff) 6%, transparent));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent-blue) 12%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 65%, var(--accent-blue));
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.team-load-done-project::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  box-shadow: 0 0 6px var(--accent-blue);
+}
+
+.team-load-done-project > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-load-done-progress {
+  color: var(--text-muted);
+  font-size: 0.65rem;
 }
 
 .team-load-done-title {

@@ -274,8 +274,9 @@ test('team load shows the current and next subtask and lets users expand the rem
 test('team load lists subtasks completed today under "Heute erledigt"',()=>{
   const data = makeDataLayer();
   data.getEmployees = ()=>[{id:'employee',name:'Alex'}];
+  data.createProject({id:'project',title:'Projekt & Team'});
   data.createTask({
-    id:'active',title:'Aktive Aufgabe',status:'in-progress',assigneeId:'employee',employeeName:'Alex',
+    id:'active',title:'Aktive Aufgabe',projectId:'project',status:'in-progress',assigneeId:'employee',employeeName:'Alex',
     subtasks:[
       {title:'Heute fertig',completed:true,completedAt:new Date().toISOString()},
       {title:'Gestern fertig',completed:true,completedAt:new Date(Date.now()-86400000).toISOString()},
@@ -289,7 +290,7 @@ test('team load lists subtasks completed today under "Heute erledigt"',()=>{
   assert.match(html,/Heute erledigt<\/span><span class="team-load-section-count is-done">1</);
   assert.match(html,/team-load-done-item is-progress/);
   assert.match(html,/<button type="button" class="team-load-done-title team-load-done-open" data-open-done-task="active" title="Aktive Aufgabe"/);
-  assert.match(html,/team-load-done-project" title="Teilaufgaben 2\/3"/);
+  assert.match(html,/<span class="team-load-done-project" title="Projekt &amp; Team"><span>Projekt &amp; Team<\/span><\/span><button type="button" class="team-load-done-title[^>]*>Aktive Aufgabe<\/button><span class="team-load-done-progress">Teilaufgaben 2\/3<\/span>/);
   assert.match(html,/data-open-done-task="active" data-focus-subtask="[^"]+" title="Heute fertig"/);
   assert.doesNotMatch(html,/Gestern fertig/);
 });
@@ -314,9 +315,10 @@ test('team load documents today\'s GitHub commits as development steps, includin
   const html = teamLoadContainer.innerHTML;
   assert.match(html,/1 Aufgabe · 2 Commits/);
   assert.match(html,/data-open-done-task="doc" title="Tagesdoku"/);
+  assert.match(html,/<span class="team-load-done-project" title="Projekt"><span>Projekt<\/span><\/span><button type="button" class="team-load-done-title[^>]*>Tagesdoku<\/button>/);
   assert.match(html,/href="https:\/\/github.com\/o\/r\/commit\/aaaaaaa1"[^>]*>aaaaaaa</);
   assert.match(html,/data-open-done-task="doc" data-focus-sha="aaaaaaa1" title="Dokumentierter Schritt"/);
-  assert.match(html,/Commits ohne Aufgabe/);
+  assert.match(html,/<span class="team-load-done-project" title="Projekt"><span>Projekt<\/span><\/span><span class="team-load-done-title" title="Commits ohne Aufgabe">Commits ohne Aufgabe<\/span>/);
   assert.match(html,/data-open-done-commit="bbbbbbb2" data-project-id="project" title="fix: noch ohne Aufgabe"/);
   assert.equal((html.match(/Dokumentierter Schritt"/g)||[]).length,1);
   assert.doesNotMatch(html,/chore: alt|feat: fremd|feat: dokumentiert/);

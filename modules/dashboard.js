@@ -2343,28 +2343,26 @@
   function buildTeamLoadDoneGroupHtml(group, projectsById, employeeKey, expandedDoneKeys) {
     var icon = group.kind === 'task' ? 'check_circle' : (group.kind === 'commits' ? 'commit' : 'checklist');
     var title;
-    var meta = [];
+    var projectLabel = '';
     var groupKey;
     if (group.kind === 'commits') {
       title = 'Commits ohne Aufgabe';
-      var projectTitle = String(group.project && (group.project.title || group.project.name) || '').trim();
-      if (projectTitle) meta.push(projectTitle);
+      projectLabel = String(group.project && (group.project.title || group.project.name) || '').trim();
       groupKey = 'commits:' + String(group.project && group.project.id || '');
     } else {
       title = String(group.task.title || 'Aufgabe').trim() || 'Aufgabe';
-      if (group.kind === 'progress') meta.push('Teilaufgaben ' + group.subtaskDone + '/' + group.subtaskTotal);
-      var projectLabel = getTaskProjectLabel(group.task, projectsById);
-      if (projectLabel) meta.push(projectLabel);
+      projectLabel = getTaskProjectLabel(group.task, projectsById);
       groupKey = 'task:' + String(group.task.id || '');
     }
 
     var html = '<li class="team-load-done-item is-' + group.kind + '"><span class="material-symbols-rounded" aria-hidden="true">' + icon + '</span><span class="team-load-done-copy">';
+    if (projectLabel) html += '<span class="team-load-done-project" title="' + escapeHtml(projectLabel) + '"><span>' + escapeHtml(projectLabel) + '</span></span>';
     if (group.kind === 'commits') {
       html += '<span class="team-load-done-title" title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</span>';
     } else {
       html += '<button type="button" class="team-load-done-title team-load-done-open"' + buildTeamLoadDoneOpenAttrs(group) + ' title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</button>';
     }
-    if (meta.length) html += '<span class="team-load-done-project" title="' + escapeHtml(meta.join(' · ')) + '">' + escapeHtml(meta.join(' · ')) + '</span>';
+    if (group.kind === 'progress') html += '<span class="team-load-done-progress">Teilaufgaben ' + group.subtaskDone + '/' + group.subtaskTotal + '</span>';
     if (group.steps.length) {
       html += '<ul class="team-load-done-steps" aria-label="Entwicklungsschritte">';
       group.steps.slice(0, 3).forEach(function(step) { html += buildTeamLoadDoneStepHtml(step, group); });
