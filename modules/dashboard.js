@@ -97,6 +97,26 @@
     return date.toLocaleDateString('de-DE');
   }
 
+  function formatBlockerDuration(from, until) {
+    var start = Date.parse(from || '');
+    var end = until === undefined ? Date.now() : Date.parse(until || '');
+    if (isNaN(start) || isNaN(end) || end < start) return 'Nicht verfügbar';
+    var seconds = Math.floor((end - start) / 1000);
+    var days = Math.floor(seconds / 86400);
+    var hours = Math.floor((seconds % 86400) / 3600);
+    var minutes = Math.floor((seconds % 3600) / 60);
+    seconds %= 60;
+    return (days ? days + (days === 1 ? ' Tag ' : ' Tage ') : '') +
+      String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+  }
+
+  function updateBlockerTimers(host) {
+    if (!host) return;
+    host.querySelectorAll('[data-blocker-start]').forEach(function(timer) {
+      timer.textContent = formatBlockerDuration(timer.getAttribute('data-blocker-start'));
+    });
+  }
+
   function getAuthManager() {
     return window.AuthManager || null;
   }
@@ -830,7 +850,7 @@
     var html = '';
     html += '<div class="dashboard-notice-head">';
     html += '  <span class="dashboard-notice-kicker">Blocker-Register</span>';
-    html += '  <span class="dashboard-notice-count">' + blockers.length + '/' + allRows.length + '</span>';
+    html += '  <span class="dashboard-notice-count" title="Angezeigte / alle Einträge" aria-label="' + blockers.length + ' von ' + allRows.length + ' Einträgen angezeigt">' + blockers.length + '/' + allRows.length + '</span>';
     html += '</div>';
     html += '<div class="dashboard-blocker-controls">';
     html += '  <label>Zeitraum <select data-blocker-filter="scope">';
@@ -849,13 +869,13 @@
     html += '  </select></label>';
     html += '  <label>Sortierung <select data-blocker-filter="sort">';
     html += '    <option value="newest"' + (blockerFilterState.sort === 'newest' ? ' selected' : '') + '>Neueste zuerst</option>';
-    html += '    <option value="oldest"' + (blockerFilterState.sort === 'oldest' ? ' selected' : '') + '>Aelteste zuerst</option>';
-    html += '    <option value="longest"' + (blockerFilterState.sort === 'longest' ? ' selected' : '') + '>Laengste Dauer zuerst</option>';
+    html += '    <option value="oldest"' + (blockerFilterState.sort === 'oldest' ? ' selected' : '') + '>Älteste zuerst</option>';
+    html += '    <option value="longest"' + (blockerFilterState.sort === 'longest' ? ' selected' : '') + '>Längste Dauer zuerst</option>';
     html += '  </select></label>';
     html += '</div>';
 
     if (!blockers.length) {
-      html += '<p class="text-muted">Keine Eintraege fuer den gewaehlten Filter.</p>';
+      html += '<p class="text-muted">Keine Einträge für den gewählten Filter.</p>';
       host.classList.remove('hidden');
       setHtmlIfChanged(host, html);
       return;
@@ -871,19 +891,27 @@
       }));
       html += '<article class="dashboard-notice-card ' + (item.active ? 'severity-critical' : 'severity-info') + ' blocker-card">';
       html += '  <header class="dashboard-notice-card-head">';
-      html += '    <h3>' + escapeHtml(item.targetType === 'project' ? 'Projekt blockiert' : 'Aufgabe blockiert') + ': ' + escapeHtml(item.targetTitle) + '</h3>';
-      html += '    <span class="dashboard-notice-time">' + escapeHtml(formatDateTime(item.from)) + ' bis ' + escapeHtml(item.active ? 'offen' : formatDateTime(item.until)) + '</span>';
+      html += '    <div class="blocker-card-heading"><span class="blocker-card-type">' + (item.targetType === 'project' ? 'Projekt' : 'Aufgabe') + '</span>';
+      html += '    <h3>' + escapeHtml(item.targetTitle) + '</h3></div>';
+      html += '    <span class="blocker-card-status ' + (item.active ? 'is-active' : 'is-resolved') + '">' + (item.active ? 'Aktiv' : 'Aufgelöst') + '</span>';
       html += '  </header>';
-      html += '  <p><strong>Grund:</strong> ' + escapeHtml(item.reason || 'Kein Grund hinterlegt') + '</p>';
+      html += '  <div class="blocker-card-timing"><div><span class="blocker-card-label">' + (item.active ? 'Blockiert seit' : 'Dauer') + '</span>';
+      html += '    <span class="blocker-card-duration"' + (item.active ? ' data-blocker-start="' + escapeHtml(item.from) + '"' : '') + '>' + escapeHtml(item.active ? formatBlockerDuration(item.from) : formatBlockerDuration(item.from, item.until)) + '</span></div>';
+      html += '    <div class="blocker-card-dates">Beginn: ' + escapeHtml(formatDateTime(item.from));
+      if (!item.active) html += '<br>Ende: ' + escapeHtml(formatDateTime(item.until));
+      html += '</div></div>';
+      html += '  <dl class="blocker-card-details">';
+      html += '    <div class="blocker-detail blocker-detail-reason"><dt>Grund</dt><dd>' + escapeHtml(item.reason || 'Kein Grund hinterlegt') + '</dd></div>';
       if (item.projectTitle && item.targetType === 'task') {
-        html += '  <p><strong>Projekt:</strong> ' + escapeHtml(item.projectTitle) + '</p>';
+        html += '    <div class="blocker-detail blocker-detail-project"><dt>Projekt</dt><dd>' + escapeHtml(item.projectTitle) + '</dd></div>';
       }
       if (item.blockerTaskTitle) {
-        html += '  <p><strong>Blocker:</strong> ' + escapeHtml(item.blockerTaskTitle) + '</p>';
+        html += '    <div class="blocker-detail blocker-detail-blocker"><dt>Blocker</dt><dd>' + escapeHtml(item.blockerTaskTitle) + '</dd></div>';
       }
       if (!item.active && item.resolution) {
-        html += '  <p><strong>Aufloesung:</strong> ' + escapeHtml(item.resolution) + '</p>';
+        html += '    <div class="blocker-detail blocker-detail-resolution"><dt>Auflösung</dt><dd>' + escapeHtml(item.resolution) + '</dd></div>';
       }
+      html += '  </dl>';
       html += '  <div class="dashboard-notice-actions">';
       if (item.active) {
         html += '    <button class="btn btn-secondary" type="button" data-resolve-blocker="' + escapeHtml(item.targetType + '::' + item.targetId) + '" ' + (canResolve ? '' : 'disabled') + '>Blocker entfernen</button>';
@@ -2951,6 +2979,11 @@
     }
 
     renderDashboard();
+    window.setInterval(function() {
+      if (dashboardPage && dashboardPage.classList.contains('active')) {
+        updateBlockerTimers(document.getElementById('dashboard-blocker-zone'));
+      }
+    }, 1000);
     window.setInterval(function() {
       if (dashboardPage && dashboardPage.classList.contains('active')) renderTeamLoad();
     }, 60000);
