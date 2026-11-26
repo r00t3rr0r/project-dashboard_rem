@@ -104,7 +104,7 @@ function formatGitHubCommitDraft(commits){
     var title=String(commit.title||'').replace(/\s+/g,' ').trim();
     if(title&&!titles.some(function(existing){return existing.toLowerCase()===title.toLowerCase();}))titles.push(title);
   });
-  if(!titles.length)throw new Error('Fuer die Tagesaufgabe fehlen deutsche Commit-Titel.');
+  if(!titles.length)throw new Error('Fuer die Aufgabe fehlen deutsche Commit-Titel.');
   var displayed=titles.slice(0,2).map(function(title){
     if(title.length<=60)return title;
     var shortened=title.slice(0,59);
@@ -123,56 +123,32 @@ function formatGitHubCommitDraft(commits){
   };
 }
 
-function groupGitHubCommitsByDay(commits){
-  if(!window.AIConfModule||typeof window.AIConfModule.commitCalendarData!=='function')throw new Error('GitHub-Kalenderdaten sind nicht verfuegbar.');
-  var byKey=Object.create(null);
-  commits.forEach(function(commit){
-    var entry=commit.calendarDate&&commit.calendarTime?commit:window.AIConfModule.commitCalendarData(commit);
-    // commitCalendarData kennt employeeId nicht: Zuordnung des Quell-Commits erhalten
-    if(commit.employeeId!==undefined&&entry.employeeId===undefined)entry=Object.assign({},entry,{employeeId:commit.employeeId});
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(entry.calendarDate)||!/^\d{2}:\d{2}$/.test(entry.calendarTime)||!isFinite(Date.parse(entry.date)))throw new Error('Ungueltiger Commit-Zeitpunkt: '+entry.sha);
-    var employeeId=String(entry.employeeId||'');
-    var key=entry.calendarDate+'::'+employeeId;
-    if(!byKey[key])byKey[key]={date:entry.calendarDate,employeeId:employeeId,commits:[]};
-    byKey[key].commits.push(entry);
-  });
-  return Object.keys(byKey).sort().map(function(key){
-    var group=byKey[key];
-    var entries=group.commits.sort(function(a,b){return Date.parse(a.date)-Date.parse(b.date)||a.sha.localeCompare(b.sha);});
-    return {date:group.date,employeeId:group.employeeId,commits:entries,draft:formatGitHubCommitDraft(entries)};
-  });
-}
-
 function groupGitHubCommitDrafts(commits,defaultBranch){
-  var byBranch=Object.create(null),daily=[];
-  commits.forEach(function(commit){
+  if(!window.AIConfModule||typeof window.AIConfModule.commitCalendarData!=='function')throw new Error('GitHub-Kalenderdaten sind nicht verfuegbar.');
+  if(!commits.length)return [];
+  var taskBranches=[],firstFeatureBranch='';
+  var entries=commits.map(function(commit){
     var branches=Array.isArray(commit.branches)&&commit.branches.length?commit.branches:(commit.branch?[commit.branch]:[]);
     var candidates=branches.filter(function(name){return name!==defaultBranch;});
-    var selected=candidates[0]||'';
-    commit.taskBranch=selected;
-    if(!selected){daily.push(commit);return;}
-    if(!byBranch[selected])byBranch[selected]=[];
-    byBranch[selected].push(commit);
-  });
-  var groups=Object.keys(byBranch).sort().map(function(branch){
-    var entries=byBranch[branch].map(function(commit){
-      var entry=commit.calendarDate&&commit.calendarTime?commit:window.AIConfModule.commitCalendarData(commit);
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(entry.calendarDate)||!/^\d{2}:\d{2}$/.test(entry.calendarTime)||!isFinite(Date.parse(entry.date)))throw new Error('Ungueltiger Commit-Zeitpunkt: '+entry.sha);
-      return Object.assign({},entry,{employeeId:commit.employeeId,taskBranch:branch});
-    }).sort(function(a,b){return Date.parse(a.date)-Date.parse(b.date)||a.sha.localeCompare(b.sha);});
-    return {branch:branch,commits:entries,draft:formatGitHubCommitDraft(entries)};
-  });
-  return groups.concat(groupGitHubCommitsByDay(daily));
+    var featureBranch=candidates[0]||'';
+    if(featureBranch&&!firstFeatureBranch)firstFeatureBranch=featureBranch;
+    var selected=featureBranch||(branches.indexOf(defaultBranch)!==-1?defaultBranch:'');
+    if(selected&&taskBranches.indexOf(selected)===-1)taskBranches.push(selected);
+    var entry=commit.calendarDate&&commit.calendarTime?commit:window.AIConfModule.commitCalendarData(commit);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(entry.calendarDate)||!/^\d{2}:\d{2}$/.test(entry.calendarTime)||!isFinite(Date.parse(entry.date)))throw new Error('Ungueltiger Commit-Zeitpunkt: '+entry.sha);
+    return Object.assign({},entry,{employeeId:commit.employeeId,taskBranch:selected});
+  }).sort(function(a,b){return Date.parse(a.date)-Date.parse(b.date)||a.sha.localeCompare(b.sha);});
+  return [{branch:firstFeatureBranch,branches:taskBranches,commits:entries,draft:formatGitHubCommitDraft(entries)}];
 }
 
-function findGitHubBranchTask(project,branch){
+function findGitHubBranchTasks(project,branches){
   var repository=String(project.github.owner+'/'+project.github.repo).toLowerCase();
-  var matches=(window.DataLayer.getTasks()||[]).filter(function(task){
+  return (window.DataLayer.getTasks()||[]).filter(function(task){
     var source=task&&task.githubCommitImport;
-    return source&&source.taskBranch===branch&&String(source.repository||'').toLowerCase()===repository&&window.DataLayer.isTaskLinkedToProject(task,project.id);
+    var associated=source&&Array.isArray(source.taskBranches)?source.taskBranches.slice():[];
+    if(source&&source.taskBranch&&associated.indexOf(source.taskBranch)===-1)associated.push(source.taskBranch);
+    return source&&branches.some(function(branch){return associated.indexOf(branch)!==-1;})&&String(source.repository||'').toLowerCase()===repository&&window.DataLayer.isTaskLinkedToProject(task,project.id);
   });
-  if(matches.length>1)throw new Error('Mehrere Aufgaben sind Branch '+branch+' zugeordnet. Bitte die Zuordnung zuerst bereinigen.');
-  return matches[0]||null;
 }
 
 function appendGitHubBranchTask(task,addition){
@@ -186,6 +162,8 @@ function appendGitHubBranchTask(task,addition){
     assigneeId:task.assigneeId||assignees[0]||null,
     sourceCommitShas:Array.from(new Set((task.sourceCommitShas||[]).concat(addition.sourceCommitShas))),
     githubCommitImport:Object.assign({},source,{
+      taskBranches:Array.from(new Set((source.taskBranches||[]).concat(source.taskBranch?[source.taskBranch]:[],addition.githubCommitImport.taskBranches||[]))),
+      multiDayCommits:true,
       shas:Array.from(new Set((source.shas||[]).concat(addition.githubCommitImport.shas))),
       commits:(source.commits||[]).concat(addition.githubCommitImport.commits)
     })
@@ -506,11 +484,11 @@ function openQuickTaskModal(prefill){
 
     var aiState={loading:false,draft:null,suggestions:[]};
     var githubDraftGroups=[];
-    var githubDraftSourceCommits=[];
     var githubDraftProjectId='';
     var githubDraftDefaultBranch='';
     var githubDraftPreparationFailed=false;
-    var githubDraftEdited=false;
+    var githubTargetTaskId='';
+    var githubTargetCandidateIds=[];
     var selectedAssigneeIds=[];
     var pendingFiles=[];
 
@@ -935,46 +913,29 @@ function openQuickTaskModal(prefill){
       });
       var groups=groupGitHubCommitDrafts(sourceCommits,githubDraftDefaultBranch);
       if(!groups.length)throw new Error('Keine Commits ausgewaehlt.');
-      groups.forEach(function(group){if(group.branch)findGitHubBranchTask(project,group.branch);});
-      githubDraftSourceCommits=sourceCommits;
+      var group=groups[0],matches=findGitHubBranchTasks(project,group.branches);
+      githubTargetCandidateIds=matches.map(function(task){return String(task.id);});
+      githubTargetTaskId=matches.length===1?String(matches[0].id):'';
       githubDraftGroups=groups;
       githubDraftProjectId=String(project.id);
-      function groupEmployeeName(group){
-        var employee=employees.find(function(item){return String(item&&item.id||'')===String(group.employeeId||'');});
-        return employee?String(employee.name||employee.id):'';
-      }
-      function groupHeading(group){
-        if(group.branch)return 'Branch: '+group.branch+(findGitHubBranchTask(project,group.branch)?' (bestehende Aufgabe)':' (neue Aufgabe)');
-        return group.date+' · '+(groupEmployeeName(group)||'Nicht zugeordnet');
-      }
-      function groupTitle(group){
-        if(group.branch){
-          var existing=findGitHubBranchTask(project,group.branch);
-          return existing?existing.title:group.branch;
-        }
-        var name=groupEmployeeName(group);
-        return group.draft.title+' - '+group.date+(name?' · '+name:'');
+      function updateTargetTitle(){
+        var target=matches.find(function(task){return String(task.id)===githubTargetTaskId;});
+        document.getElementById('qtm-title').value=target?target.title:(group.branch||group.draft.title);
+        document.getElementById('qtm-title').readOnly=!!target;
       }
       document.getElementById('qtm-assignee-picker').classList.add('hidden');
       document.getElementById('qtm-assignee-help').textContent='Mitarbeiter werden unten pro Commit zugeordnet.';
-      var first=groups[0];
-      document.getElementById('qtm-title').value=groupTitle(first);
-      document.getElementById('qtm-title').readOnly=!!(first.branch&&findGitHubBranchTask(project,first.branch));
-      document.getElementById('qtm-desc').value=first.draft.description;
-      document.getElementById('qtm-subtasks').value=first.draft.subtasks.join('\n');
-      document.getElementById('qtm-attachments').value=first.commits.filter(function(commit){return commit.url;}).map(function(commit){return 'GitHub Commit '+commit.sha+'|'+commit.url;}).join('\n');
+      updateTargetTitle();
+      document.getElementById('qtm-desc').value=group.draft.description;
+      document.getElementById('qtm-subtasks').value=group.draft.subtasks.join('\n');
+      document.getElementById('qtm-attachments').value=group.commits.filter(function(commit){return commit.url;}).map(function(commit){return 'GitHub Commit '+commit.sha+'|'+commit.url;}).join('\n');
       var host=document.getElementById('qtm-github-daily-drafts');
-      host.innerHTML='<h3>GitHub-Aufgaben</h3><p>Die Felder oben gelten fuer '+escapeHtml(groupHeading(first))+'. Feature-Branches erhalten eine gemeinsame Aufgabe; weitere Commits werden dieser hinzugefuegt. Commits ohne Feature-Branch bleiben Tagesaufgaben pro Mitarbeiter. Bestehende Aufgaben behalten ihren Titel und Status.</p><p id="qtm-github-daily-status" role="status" aria-live="polite"></p>'
-        +groups.slice(1).map(function(group,index){
-          var key=String(index+1);
-          return '<section class="qtm-new-section"><h3>'+escapeHtml(groupHeading(group))+'</h3>'
-            +'<div class="form-group"><label for="qtm-github-title-'+key+'">Titel</label><input id="qtm-github-title-'+key+'" value="'+escapeAttr(groupTitle(group))+'"'+(group.branch&&findGitHubBranchTask(project,group.branch)?' readonly':'')+'></div>'
-            +'<div class="form-group"><label for="qtm-github-desc-'+key+'">Beschreibung</label><textarea id="qtm-github-desc-'+key+'" rows="6">'+escapeHtml(group.draft.description)+'</textarea></div>'
-            +'<div class="form-group"><label for="qtm-github-subtasks-'+key+'">Teilaufgaben (eine pro Zeile)</label><textarea id="qtm-github-subtasks-'+key+'" rows="4">'+escapeHtml(group.draft.subtasks.join('\n'))+'</textarea></div></section>';
-        }).join('')
+      host.innerHTML='<h3>GitHub-Aufgabe</h3><p>Alle ausgewaehlten Commits werden Teilaufgaben derselben Aufgabe. Bestehende Aufgaben behalten Titel und Status.</p>'
+        +(matches.length===1?'<p>Bestehende Aufgabe: '+escapeHtml(matches[0].title)+'</p>':'')
+        +(matches.length>1?'<label for="qtm-github-target">Mehrere passende Aufgaben: Zielaufgabe auswaehlen</label><select id="qtm-github-target" required><option value="">-- Aufgabe auswaehlen --</option>'+matches.map(function(task){return '<option value="'+escapeAttr(task.id)+'">'+escapeHtml(task.title)+' ('+escapeHtml(task.id)+')</option>';}).join('')+'</select><p>Branch-Zuordnungen anderer Aufgaben bleiben erhalten.</p>':'')
+        +'<p id="qtm-github-daily-status" role="status" aria-live="polite"></p>'
         +'<h3>Commits zuordnen</h3><p>GitHub-Konten und hinterlegte Commit-Aliase werden vorgeschlagen. Bitte jede Zuordnung pruefen. Bei mehreren Feature-Branches wird der erste zugeordnete Feature-Branch verwendet; die Branch-Zugehoerigkeit belegt nicht den Ursprungs-Branch.</p>'
-        +groups.map(function(group){
-          return '<section class="qtm-new-section"><h3>'+escapeHtml(groupHeading(group))+'</h3>'+group.commits.map(function(commit){
+        +'<section class="qtm-new-section">'+group.commits.map(function(commit){
             var id='qtm-github-assignee-'+commit.sha;
             return '<div class="form-group"><label for="'+escapeAttr(id)+'">'+escapeHtml(commit.title)+' · '+escapeHtml(commit.author)+(commit.authorLogin?' (@'+escapeHtml(commit.authorLogin)+')':'')+' ['+escapeHtml(commit.sha.slice(0,7))+']</label>'
               +'<select id="'+escapeAttr(id)+'" required><option value="">-- Mitarbeiter auswaehlen --</option>'
@@ -983,41 +944,20 @@ function openQuickTaskModal(prefill){
                 return '<option value="'+escapeAttr(employeeId)+'"'+(employeeId===String(commit.employeeId||'')?' selected':'')+'>'+escapeHtml(employee.name||employeeId)+'</option>';
               }).join('')+'</select>'+window.AIConfModule.renderCommitBranchDetails(commit)+'</div>';
           }).join('')+'</section>';
-        }).join('');
       host.classList.remove('hidden');
-      githubDraftEdited=false;
-      groups.slice(1).forEach(function(_group,index){
-        ['title','desc','subtasks'].forEach(function(field){
-          var input=document.getElementById('qtm-github-'+field+'-'+(index+1));
-          if(input)input.addEventListener('input',function(){githubDraftEdited=true;});
+      if(matches.length>1){
+        document.getElementById('qtm-github-target').addEventListener('change',function(){
+          githubTargetTaskId=String(this.value||'');
+          updateTargetTitle();
         });
-      });
-      groups.forEach(function(group){
-        group.commits.forEach(function(commit){
-          var select=document.getElementById('qtm-github-assignee-'+commit.sha);
-          if(!select)return;
-          select.value=String(commit.employeeId||'');
-          select.addEventListener('change',function(){
-            if(githubDraftEdited&&!window.confirm('Die Zuordnung gruppiert die Commits neu. Bearbeitete Aufgabenfelder werden zurueckgesetzt. Fortfahren?')){
-              select.value=String(commit.employeeId||'');return;
-            }
-            var nextEmployeeId=String(select.value||'');
-            var nextCommits=githubDraftSourceCommits.map(function(item){
-              return item.sha===commit.sha?Object.assign({},item,{employeeId:nextEmployeeId}):item;
-            });
-            try{applyGitHubCommitDrafts(nextCommits,project);}
-            catch(error){select.value=String(commit.employeeId||'');updateAiStatus('Commit-Zuordnung fehlgeschlagen: '+String(error&&error.message||error),true);return;}
-            updateAiStatus('Commit-Zuordnung aktualisiert.',false);
-          });
-        });
+      }
+      group.commits.forEach(function(commit){
+        var select=document.getElementById('qtm-github-assignee-'+commit.sha);
+        if(select)select.value=String(commit.employeeId||'');
       });
       toggleAiButtons(false);
       resizeQuickTaskTextareas();
     }
-
-    ['qtm-title','qtm-desc','qtm-subtasks','qtm-attachments'].forEach(function(id){
-      document.getElementById(id).addEventListener('input',function(){if(githubDraftGroups.length)githubDraftEdited=true;});
-    });
 
     function updateGitHubDraftStatus(message){
       var status=document.getElementById('qtm-github-daily-status');
@@ -1054,7 +994,8 @@ function openQuickTaskModal(prefill){
         if(review)review.classList.add('hidden');
         if((githubDraftGroups.length||githubDraftPreparationFailed)&&githubDraftProjectId!==getProjectSelection().projectId){
           githubDraftGroups=[];
-          githubDraftSourceCommits=[];
+          githubTargetTaskId='';
+          githubTargetCandidateIds=[];
           githubDraftProjectId='';
           githubDraftPreparationFailed=false;
           document.getElementById('qtm-github-daily-drafts').classList.add('hidden');
@@ -1109,7 +1050,7 @@ function openQuickTaskModal(prefill){
                     +'<br><small>EN: '+escapeHtml(commit.titleEn)+'</small>'
                     +'</label>';
                 }).join('')
-                +'<button type="button" class="btn btn-primary" id="qtm-github-create" style="margin-top:0.7rem;">Tagesaufgaben entwerfen</button>';
+                +'<button type="button" class="btn btn-primary" id="qtm-github-create" style="margin-top:0.7rem;">Aufgabe entwerfen</button>';
               review.classList.remove('hidden');
               review._commits=translatedCommits;
               updateAiStatus(String(translatedCommits.length)+' Commit(s) vorbereitet (deutsch + englisch).',false);
@@ -1127,7 +1068,7 @@ function openQuickTaskModal(prefill){
                   return;
                 }
                 try{prepareGitHubCommitDrafts(newCommits,selection.project);}
-                catch(error){updateAiStatus('Tagesaufgaben konnten nicht vorbereitet werden: '+String(error&&error.message||error),true);return;}
+                catch(error){updateAiStatus('Aufgabe konnte nicht vorbereitet werden: '+String(error&&error.message||error),true);return;}
                 review.classList.add('hidden');
                 if(!aiState.loading)updateAiStatus(String(githubDraftGroups.length)+' GitHub-Aufgabe(n) vorbereitet. Bitte pruefen und speichern.',false);
               });
@@ -1235,7 +1176,10 @@ function openQuickTaskModal(prefill){
           return;
         }
         var selectedProject=projects.find(function(project){return String(project.id)===githubDraftProjectId;});
-        if(!selectedProject){updateGitHubDraftStatus('Projekt fuer GitHub-Tagesaufgaben nicht gefunden.');return;}
+        if(!selectedProject){updateGitHubDraftStatus('Projekt fuer GitHub-Aufgabe nicht gefunden.');return;}
+        if(githubTargetCandidateIds.length>1&&githubTargetCandidateIds.indexOf(githubTargetTaskId)===-1){
+          updateGitHubDraftStatus('Bitte eine bestehende Zielaufgabe auswaehlen.');return;
+        }
         var alreadyImported=githubDraftGroups.some(function(group){return group.commits.some(function(commit){return !!getGitHubCommitDocumentationTaskId(commit.sha,selectedProject);});});
         if(alreadyImported){updateGitHubDraftStatus('Mindestens ein Commit wurde inzwischen dokumentiert. Bitte Commits erneut abrufen.');return;}
         var missingAssignee=githubDraftGroups.some(function(group){return group.commits.some(function(commit){
@@ -1243,14 +1187,8 @@ function openQuickTaskModal(prefill){
           return !select||!employees.some(function(employee){return String(employee.id)===String(select.value||'');});
         });});
         if(missingAssignee){updateGitHubDraftStatus('Bitte jedem Commit einen Mitarbeiter zuordnen.');return;}
-        payloads=githubDraftGroups.map(function(group,index){
+        payloads=githubDraftGroups.map(function(group){
           var dayPayload=Object.assign({},payload);
-          if(index){
-            dayPayload.title=document.getElementById('qtm-github-title-'+index).value.trim();
-            dayPayload.description=document.getElementById('qtm-github-desc-'+index).value.trim();
-            dayPayload.subtasks=parseSubtasksFromText(document.getElementById('qtm-github-subtasks-'+index).value);
-            dayPayload.attachments=parseAttachmentsFromText(group.commits.filter(function(commit){return commit.url;}).map(function(commit){return 'GitHub Commit '+commit.sha+'|'+commit.url;}).join('\n'));
-          }
           dayPayload.subtasks.forEach(function(subtask){subtask.completed=true;});
           dayPayload.status='done';
           dayPayload.progress=100;
@@ -1265,8 +1203,10 @@ function openQuickTaskModal(prefill){
           var previousImport=prefill.taskMetadata&&prefill.taskMetadata.githubCommitImport||{};
           dayPayload.githubCommitImport=Object.assign({},previousImport,{
             repository:String(selectedProject.github.owner)+'/'+String(selectedProject.github.repo),
-            dailyTaskDate:group.date||'',
+            dailyTaskDate:'',
             taskBranch:group.branch||'',
+            taskBranches:group.branches.slice(),
+            multiDayCommits:true,
             shas:dayPayload.sourceCommitShas.slice(),
             commits:assignedCommits
           });
@@ -1277,7 +1217,7 @@ function openQuickTaskModal(prefill){
           return dayPayload;
         });
         if(payloads.some(function(dayPayload){return !dayPayload.title;})){
-          updateGitHubDraftStatus('Bitte fuer jede Tagesaufgabe einen Titel eingeben.');
+          updateGitHubDraftStatus('Bitte einen Aufgabentitel eingeben.');
           return;
         }
         if(payloads.some(function(dayPayload){
@@ -1306,9 +1246,12 @@ function openQuickTaskModal(prefill){
         return (githubDraftGroups.length?window.DataLayer.waitForTaskAndCalendarSave():Promise.resolve(true)).then(function(ready){
           if(!ready)throw new Error('Vorherige Aufgaben oder Kalendereintraege konnten nicht dauerhaft gespeichert werden.');
           if(githubDraftGroups.length){
-            var targets=githubDraftGroups.map(function(group){
-              return group.branch?findGitHubBranchTask(selectedProject,group.branch):null;
-            });
+            var matches=findGitHubBranchTasks(selectedProject,githubDraftGroups[0].branches);
+            var matchIds=matches.map(function(task){return String(task.id);});
+            if(matchIds.length!==githubTargetCandidateIds.length||matchIds.some(function(id){return githubTargetCandidateIds.indexOf(id)===-1;}))throw new Error('Die passenden Branch-Aufgaben haben sich geaendert. Bitte Commits erneut abrufen.');
+            var target=matches.find(function(task){return String(task.id)===githubTargetTaskId;})||null;
+            if(matches.length&&!target)throw new Error('Bitte eine bestehende Zielaufgabe auswaehlen.');
+            var targets=[target];
             if(githubDraftGroups.some(function(group){return group.commits.some(function(commit){return !!getGitHubCommitDocumentationTaskId(commit.sha,selectedProject);});}))throw new Error('Mindestens ein Commit wurde inzwischen dokumentiert. Bitte Commits erneut abrufen.');
             if(targets.some(function(task){return task&&auth&&typeof auth.canEditTask==='function'&&!auth.canEditTask(task);}))throw new Error('Eine bestehende Branch-Aufgabe darf nicht bearbeitet werden.');
             if(auth&&typeof auth.getMode==='function'&&auth.getMode()==='employee'){
@@ -1322,6 +1265,9 @@ function openQuickTaskModal(prefill){
             changedTasks=createdTasks.slice();
             targets.forEach(function(task,index){
               if(!task)return;
+              payloads[index].githubCommitImport.taskBranches=payloads[index].githubCommitImport.taskBranches.filter(function(branch){
+                return !findGitHubBranchTasks(selectedProject,[branch]).some(function(other){return String(other.id)!==String(task.id);});
+              });
               var updated=appendGitHubBranchTask(task,payloads[index]);
               if(!window.DataLayer.updateTask(updated))throw new Error('Branch-Aufgabe '+task.title+' konnte nicht aktualisiert werden.');
               changedTasks.push(updated);

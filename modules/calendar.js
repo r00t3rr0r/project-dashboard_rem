@@ -588,7 +588,7 @@
     var commitImport = task.githubCommitImport;
     var dailyDate = commitImport && commitImport.dailyTaskDate;
     var commits = commitImport && Array.isArray(commitImport.commits) ? commitImport.commits : [];
-    if ((dailyDate || (commitImport && commitImport.taskBranch)) && commits.length) {
+    if ((dailyDate || (commitImport && (commitImport.taskBranch || commitImport.multiDayCommits))) && commits.length) {
       var lastByDay = Object.create(null), assigneesByDay = Object.create(null);
       commits.forEach(function (commit) {
         if (!commit || !commit.calendarDate || (dailyDate && commit.calendarDate !== dailyDate) || !isFinite(Date.parse(commit.date))) return;
@@ -1668,7 +1668,7 @@
       var day = dayFor(activity.date);
       day.activities.push(activity);
       var task = activity.taskId && getTasks().find(function (t) { return String(t.id) === String(activity.taskId); });
-      if (!represented || (task && task.githubCommitImport && task.githubCommitImport.taskBranch)) day.items.push(activity);
+      if (!represented || (task && task.githubCommitImport && (task.githubCommitImport.taskBranch || task.githubCommitImport.multiDayCommits))) day.items.push(activity);
     });
 
     Object.keys(days).forEach(function (date) {

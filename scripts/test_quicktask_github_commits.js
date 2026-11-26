@@ -22,7 +22,7 @@ function harness() {
   vm.runInNewContext(aiSource,sandbox);
   const quickSource=fs.readFileSync(path.join(__dirname,'../modules/quicktask.js'),'utf8').replace(
     'window.QuickTaskModule={',
-    'window.testQuickTask={fetchQuickTaskGitHubCommits,translateGitHubCommits,formatGitHubCommitDraft,groupGitHubCommitsByDay,getGitHubCommitDocumentationTaskId,findGitHubCommitEmployee}; window.QuickTaskModule={'
+    'window.testQuickTask={fetchQuickTaskGitHubCommits,translateGitHubCommits,formatGitHubCommitDraft,groupGitHubCommitDrafts,getGitHubCommitDocumentationTaskId,findGitHubCommitEmployee}; window.QuickTaskModule={'
   );
   vm.runInNewContext(quickSource,sandbox);
   return {project,tasks,requests,window,sandbox,api:window.testQuickTask};
@@ -138,21 +138,21 @@ test('translates Turkish messages in both languages and keeps original text in t
   assert.equal(draft.subtasks.length,9);
 });
 
-test('daily titles reflect distinct translated commit titles, including when there are more than two',()=>{
+test('fallback titles reflect distinct translated commit titles, including when there are more than two',()=>{
   const h=harness();
   const make=(i,date,title)=>({
     sha:commit(i).sha,date,author:'Alice',message:'Original',title,titleEn:'English',
     descriptionDe:'Deutsch',descriptionEn:'English'
   });
-  const groups=h.api.groupGitHubCommitsByDay([
+  const groups=h.api.groupGitHubCommitDrafts([
     make(1,'2020-01-01T10:00:00Z','Anmeldung verbessert'),
     make(2,'2020-01-01T11:00:00Z','Fehler korrigiert'),
     make(3,'2020-01-01T12:00:00Z','Anmeldung verbessert'),
     make(4,'2020-01-01T13:00:00Z','Dokumentation ergänzt'),
     make(5,'2020-01-02T10:00:00Z','Kalender aktualisiert')
-  ]);
-  assert.equal(groups[0].draft.title,'Anmeldung verbessert · Fehler korrigiert (+1 weitere Commit-Titel)');
-  assert.equal(groups[1].draft.title,'Kalender aktualisiert');
+  ],'main');
+  assert.equal(groups.length,1);
+  assert.equal(groups[0].draft.title,'Anmeldung verbessert · Fehler korrigiert (+2 weitere Commit-Titel)');
   assert.throws(()=>h.api.formatGitHubCommitDraft([{title:'  '}]),/fehlen deutsche Commit-Titel/);
   const long=h.api.formatGitHubCommitDraft([{title:'Langer Titel '.repeat(20)}]).title;
   assert(long.length<=60);
@@ -216,7 +216,7 @@ test('feature branch commits across days and imports extend one task without cha
   const {h,element,created}=modalHarness();
   const entry=(id,date,employeeId)=>({
     sha:String(id).repeat(40),date,author:employeeId,employeeId,message:'Original',title:'Titel '+id,titleEn:'Title',
-    descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['main','feature/login']
+    descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['main','feature/login','feature/other']
   });
   const first=entry(1,'2020-01-01T10:00:00Z','alice');
   const second=entry(2,'2020-01-02T10:00:00Z','bob');
@@ -239,7 +239,7 @@ test('feature branch commits across days and imports extend one task without cha
   h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[third]});
   element('qtm-project').value='p1';
   element('qtm-github-assignee-'+third.sha).value='alice';
-  assert.match(element('qtm-github-daily-drafts').innerHTML,/bestehende Aufgabe/);
+  assert.match(element('qtm-github-daily-drafts').innerHTML,/Bestehende Aufgabe/);
   assert.equal(element('qtm-title').value,'Manuell geaendert');
   assert.equal(element('qtm-title').readOnly,true);
   element('qt-submit').click();
@@ -273,6 +273,74 @@ test('feature branch commits across days and imports extend one task without cha
   assert.equal(data.getCalendarEvents().length,3);
 });
 
+test('one task contains commits from different branches and later imports reuse it',async()=>{
+  const {h,element,created}=modalHarness();
+  const entry=(id,branches,employeeId)=>({sha:String(id).repeat(40),date:`2020-01-0${id}T10:00:00Z`,employeeId,
+    author:employeeId,message:'Original',title:'Titel '+id,titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches});
+  const entries=[entry(1,['main','feature/a'],'alice'),entry(2,['main','feature/b'],'bob'),entry(3,['main'],'alice')];
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:entries});
+  element('qtm-project').value='p1';
+  entries.forEach(item=>{element('qtm-github-assignee-'+item.sha).value=item.employeeId;});
+  assert.equal(element('qtm-title').value,'feature/a');
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,1);
+  assert.equal(h.tasks[0].subtasks.length,3);
+  assert.equal(h.tasks[0].githubCommitImport.taskBranches.join(','),'feature/a,feature/b,main');
+  for(const item of [entry(4,['feature/b'],'bob'),entry(5,['main'],'alice')]){
+    h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[item]});
+    element('qtm-project').value='p1';
+    element('qtm-github-assignee-'+item.sha).value=item.employeeId;
+    element('qt-submit').click();
+    await new Promise(resolve=>setImmediate(resolve));
+  }
+  assert.equal(created.length,1);
+  assert.equal(h.tasks[0].githubCommitImport.commits.length,5);
+  assert.equal(h.tasks[0].subtasks.length,5);
+});
+
+test('conflicting branch tasks require a target and retain other tasks branch associations',async()=>{
+  const {h,element,created}=modalHarness();
+  h.tasks.push(
+    {id:'a',projectId:'p1',title:'Aufgabe A',status:'done',githubCommitImport:{repository:'acme/app',taskBranch:'feature/a',shas:[],commits:[]}},
+    {id:'b',projectId:'p1',title:'Aufgabe B',status:'todo',githubCommitImport:{repository:'acme/app',taskBranch:'feature/b',shas:[],commits:[]}}
+  );
+  const entry=(id,branch)=>({sha:String(id).repeat(40),date:`2020-01-0${id}T10:00:00Z`,employeeId:'alice',
+    author:'Alice',message:'Original',title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches:[branch]});
+  const entries=[entry(1,'feature/a'),entry(2,'feature/b'),entry(3,'feature/c')];
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:entries});
+  element('qtm-project').value='p1';
+  entries.forEach(item=>{element('qtm-github-assignee-'+item.sha).value='alice';});
+  element('qt-submit').click();
+  assert.match(element('qtm-github-daily-status').textContent,/Zielaufgabe auswaehlen/);
+  const select=element('qtm-github-target');
+  select.value='b';
+  select.listeners.change.call(select);
+  assert.equal(element('qtm-title').value,'Aufgabe B');
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,0);
+  assert.equal(h.tasks[0].githubCommitImport.commits.length,0);
+  assert.equal(h.tasks[1].githubCommitImport.commits.length,3);
+  assert.equal(h.tasks[1].githubCommitImport.taskBranches.join(','),'feature/b,feature/c');
+  assert.equal(h.tasks[1].status,'todo');
+});
+
+test('import stops if matching branch tasks change after the preview',async()=>{
+  const {h,element,created}=modalHarness();
+  const item={sha:'a'.repeat(40),date:'2020-01-01T10:00:00Z',employeeId:'alice',author:'Alice',message:'Original',
+    title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['feature/a']};
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[item]});
+  element('qtm-project').value='p1';
+  element('qtm-github-assignee-'+item.sha).value='alice';
+  h.tasks.push({id:'new',projectId:'p1',title:'Neu',githubCommitImport:{repository:'acme/app',taskBranch:'feature/a',shas:[],commits:[]}});
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,0);
+  assert.equal(h.tasks[0].githubCommitImport.commits.length,0);
+  assert.match(element('qtm-upload-status').textContent,/haben sich geaendert/);
+});
+
 test('multiple feature branches use the first and expose all branch names as a tooltip',async()=>{
   const {h,element,created}=modalHarness();
   const item={sha:'a'.repeat(40),date:'2020-01-01T10:00:00Z',employeeId:'alice',author:'Alice',message:'Original',
@@ -289,20 +357,17 @@ test('multiple feature branches use the first and expose all branch names as a t
   assert.equal(created[0].githubCommitImport.taskBranch,'feature/b');
 });
 
-test('regrouping requires confirmation before discarding edited task fields',()=>{
+test('changing the commit assignee preserves edited task fields',()=>{
   const {h,element}=modalHarness();
   const item={sha:'a'.repeat(40),date:'2020-01-01T10:00:00Z',employeeId:'alice',author:'Alice',message:'Original',
     title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['main','feature/a','feature/b']};
   h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[item]});
   const title=element('qtm-title');
   title.value='Eigener Titel';
-  title.listeners.input();
-  h.window.confirm=()=>false;
   const select=element('qtm-github-assignee-'+item.sha);
   select.value='bob';
-  select.listeners.change();
   assert.equal(title.value,'Eigener Titel');
-  assert.equal(select.value,'alice');
+  assert.equal(select.value,'bob');
 });
 
 test('an existing branch task must be editable before it can be extended',async()=>{
@@ -372,12 +437,12 @@ test('only selected commits become task metadata after applying the preview',asy
   element('qtm-github-create').click();
   element('qtm-github-assignee-'+commit(1).sha).value='alice';
   assert.match(element('qtm-desc').value,/Original: Giriş hatasını düzelt/);
-  assert.match(element('qtm-title').value,/^Anmeldung korrigiert - /);
+  assert.equal(element('qtm-title').value,'Anmeldung korrigiert');
   assert.match(element('qtm-desc').value,/EN: Fixed login\nEnglish message/);
   element('qt-submit').click();
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(created.length,1);
-  assert.match(created[0].title,/^Anmeldung korrigiert - /);
+  assert.equal(created[0].title,'Anmeldung korrigiert');
   assert.equal(created[0].sourceCommitShas.join(','),commit(1).sha);
   assert.match(created[0].subtasks[0].title,/DE: Anmeldung korrigiert \| EN: Fixed login/);
 });
@@ -401,7 +466,7 @@ test('QuickTask translates only commits confirmed in the preselection',async()=>
   assert.equal(element('qtm-github-commit-review')._commits.length,1);
 });
 
-test('creates a completed task per local commit day and linked chronological calendar entries',async()=>{
+test('creates one completed task across employees and days with linked chronological calendar entries',async()=>{
   const previousTz=process.env.TZ;
   process.env.TZ='Europe/Berlin';
   try {
@@ -427,31 +492,15 @@ test('creates a completed task per local commit day and linked chronological cal
     assign(items[0].sha,'alice');
     assign(items[1].sha,'alice');
     assign(items[2].sha,'bob');
-    assert.match(element('qtm-title').value,/2020-01-01/);
-    assert.match(element('qtm-title').value,/Alice/);
-    assert.match(element('qtm-github-daily-drafts').innerHTML,/2020-01-02 · Alice/);
-    assert.match(element('qtm-github-daily-drafts').innerHTML,/2020-01-02 · Bob/);
-    element('qtm-github-title-1').value='Bearbeiteter Titel';
-    element('qtm-github-desc-1').value='Beschreibung Alice';
-    element('qtm-github-subtasks-1').value='Commit '+items[1].sha;
-    element('qtm-github-title-2').value='Bob Tagesaufgabe';
-    element('qtm-github-desc-2').value='Beschreibung Bob';
-    element('qtm-github-subtasks-2').value='Commit '+items[2].sha;
+    assert.equal(element('qtm-title').value,'Anmeldung korrigiert');
     element('qt-submit').click();
     await new Promise(resolve=>setImmediate(resolve));
-    assert.equal(created.length,3);
-    assert.equal(created[0].githubCommitImport.dailyTaskDate,'2020-01-01');
-    assert.equal(created[1].githubCommitImport.dailyTaskDate,'2020-01-02');
-    assert.equal(created[2].githubCommitImport.dailyTaskDate,'2020-01-02');
-    assert.equal(created[1].title,'Bearbeiteter Titel');
-    assert.equal(created[0].sourceCommitShas.join(','),items[0].sha);
-    assert.equal(created[1].sourceCommitShas.join(','),items[1].sha);
-    assert.equal(created[2].sourceCommitShas.join(','),items[2].sha);
-    assert.equal(created[0].assigneeIds.join(','),'alice');
-    assert.equal(created[1].assigneeIds.join(','),'alice');
-    assert.equal(created[2].assigneeIds.join(','),'bob');
-    assert.equal(created[2].subtasks[0].assigneeId,'bob');
-    assert.equal(created[2].subtasks[0].sourceCommitSha,items[2].sha);
+    assert.equal(created.length,1);
+    assert.equal(created[0].githubCommitImport.multiDayCommits,true);
+    assert.equal(created[0].sourceCommitShas.join(','),items.slice(0,3).map(item=>item.sha).join(','));
+    assert.equal(created[0].assigneeIds.join(','),'alice,bob');
+    assert.equal(created[0].subtasks[2].assigneeId,'bob');
+    assert.equal(created[0].subtasks[2].sourceCommitSha,items[2].sha);
     assert(created.every(task=>task.status==='done'&&task.subtasks.every(subtask=>subtask.completed)));
     assert(created.every(task=>Date.parse(task.createdAt)>Date.parse('2020-01-03')));
 
@@ -481,21 +530,18 @@ test('creates a completed task per local commit day and linked chronological cal
     assert.equal(events[2].startTime,'09:30');
     assert.equal(events[1].commitEmployeeId,'alice');
     assert.equal(events[2].commitEmployeeId,'bob');
-    assert.equal(events[1].taskId,created[1].id);
+    assert(events.every(event=>event.taskId===created[0].id));
     const calendarWindow={DataLayer:data};
     const calendarSource=fs.readFileSync(path.join(__dirname,'../modules/calendar.js'),'utf8')
       .replace('window.CalendarModule = {','window.testActivities = buildTaskActivityEntries; window.testFilters={eventMatchesEmployeeFilter,taskMatchesEmployeeFilter,getEventParticipants}; window.CalendarModule = {');
     vm.runInNewContext(calendarSource,{window:calendarWindow,document:{addEventListener(){}},console});
     const activities=calendarWindow.testActivities();
-    assert.equal(activities.length,3);
+    assert.equal(activities.length,2);
     assert.equal(activities[0].date,'2020-01-01');
     assert.equal(activities[1].date,'2020-01-02');
-    assert.equal(activities[2].date,'2020-01-02');
     assert(activities.every(activity=>activity.type==='github-commit'&&activity.dayProgressGain===0));
-    assert.equal(activities[1].assigneeIds.join(','),'alice');
-    assert.equal(activities[2].assigneeIds.join(','),'bob');
-    assert(calendarWindow.testFilters.taskMatchesEmployeeFilter(created[2],'bob'));
-    assert(!calendarWindow.testFilters.taskMatchesEmployeeFilter(created[1],'bob'));
+    assert.equal(activities[1].assigneeIds.join(','),'alice,bob');
+    assert(calendarWindow.testFilters.taskMatchesEmployeeFilter(created[0],'bob'));
     assert(calendarWindow.testFilters.eventMatchesEmployeeFilter(events[2],'bob'));
     assert(!calendarWindow.testFilters.eventMatchesEmployeeFilter(events[2],'alice'));
     assert(!calendarWindow.testFilters.eventMatchesEmployeeFilter(events[2],'__unassigned__'));
@@ -507,8 +553,8 @@ test('creates a completed task per local commit day and linked chronological cal
     const updatedActivities=calendarWindow.testActivities();
     assert(updatedActivities.some(activity=>activity.date==='2020-01-01'&&activity.type==='github-commit'));
     assert(updatedActivities.some(activity=>activity.date!=='2020-01-01'&&activity.type==='updated'));
-    const updatedSecond=data.getTaskById(created[2].id);
-    updatedSecond.githubCommitImport.commits[0].employeeId='alice';
+    const updatedSecond=data.getTaskById(created[0].id);
+    updatedSecond.githubCommitImport.commits[2].employeeId='alice';
     data.updateTask(updatedSecond);
     assert.equal(data.getCalendarEvents()[2].commitEmployeeId,'alice');
     data.tasks.length=0;data.calendarEvents.length=0;data.rehydrate();
@@ -516,7 +562,7 @@ test('creates a completed task per local commit day and linked chronological cal
     assert.equal(events.length,3);
     assert.equal(events[2].commitEmployeeId,'alice');
     data.deleteTask(created[0].id);
-    assert.equal(data.getCalendarEvents().length,2);
+    assert.equal(data.getCalendarEvents().length,0);
   } finally {
     if(previousTz===undefined)delete process.env.TZ;
     else process.env.TZ=previousTz;
@@ -578,7 +624,7 @@ test('prefill suggests the employee when the author alias equals their name',()=
   assert.match(element('qtm-github-daily-drafts').innerHTML,/value="mustafa" selected>Mustafa/);
 });
 
-test('AI Conf prefill creates editable daily drafts and rejects a missing commit subtask',async()=>{
+test('AI Conf prefill creates one editable draft and rejects a missing commit subtask',async()=>{
   const {h,element,created}=modalHarness();
   const entries=[commit(1),commit(2)].map((item,index)=>({
     sha:item.sha,date:`2020-01-0${index+1}T12:00:00Z`,author:'Alice',message:item.commit.message,
@@ -587,22 +633,19 @@ test('AI Conf prefill creates editable daily drafts and rejects a missing commit
   }));
   h.window.QuickTaskModule.open({task:{projectId:'p1',status:'done'},githubCommits:entries});
   element('qtm-project').value='p1';
-  assert.match(element('qtm-title').value,/2020-01-01/);
-  assert.match(element('qtm-github-daily-drafts').innerHTML,/2020-01-02/);
-  element('qtm-github-title-1').value='Tagesaufgabe';
-  element('qtm-github-desc-1').value='Beschreibung';
-  element('qtm-github-subtasks-1').value='Eintrag ohne SHA';
+  assert.equal(element('qtm-title').value,'Anmeldung korrigiert');
+  element('qtm-subtasks').value='Commit '+entries[0].sha+'\nEintrag ohne SHA';
   element('qtm-github-assignee-'+entries[0].sha).value='alice';
   element('qtm-github-assignee-'+entries[1].sha).value='bob';
   element('qt-submit').click();
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(created.length,0);
   assert.match(element('qtm-ai-status').textContent,/SHA/);
-  element('qtm-github-subtasks-1').value='Commit '+entries[1].sha;
+  element('qtm-subtasks').value='Commit '+entries[0].sha+'\nCommit '+entries[1].sha;
   element('qt-submit').click();
   await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(created.length,2);
-  assert.equal(created[1].githubCommitImport.commits[0].sha,entries[1].sha);
+  assert.equal(created.length,1);
+  assert.equal(created[0].githubCommitImport.commits[1].sha,entries[1].sha);
 });
 
 test('reports persistence failure without closing the task editor',async()=>{
@@ -685,7 +728,7 @@ test('reports a clear error when the dashboard session is missing',async()=>{
   await assert.rejects(h.api.fetchQuickTaskGitHubCommits(h.project),/Anmeldung erforderlich/);
 });
 
-test('commits with known GitHub logins are grouped into one task per employee per day automatically',async()=>{
+test('known GitHub logins are assigned to subtasks within one task',async()=>{
   const {h,element,created}=modalHarness();
   const items=[commit(1),commit(2),commit(3)];
   items[0].author={login:'alice'};
@@ -702,19 +745,12 @@ test('commits with known GitHub logins are grouped into one task per employee pe
   await element('qtm-github-commit-review').selectCommits();
   element('qtm-github-commit-review').querySelectorAll=()=>items.map(item=>({getAttribute:()=>item.sha}));
   element('qtm-github-create').click();
-  // Vorschlaege sind bereits gesetzt: alice-Gruppe (2 Commits) + bob-Gruppe (1 Commit) am selben Tag
-  assert.match(element('qtm-title').value,/Alice/);
-  assert.match(element('qtm-github-daily-drafts').innerHTML,/2020-06-01 · Bob/);
   assert.equal(element('qtm-github-assignee-'+items[1].sha).value,'bob');
-  element('qtm-github-title-1').value='Bob Tagesaufgabe';
-  element('qtm-github-desc-1').value='Beschreibung Bob';
-  element('qtm-github-subtasks-1').value='Commit '+items[1].sha;
   element('qt-submit').click();
   await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(created.length,2);
-  assert.equal(created[0].assigneeIds.join(','),'alice');
-  assert.equal(created[0].sourceCommitShas.join(','),[items[0].sha,items[2].sha].join(','));
-  assert.equal(created[1].assigneeIds.join(','),'bob');
-  assert.equal(created[1].sourceCommitShas.join(','),items[1].sha);
+  assert.equal(created.length,1);
+  assert.equal(created[0].assigneeIds.join(','),'alice,bob');
+  assert.equal(created[0].sourceCommitShas.join(','),items.map(item=>item.sha).join(','));
+  assert.equal(created[0].subtasks[1].assigneeId,'bob');
   assert(created.every(task=>task.status==='done'));
 });
