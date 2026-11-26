@@ -4279,6 +4279,19 @@ body.projects-modal-open {
   list-style: none;
 }
 
+.team-load-done-project-group {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.team-load-done-project-list {
+  display: grid;
+  gap: 0.32rem;
+  padding-left: 0.22rem;
+  list-style: none;
+}
+
 .team-load-done-item {
   display: flex;
   align-items: flex-start;

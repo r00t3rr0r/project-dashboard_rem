@@ -2340,23 +2340,19 @@
     return html + '</li>';
   }
 
-  function buildTeamLoadDoneGroupHtml(group, projectsById, employeeKey, expandedDoneKeys) {
+  function buildTeamLoadDoneGroupHtml(group, employeeKey, expandedDoneKeys) {
     var icon = group.kind === 'task' ? 'check_circle' : (group.kind === 'commits' ? 'commit' : 'checklist');
     var title;
-    var projectLabel = '';
     var groupKey;
     if (group.kind === 'commits') {
       title = 'Commits ohne Aufgabe';
-      projectLabel = String(group.project && (group.project.title || group.project.name) || '').trim();
       groupKey = 'commits:' + String(group.project && group.project.id || '');
     } else {
       title = String(group.task.title || 'Aufgabe').trim() || 'Aufgabe';
-      projectLabel = getTaskProjectLabel(group.task, projectsById);
       groupKey = 'task:' + String(group.task.id || '');
     }
 
     var html = '<li class="team-load-done-item is-' + group.kind + '"><span class="material-symbols-rounded" aria-hidden="true">' + icon + '</span><span class="team-load-done-copy">';
-    if (projectLabel) html += '<span class="team-load-done-project" title="' + escapeHtml(projectLabel) + '"><span>' + escapeHtml(projectLabel) + '</span></span>';
     if (group.kind === 'commits') {
       html += '<span class="team-load-done-title" title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</span>';
     } else {
@@ -2376,6 +2372,44 @@
       }
     }
     return html + '</span></li>';
+  }
+
+  function getTeamLoadDoneProjectInfo(group, projectsById) {
+    if (group.kind === 'commits') {
+      var projectLabel = String(group.project && (group.project.title || group.project.name) || '').trim() || 'Ohne Projekt';
+      var projectId = String(group.project && group.project.id || '');
+      return { label: projectLabel, key: projectId ? 'project:' + projectId : 'label:' + projectLabel.toLocaleLowerCase('de-DE') };
+    }
+    var projectIds = Array.isArray(group.task.projectIds) ? group.task.projectIds : (group.task.projectId ? [group.task.projectId] : []);
+    projectIds = projectIds.map(String).filter(Boolean).sort();
+    var label = getTaskProjectLabel(group.task, projectsById) || 'Ohne Projekt';
+    var projectKey = projectIds.length === 1 ? 'project:' + projectIds[0] : 'projects:' + projectIds.join('|');
+    return { label: label, key: projectIds.length ? projectKey : 'label:' + label.toLocaleLowerCase('de-DE') };
+  }
+
+  function groupTeamLoadDoneGroups(groups, projectsById) {
+    var projects = [];
+    var projectsByKey = Object.create(null);
+    groups.forEach(function(group) {
+      var projectInfo = getTeamLoadDoneProjectInfo(group, projectsById);
+      var key = projectInfo.key;
+      if (!projectsByKey[key]) {
+        projectsByKey[key] = { label: projectInfo.label, groups: [] };
+        projects.push(projectsByKey[key]);
+      }
+      projectsByKey[key].groups.push(group);
+    });
+    return projects;
+  }
+
+  function buildTeamLoadDoneProjectHtml(projectGroup, employeeKey, expandedDoneKeys) {
+    var html = '<li class="team-load-done-project-group">';
+    html += '<span class="team-load-done-project" title="' + escapeHtml(projectGroup.label) + '"><span>' + escapeHtml(projectGroup.label) + '</span></span>';
+    html += '<ul class="team-load-done-project-list">';
+    projectGroup.groups.forEach(function(group) {
+      html += buildTeamLoadDoneGroupHtml(group, employeeKey, expandedDoneKeys);
+    });
+    return html + '</ul></li>';
   }
 
   function getExpandedDashboardSubtaskTaskIds(container) {
@@ -2624,6 +2658,7 @@
 
       var employeeKey = String(employee.id || employee.name || '');
       var doneGroups = dailyLog.groups;
+      var doneProjectGroups = groupTeamLoadDoneGroups(doneGroups, projectsById);
       var summaryParts = [];
       if (dailyLog.counts.tasks) summaryParts.push(dailyLog.counts.tasks + (dailyLog.counts.tasks === 1 ? ' Aufgabe' : ' Aufgaben'));
       if (dailyLog.counts.subtasks) summaryParts.push(dailyLog.counts.subtasks + (dailyLog.counts.subtasks === 1 ? ' Teilaufgabe' : ' Teilaufgaben'));
@@ -2634,16 +2669,16 @@
       if (doneGroups.length) {
         html += '<div class="team-load-done-summary">' + escapeHtml(summaryParts.join(' · ')) + '</div>';
         html += '<ul class="team-load-done-list">';
-        doneGroups.slice(0, 3).forEach(function(group) {
-          html += buildTeamLoadDoneGroupHtml(group, projectsById, employeeKey, expandedDoneKeys);
+        doneProjectGroups.slice(0, 3).forEach(function(projectGroup) {
+          html += buildTeamLoadDoneProjectHtml(projectGroup, employeeKey, expandedDoneKeys);
         });
         html += '</ul>';
-        if (doneGroups.length > 3) {
+        if (doneProjectGroups.length > 3) {
           var moreKey = 'groups:' + employeeKey;
           html += '<details class="team-load-done-more" data-expand-key="' + escapeHtml(moreKey) + '"' + (expandedDoneKeys[moreKey] ? ' open' : '') + '>';
-          html += '<summary>+' + (doneGroups.length - 3) + ' weitere anzeigen</summary><ul class="team-load-done-list">';
-          doneGroups.slice(3).forEach(function(group) {
-            html += buildTeamLoadDoneGroupHtml(group, projectsById, employeeKey, expandedDoneKeys);
+          html += '<summary>+' + (doneProjectGroups.length - 3) + ' weitere Projekte anzeigen</summary><ul class="team-load-done-list">';
+          doneProjectGroups.slice(3).forEach(function(projectGroup) {
+            html += buildTeamLoadDoneProjectHtml(projectGroup, employeeKey, expandedDoneKeys);
           });
           html += '</ul></details>';
         }

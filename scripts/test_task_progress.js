@@ -289,10 +289,30 @@ test('team load lists subtasks completed today under "Heute erledigt"',()=>{
   const html = teamLoadContainer.innerHTML;
   assert.match(html,/Heute erledigt<\/span><span class="team-load-section-count is-done">1</);
   assert.match(html,/team-load-done-item is-progress/);
+  assert.match(html,/<span class="team-load-done-project" title="Projekt &amp; Team"><span>Projekt &amp; Team<\/span><\/span><ul class="team-load-done-project-list"><li class="team-load-done-item is-progress">/);
   assert.match(html,/<button type="button" class="team-load-done-title team-load-done-open" data-open-done-task="active" title="Aktive Aufgabe"/);
-  assert.match(html,/<span class="team-load-done-project" title="Projekt &amp; Team"><span>Projekt &amp; Team<\/span><\/span><button type="button" class="team-load-done-title[^>]*>Aktive Aufgabe<\/button><span class="team-load-done-progress">Teilaufgaben 2\/3<\/span>/);
+  assert.match(html,/<span class="team-load-done-progress">Teilaufgaben 2\/3<\/span>/);
   assert.match(html,/data-open-done-task="active" data-focus-subtask="[^"]+" title="Heute fertig"/);
   assert.doesNotMatch(html,/Gestern fertig/);
+});
+
+test('team load groups all completed tasks under one project heading',()=>{
+  const data = makeDataLayer();
+  data.getEmployees = ()=>[{id:'employee',name:'Alex'}];
+  data.createProject({id:'project',title:'Gemeinsames Projekt'});
+  const completedAt = new Date().toISOString();
+  ['Erste Aufgabe','Zweite Aufgabe'].forEach((title,index)=>{
+    data.createTask({
+      id:'task-'+index,title,projectId:'project',status:'in-progress',assigneeId:'employee',employeeName:'Alex',
+      subtasks:[{title:'Schritt '+index,completed:true,completedAt}]
+    });
+  });
+  const {dashboard,teamLoadContainer} = makeDashboard(data);
+  dashboard.renderTeamLoad();
+
+  const html = teamLoadContainer.innerHTML;
+  assert.equal((html.match(/class="team-load-done-project" title="Gemeinsames Projekt"/g)||[]).length,1);
+  assert.match(html,/team-load-done-project-list"><li class="team-load-done-item is-progress">[\s\S]*Erste Aufgabe[\s\S]*<li class="team-load-done-item is-progress">[\s\S]*Zweite Aufgabe/);
 });
 
 test('team load documents today\'s GitHub commits as development steps, including undocumented ones',()=>{
@@ -315,11 +335,12 @@ test('team load documents today\'s GitHub commits as development steps, includin
   const html = teamLoadContainer.innerHTML;
   assert.match(html,/1 Aufgabe · 2 Commits/);
   assert.match(html,/data-open-done-task="doc" title="Tagesdoku"/);
-  assert.match(html,/<span class="team-load-done-project" title="Projekt"><span>Projekt<\/span><\/span><button type="button" class="team-load-done-title[^>]*>Tagesdoku<\/button>/);
+  assert.match(html,/<span class="team-load-done-project" title="Projekt"><span>Projekt<\/span><\/span><ul class="team-load-done-project-list">/);
   assert.match(html,/href="https:\/\/github.com\/o\/r\/commit\/aaaaaaa1"[^>]*>aaaaaaa</);
   assert.match(html,/data-open-done-task="doc" data-focus-sha="aaaaaaa1" title="Dokumentierter Schritt"/);
-  assert.match(html,/<span class="team-load-done-project" title="Projekt"><span>Projekt<\/span><\/span><span class="team-load-done-title" title="Commits ohne Aufgabe">Commits ohne Aufgabe<\/span>/);
+  assert.match(html,/<span class="team-load-done-title" title="Commits ohne Aufgabe">Commits ohne Aufgabe<\/span>/);
   assert.match(html,/data-open-done-commit="bbbbbbb2" data-project-id="project" title="fix: noch ohne Aufgabe"/);
+  assert.equal((html.match(/class="team-load-done-project" title="Projekt"/g)||[]).length,1);
   assert.equal((html.match(/Dokumentierter Schritt"/g)||[]).length,1);
   assert.doesNotMatch(html,/chore: alt|feat: fremd|feat: dokumentiert/);
 });
