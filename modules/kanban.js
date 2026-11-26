@@ -2449,7 +2449,8 @@
       var shaHtml = commit.url ? '<a href="' + escapeHtml(commit.url) + '" target="_blank" rel="noopener noreferrer">' + shaLabel + '</a>' : shaLabel;
       var title = String(commit.title || commit.message || '').split('\n')[0].trim() || 'Commit';
       var message = String(commit.message || '').trim();
-      var meta = [commit.date ? formatDateTimeShort(commit.date) : '', commit.author || ''].filter(Boolean).join(' · ');
+      var commitBranches = Array.isArray(commit.branches) && commit.branches.length ? commit.branches : (commit.branch ? [commit.branch] : []);
+      var meta = [commit.date ? formatDateTimeShort(commit.date) : '', commit.author || '', commitBranches.length ? 'Branch: ' + commitBranches.join(', ') : ''].filter(Boolean).join(' · ');
       return '<li class="kanban-task-detail-commit' + (focusSha && sha === focusSha ? ' is-focused' : '') + '"><span class="material-symbols-rounded" aria-hidden="true">commit</span><span><strong>' + shaHtml + '</strong> ' + escapeHtml(title) + (meta ? '<small>' + escapeHtml(meta) + '</small>' : '') + (message && message !== title ? '<small class="kanban-task-detail-commit-message">' + escapeHtml(message) + '</small>' : '') + '</span></li>';
     });
     var blockerHistory = Array.isArray(task.blockerHistory) ? task.blockerHistory : [];

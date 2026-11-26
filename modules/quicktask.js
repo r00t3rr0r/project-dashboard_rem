@@ -114,12 +114,12 @@ function formatGitHubCommitDraft(commits){
   return {
     title:displayed.join(' · ')+(titles.length>displayed.length?' (+'+(titles.length-displayed.length)+' weitere Commit-Titel)':''),
     description:'Nachtraegliche Dokumentation der GitHub-Commits.\n\nCommits:\n'+commits.map(function(commit){
-      return commit.sha+' ('+commit.author+')'
+      return commit.sha+' ('+commit.author+')'+(commit.branches&&commit.branches.length?'\nBranch: '+commit.branches.join(', '):'')
         +'\nDE: '+commit.title+'\n'+commit.descriptionDe
         +'\nEN: '+commit.titleEn+'\n'+commit.descriptionEn
         +'\nOriginal: '+commit.message;
     }).join('\n\n'),
-    subtasks:commits.map(function(commit){return 'DE: '+commit.title+' | EN: '+commit.titleEn+' | Commit: '+commit.sha;})
+    subtasks:commits.map(function(commit){return 'DE: '+commit.title+' | EN: '+commit.titleEn+' | Commit: '+commit.sha+(commit.branches&&commit.branches.length?' | Branch: '+commit.branches.join(', '):'');})
   };
 }
 
