@@ -273,7 +273,8 @@ Liefert die Branch-Liste (100 pro Seite) analog GitHub REST API v3.
 
 Im Dialog "Neue Aufgabe" laedt "Neue GitHub-Commits abrufen" alle Seiten der
 Historien aller Repository-Branches bis zum Abrufzeitpunkt. Gemeinsame Commits
-werden anhand ihrer SHA zusammengefasst und zeigen alle zugehoerigen Branches.
+werden anhand ihrer SHA zusammengefasst; ihre Branches sind in der Vorschau
+ueber eine einklappbare Anzahl einsehbar.
 Fehler beim Laden der Branches oder einer Historie werden angezeigt; unvollstaendige
 Ergebnisse werden nicht als vollstaendig ausgegeben. Bereits im Projekt
 dokumentierte SHAs aus QuickTask oder AI Conf werden ausgelassen; nicht

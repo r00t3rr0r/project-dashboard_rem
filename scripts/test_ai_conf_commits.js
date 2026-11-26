@@ -328,6 +328,24 @@ test('branch listing failures or malformed responses never return a partial hist
   await assert.rejects(harness.api.fetchRecentCommits(harness.project,'',until),/Branch deleted/);
 });
 
+test('commit rows keep branch names in collapsed details outside the selection label',()=>{
+  const h=makeHarness();
+  const commits=[
+    {sha:'a'.repeat(40),message:'First',author:'Alice',date:'2020-01-03T10:00:00Z',branches:['main','feature/<test>','third']},
+    {sha:'b'.repeat(40),message:'Second',author:'Bob',date:'2020-01-02T10:00:00Z',branches:['single']},
+    {sha:'c'.repeat(40),message:'Third',author:'Carol',date:'2020-01-01T10:00:00Z',branches:[]}
+  ];
+  h.window.AIConfModule.renderCommitSelection(h.host,commits,()=>{});
+  const rows=Array.from(h.host.innerHTML.matchAll(/<div class="commit-selection-item" data-commit-row="(\d+)"[^>]*>([\s\S]*?)<\/div>/g),match=>match[2]);
+  assert.equal(rows.length,3);
+  assert.match(rows[0],/<\/label><details class="commit-branch-details"><summary>3 Branches<\/summary>/);
+  assert.match(rows[0],/<li>feature\/&lt;test><\/li>/);
+  assert.doesNotMatch(rows[0],/<details[^>]* open/);
+  assert.match(rows[1],/<summary>1 Branch<\/summary><ul><li>single<\/li><\/ul>/);
+  assert.doesNotMatch(rows[2],/<details/);
+  assert(h.choices.every(choice=>choice.checked));
+});
+
 test('branch filter and search translate only visible selected commits',async()=>{
   const h=makeHarness(),selected=[],rows=[{},{}];
   const chips=['','main','feature/x'].map(name=>({
