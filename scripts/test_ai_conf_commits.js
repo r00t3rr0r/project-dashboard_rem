@@ -93,6 +93,9 @@ test('AI workflows retrieve project knowledge only for admins through the protec
 function githubCommit(number,date='2026-11-17T11:00:00Z') {
   return {sha:String(number).padStart(40,'0'),commit:{message:'Improve login',committer:{date},author:{name:'Dev'}}};
 }
+function githubResponse(url,items){
+  return {ok:true,json:async()=>url.startsWith('/api/github/branches')?[{name:'main'}]:items};
+}
 
 function makeDataLayer() {
   const storage = new Map();
@@ -229,7 +232,7 @@ test('invalid selected commit data stops the import with a notification',()=>{
 test('paginates, forwards fixed time filters/token and filters dates and repeated SHAs',async()=>{
   const harness = makeHarness();
   harness.sandbox.fetch = async(url,options)=>{
-    if(url.startsWith('/api/github/branches'))return {ok:true,json:async()=>[]};
+    if(url.startsWith('/api/github/branches'))return githubResponse(url,[]);
     harness.requests.push({url,options});
     const page = new URL(url,'http://localhost').searchParams.get('page');
     return {ok:true,json:async()=>page==='1'?Array.from({length:100},(_,index)=>githubCommit(index)):[githubCommit(100),githubCommit(0),githubCommit(101,'2026-11-15T00:00:00Z'),githubCommit(102,'2026-11-18T00:00:00Z')]};
@@ -248,7 +251,7 @@ test('paginates, forwards fixed time filters/token and filters dates and repeate
 test('omits missing time filters and keeps commits outside a 24h window',async()=>{
   const harness = makeHarness();
   harness.sandbox.fetch = async(url,options)=>{
-    if(url.startsWith('/api/github/branches'))return {ok:true,json:async()=>[]};
+    if(url.startsWith('/api/github/branches'))return githubResponse(url,[]);
     harness.requests.push({url,options});
     return {ok:true,json:async()=>[githubCommit(0,'2020-01-01T00:00:00Z'),githubCommit(1,'2026-11-17T11:00:00Z')]};
   };
@@ -264,8 +267,7 @@ test('collects commits from every branch and records branch names per commit',as
   const shared=githubCommit(1),onlyFeature=githubCommit(2);
   harness.sandbox.fetch = async(url)=>{
     const parsed=new URL(url,'http://localhost');
-    if(parsed.pathname==='/api/github/branches')return {ok:true,json:async()=>[{name:'feature/x'},{name:'main'}]};
-    if(parsed.pathname==='/api/github/repo')return {ok:true,json:async()=>({default_branch:'main'})};
+    if(parsed.pathname==='/api/github/branches')return {ok:true,json:async()=>[{name:'main'},{name:'feature/x'}]};
     return {ok:true,json:async()=>parsed.searchParams.get('sha')==='main'?[shared]:[shared,onlyFeature]};
   };
   const commits = await harness.api.fetchRecentCommits(harness.project,'',until);
@@ -275,11 +277,99 @@ test('collects commits from every branch and records branch names per commit',as
   assert.equal(commits.find(c=>c.sha===onlyFeature.sha).branches.join(','),'feature/x');
 });
 
+test('paginates branch and commit lists and forwards slash-containing branch names',async()=>{
+  const harness=makeHarness(),requests=[];
+  harness.sandbox.fetch=async(url)=>{
+    const parsed=new URL(url,'http://localhost'),params=parsed.searchParams;
+    requests.push(parsed);
+    if(parsed.pathname==='/api/github/branches'){
+      return {ok:true,json:async()=>params.get('page')==='1'
+        ?Array.from({length:100},(_,i)=>({name:'branch-'+i}))
+        :[{name:'feature/a+b'}]};
+    }
+    const branch=params.get('sha'),page=Number(params.get('page'));
+    return {ok:true,json:async()=>branch==='feature/a+b'
+      ?(page===1?Array.from({length:100},(_,i)=>githubCommit(i)):[githubCommit(100)])
+      :[]};
+  };
+  const commits=await harness.api.fetchRecentCommits(harness.project,'',until);
+  assert.equal(commits.length,101);
+  assert(commits.every(commit=>commit.branches.join(',')==='feature/a+b'));
+  assert.equal(requests.filter(request=>request.pathname==='/api/github/branches').length,2);
+  assert.equal(requests.filter(request=>request.searchParams.get('sha')==='feature/a+b').length,2);
+});
+
+test('branch listing failures or malformed responses never return a partial history',async()=>{
+  const harness=makeHarness();
+  harness.sandbox.fetch=async(url)=>{
+    const page=new URL(url,'http://localhost').searchParams.get('page');
+    if(page==='1')return {ok:true,json:async()=>Array.from({length:100},(_,i)=>({name:'branch-'+i}))};
+    return {ok:false,status:403,json:async()=>({message:'Rate limit'})};
+  };
+  await assert.rejects(harness.api.fetchRecentCommits(harness.project,'',until),/Rate limit/);
+  harness.sandbox.fetch=async(url)=>{
+    const page=new URL(url,'http://localhost').searchParams.get('page');
+    return page==='1'
+      ?{ok:true,json:async()=>Array.from({length:100},(_,i)=>({name:'branch-'+i}))}
+      :{ok:false,status:409,json:async()=>({message:'Branch list changed'})};
+  };
+  await assert.rejects(harness.api.fetchRecentCommits(harness.project,'',until),/Branch list changed/);
+  harness.sandbox.fetch=async()=>({ok:true,json:async()=>({})});
+  await assert.rejects(harness.api.fetchRecentCommits(harness.project,'',until),/Branch-Liste/);
+  harness.sandbox.fetch=async(url)=>url.startsWith('/api/github/branches')
+    ?githubResponse(url,[]):{ok:false,status:409,json:async()=>({message:'Branch unavailable'})};
+  await assert.rejects(harness.api.fetchRecentCommits(harness.project,'',until),/Branch unavailable/);
+  harness.sandbox.fetch=async(url)=>{
+    const parsed=new URL(url,'http://localhost');
+    if(parsed.pathname==='/api/github/branches')return {ok:true,json:async()=>[{name:'main'},{name:'feature'}]};
+    if(parsed.searchParams.get('sha')==='main')return {ok:true,json:async()=>[githubCommit(1)]};
+    return {ok:false,status:404,json:async()=>({message:'Branch deleted'})};
+  };
+  await assert.rejects(harness.api.fetchRecentCommits(harness.project,'',until),/Branch deleted/);
+});
+
+test('branch filter and search translate only visible selected commits',async()=>{
+  const h=makeHarness(),selected=[],rows=[{},{}];
+  const chips=['','main','feature/x'].map(name=>({
+    listeners:{},classList:{toggle(){}},getAttribute:()=>name,
+    addEventListener(event,listener){this.listeners[event]=listener;},
+    click(){this.listeners.click();}
+  }));
+  const originalQuery=h.host.querySelector;
+  h.host.querySelector=selector=>{
+    const match=selector.match(/^\[data-commit-row="(\d+)"\]$/);
+    return match?rows[Number(match[1])]:originalQuery(selector);
+  };
+  h.host.querySelectorAll=selector=>selector==='[data-commit-choice]'?h.choices:
+    selector==='[data-commit-branch-chip]'?chips:[];
+  const commits=[
+    {sha:'a'.repeat(40),message:'First',author:'Alice',date:'2020-01-02T10:00:00Z',branches:['main']},
+    {sha:'b'.repeat(40),message:'Second',author:'Bob',date:'2020-01-01T10:00:00Z',branches:['feature/x']}
+  ];
+  h.window.AIConfModule.renderCommitSelection(h.host,commits,items=>{selected.push(...items);});
+  chips[2].click();
+  assert.equal(rows[0].hidden,true);
+  assert.equal(rows[1].hidden,false);
+  assert.match(h.controls['[data-commit-count]'].textContent,/1 von 1/);
+  h.controls['[data-commit-translate]'].click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(selected.length,1);
+  assert.equal(selected[0].sha,commits[1].sha);
+  chips[0].click();
+  h.controls['[data-commit-search]'].value='alice';
+  h.controls['[data-commit-search]'].listeners.input();
+  assert.equal(rows[0].hidden,false);
+  assert.equal(rows[1].hidden,true);
+  h.controls['[data-commit-translate]'].click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(selected[1].sha,commits[0].sha);
+});
+
 test('preserves the GitHub author login through fetching and calendar prefill',async()=>{
   const harness=makeHarness();
   const item=githubCommit(1);
   item.author={login:'AliceGH'};
-  harness.sandbox.fetch=async()=>({ok:true,json:async()=>[item]});
+  harness.sandbox.fetch=async(url)=>githubResponse(url,[item]);
   const commits=await harness.api.fetchRecentCommits(harness.project,'',until);
   assert.equal(commits[0].authorLogin,'AliceGH');
   Object.assign(commits[0],{title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description'});
@@ -295,7 +385,7 @@ test('queries the entire history even after an import so unselected commits rema
   const already=githubCommit(2,'2020-01-02T10:00:00Z');
   harness.tasks.push({projectId:'p1',githubCommitImport:{repository:'acme/app',until:'2026-11-14T09:30:00.000Z',shas:[already.sha]}});
   harness.sandbox.fetch=async(url,options)=>{
-    if(url.startsWith('/api/github/branches'))return {ok:true,json:async()=>[]};
+    if(url.startsWith('/api/github/branches'))return githubResponse(url,[]);
     harness.requests.push({url,options});
     return {ok:true,json:async()=>[old,already]};
   };
@@ -427,7 +517,7 @@ test('batches AI requests and creates only a preview until confirmation',async()
   const harness = makeHarness();
   let batchCount = 0;
   const date = new Date(Date.now()-1000).toISOString();
-  harness.sandbox.fetch = async()=>({ok:true,json:async()=>Array.from({length:13},(_,index)=>githubCommit(index,date))});
+  harness.sandbox.fetch = async(url)=>githubResponse(url,Array.from({length:13},(_,index)=>githubCommit(index,date)));
   harness.window.LocalOllama.generate = async(endpoint,payload)=>{
     batchCount++;
     assert(harness.select.disabled);
@@ -447,7 +537,7 @@ test('batches AI requests and creates only a preview until confirmation',async()
 test('preselects newest 20 and applies local date and quantity filters before translating',async()=>{
   const harness=makeHarness(),translated=[];
   const entries=Array.from({length:25},(_,index)=>githubCommit(index,new Date(2020,0,index+1,12).toISOString()));
-  harness.sandbox.fetch=async()=>({ok:true,json:async()=>entries});
+  harness.sandbox.fetch=async(url)=>githubResponse(url,entries);
   harness.window.LocalOllama.generate=async(endpoint,payload)=>{
     const batch=JSON.parse(payload.draftInput);
     translated.push(...batch.map(item=>item.sha));
@@ -473,7 +563,7 @@ test('preselects newest 20 and applies local date and quantity filters before tr
 
 test('invalid filters and empty selection do not start translation; errors retain selection',async()=>{
   const harness=makeHarness();
-  harness.sandbox.fetch=async()=>({ok:true,json:async()=>[githubCommit(1,'2020-01-01T10:00:00Z')]});
+  harness.sandbox.fetch=async(url)=>githubResponse(url,[githubCommit(1,'2020-01-01T10:00:00Z')]);
   let calls=0;
   harness.window.LocalOllama.generate=async()=>{calls++;throw new Error('Modell nicht erreichbar');};
   await harness.api.runCommitAssistant(harness.root);
@@ -502,7 +592,7 @@ test('translation corrections in the preview are used in the task and calendar m
     getAttribute:name=>name==='data-translation-sha'?sha:'title',
     addEventListener:(event,listener)=>{input.onInput=listener;}
   };
-  harness.sandbox.fetch=async()=>({ok:true,json:async()=>[{sha,commit:{message:'Giriş hatasını düzelt',committer:{date:new Date(Date.now()-1000).toISOString()},author:{name:'Dev'}}}]});
+  harness.sandbox.fetch=async(url)=>githubResponse(url,[{sha,commit:{message:'Giriş hatasını düzelt',committer:{date:new Date(Date.now()-1000).toISOString()},author:{name:'Dev'}}}]);
   await harness.api.runCommitAssistant(harness.root);
   harness.host.querySelectorAll=selector=>selector==='[data-commit-choice]'?harness.choices:[input];
   await translateSelection(harness);
@@ -519,7 +609,7 @@ test('empty results and AI cancellation never create tasks and release controls'
   const harness = makeHarness();
   await harness.api.runCommitAssistant(harness.root);
   assert(harness.host.textContent.includes('Keine neuen Commits'));
-  harness.sandbox.fetch = async()=>({ok:true,json:async()=>[githubCommit(1,new Date(Date.now()-1000).toISOString())]});
+  harness.sandbox.fetch = async(url)=>githubResponse(url,[githubCommit(1,new Date(Date.now()-1000).toISOString())]);
   harness.window.LocalOllama.generate = async()=>{const error=new Error('aborted');error.name='AbortError';throw error;};
   await harness.api.runCommitAssistant(harness.root);
   await translateSelection(harness);

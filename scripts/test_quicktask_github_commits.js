@@ -35,10 +35,14 @@ function commit(index) {
     commit:{message:'Giriş hatasını düzelt\n\nAyrıntılar',author:{name:'Alice',date:'2000-01-01T00:00:00Z'},committer:{date:'2020-01-01T00:00:00Z'}}
   };
 }
+function githubResponse(url,items){
+  return {ok:true,json:async()=>url.startsWith('/api/github/branches')?[{name:'main'}]:items};
+}
 
 test('loads the entire history past five pages and preserves the complete message',async()=>{
   const h=harness();
   h.sandbox.fetch=async(url,options)=>{
+    if(url.startsWith('/api/github/branches'))return githubResponse(url,[]);
     h.requests.push({url,options});
     const page=Number(new URL(url,'http://localhost').searchParams.get('page'));
     return {ok:true,json:async()=>page<=6?Array.from({length:100},(_,i)=>commit((page-1)*100+i)):[commit(600),commit(0)]};
@@ -51,6 +55,19 @@ test('loads the entire history past five pages and preserves the complete messag
   assert.equal(h.requests[0].options.headers['X-GitHub-Token'],'test-token');
   assert.equal(commits[0].date,'2020-01-01T00:00:00Z');
   assert.equal(commits[0].message,'Giriş hatasını düzelt\n\nAyrıntılar');
+});
+
+test('loads and deduplicates commits from all branches in QuickTask',async()=>{
+  const h=harness(),shared=commit(1),feature=commit(2);
+  h.sandbox.fetch=async(url)=>{
+    const parsed=new URL(url,'http://localhost');
+    if(parsed.pathname==='/api/github/branches')return {ok:true,json:async()=>[{name:'main'},{name:'feature/login'}]};
+    return {ok:true,json:async()=>parsed.searchParams.get('sha')==='main'?[shared]:[shared,feature]};
+  };
+  const commits=await h.api.fetchQuickTaskGitHubCommits(h.project);
+  assert.equal(commits.length,2);
+  assert.equal(commits[0].branches.join(','),'main,feature/login');
+  assert.equal(commits[1].branches.join(','),'feature/login');
 });
 
 test('recognizes documented commits only for the selected project and repository',()=>{
@@ -155,7 +172,7 @@ test('surfaces GitHub errors and malformed responses',async()=>{
   h.sandbox.fetch=async()=>({ok:false,status:403,json:async()=>({error:'Rate limit'})});
   await assert.rejects(h.api.fetchQuickTaskGitHubCommits(h.project),/Rate limit/);
   h.sandbox.fetch=async()=>({ok:true,status:200,json:async()=>({})});
-  await assert.rejects(h.api.fetchQuickTaskGitHubCommits(h.project),/keine gueltige Commit-Liste/);
+  await assert.rejects(h.api.fetchQuickTaskGitHubCommits(h.project),/keine gueltige Branch-Liste/);
 });
 
 function modalHarness() {
@@ -196,7 +213,7 @@ function modalHarness() {
 
 test('only selected commits become task metadata after applying the preview',async()=>{
   const {h,element,created}=modalHarness();
-  h.sandbox.fetch=async()=>({ok:true,json:async()=>[commit(1),commit(2)]});
+  h.sandbox.fetch=async(url)=>githubResponse(url,[commit(1),commit(2)]);
   h.window.QuickTaskModule.open();
   element('qtm-project').value='p1';
   element('qtm-github-commits').click();
@@ -220,7 +237,7 @@ test('only selected commits become task metadata after applying the preview',asy
 
 test('QuickTask translates only commits confirmed in the preselection',async()=>{
   const {h,element}=modalHarness(),batches=[];
-  h.sandbox.fetch=async()=>({ok:true,json:async()=>[commit(1),commit(2)]});
+  h.sandbox.fetch=async(url)=>githubResponse(url,[commit(1),commit(2)]);
   h.window.LocalOllama.generate=async(path,payload)=>{
     const entries=JSON.parse(payload.draftInput);
     batches.push(...entries.map(entry=>entry.sha));
@@ -247,7 +264,7 @@ test('creates a completed task per local commit day and linked chronological cal
     items[1].commit.committer.date='2020-01-01T23:30:00Z';
     items[2].commit.committer.date='2020-01-02T08:30:00Z';
     items[3].commit.committer.date='2020-01-03T08:30:00Z';
-    h.sandbox.fetch=async()=>({ok:true,json:async()=>items});
+    h.sandbox.fetch=async(url)=>githubResponse(url,items);
     h.window.QuickTaskModule.open();
     element('qtm-project').value='p1';
     element('qtm-github-commits').click();
@@ -362,7 +379,7 @@ test('creates a completed task per local commit day and linked chronological cal
 test('requires a manual selection for commits without a linked author',async()=>{
   const {h,element,created}=modalHarness();
   const item=commit(1);
-  h.sandbox.fetch=async()=>({ok:true,json:async()=>[item]});
+  h.sandbox.fetch=async(url)=>githubResponse(url,[item]);
   h.window.QuickTaskModule.open();
   element('qtm-project').value='p1';
   element('qtm-github-commits').click();
@@ -447,7 +464,7 @@ test('reports persistence failure without closing the task editor',async()=>{
   h.window.DataLayer.waitForTaskAndCalendarSave=()=>Promise.resolve(false);
   let closed=false;
   h.window.closeModal=()=>{closed=true;};
-  h.sandbox.fetch=async()=>({ok:true,json:async()=>[item]});
+  h.sandbox.fetch=async(url)=>githubResponse(url,[item]);
   h.window.QuickTaskModule.open();
   element('qtm-project').value='p1';
   element('qtm-github-commits').click();
@@ -491,12 +508,12 @@ test('falls back to the central token and then unauthenticated when a GitHub tok
   h.sandbox.fetch=async(url,options)=>{
     h.requests.push({url,options});
     const token=(options.headers||{})['X-GitHub-Token']||'';
-    if(token==='central-token')return {ok:true,json:async()=>[commit(1)]};
+    if(token==='central-token')return githubResponse(url,[commit(1)]);
     return {ok:false,status:401,json:async()=>({error:'GitHub-Authentifizierung fehlgeschlagen. Bitte Token pruefen.'})};
   };
   const commits=await h.api.fetchQuickTaskGitHubCommits(h.project);
   assert.equal(commits.length,1);
-  assert.equal(h.requests.length,2);
+  assert.equal(h.requests.length,3);
   assert.equal(h.requests[0].options.headers['X-GitHub-Token'],'test-token');
   assert.equal(h.requests[1].options.headers['X-GitHub-Token'],'central-token');
 });
@@ -507,11 +524,11 @@ test('retries without token for public repositories when all tokens are rejected
     h.requests.push({url,options});
     const token=(options.headers||{})['X-GitHub-Token']||'';
     if(token)return {ok:false,status:401,json:async()=>({error:'GitHub-Authentifizierung fehlgeschlagen. Bitte Token pruefen.'})};
-    return {ok:true,json:async()=>[commit(1)]};
+    return githubResponse(url,[commit(1)]);
   };
   const commits=await h.api.fetchQuickTaskGitHubCommits(h.project);
   assert.equal(commits.length,1);
-  assert.equal(h.requests.length,2);
+  assert.equal(h.requests.length,3);
   assert.equal(h.requests[1].options.headers['X-GitHub-Token'],undefined);
 });
 
@@ -530,7 +547,7 @@ test('commits with known GitHub logins are grouped into one task per employee pe
   items[0].commit.committer.date='2020-06-01T10:00:00Z';
   items[1].commit.committer.date='2020-06-01T12:00:00Z';
   items[2].commit.committer.date='2020-06-01T14:00:00Z';
-  h.sandbox.fetch=async()=>({ok:true,json:async()=>items});
+  h.sandbox.fetch=async(url)=>githubResponse(url,items);
   h.window.QuickTaskModule.open();
   element('qtm-project').value='p1';
   element('qtm-github-commits').click();

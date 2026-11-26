@@ -272,7 +272,10 @@ Liefert die Branch-Liste (100 pro Seite) analog GitHub REST API v3.
 ### GitHub-Commits in QuickTask
 
 Im Dialog "Neue Aufgabe" laedt "Neue GitHub-Commits abrufen" alle Seiten der
-Historie des Standard-Branches bis zum Abrufzeitpunkt. Bereits im Projekt
+Historien aller Repository-Branches bis zum Abrufzeitpunkt. Gemeinsame Commits
+werden anhand ihrer SHA zusammengefasst und zeigen alle zugehoerigen Branches.
+Fehler beim Laden der Branches oder einer Historie werden angezeigt; unvollstaendige
+Ergebnisse werden nicht als vollstaendig ausgegeben. Bereits im Projekt
 dokumentierte SHAs aus QuickTask oder AI Conf werden ausgelassen; nicht
 ausgewaehlte Commits bleiben fuer einen spaeteren Abruf verfuegbar. Vor der
 Uebersetzung zeigt eine Vorschau die Originalnachrichten, Autoren und Zeitpunkte.
@@ -307,13 +310,16 @@ einer Fehlermeldung. KI-Ausgaben bitte pruefen.
 
 Im operativen Assistenten ein mit GitHub verknuepftes Projekt auswaehlen und
 "Erledigte Aufgaben aus GitHub" starten. Der Assistent laedt alle Seiten der
-Commit-Historie des Standardbranches bis zum Abrufzeitpunkt und filtert
+Commit-Historien aller Branches bis zum Abrufzeitpunkt und filtert
 bereits dokumentierte SHAs aus. Nicht ausgewaehlte oder spaeter hinzugekommene
 Commits bleiben dadurch auch bei aelterem Commit-Zeitpunkt verfuegbar. Private Repositories
 verwenden den GitHub-Token des angemeldeten Mitarbeiters; der Token wird nicht
 an die KI gesendet. Wie in QuickTask erscheint vor der Uebersetzung eine
 Vorschau mit Auswahl nach lokalem Zeitraum, Anzahl und einzelnen Commits.
 Standardmaessig sind die neuesten 20 ausgewaehlt.
+Branch-Filter und Suche begrenzen die Anzeige und die Uebersetzung auf sichtbare
+ausgewaehlte Commits; ausgeblendete Auswahlen bleiben fuer einen spaeteren
+Filterwechsel erhalten. Dies gilt auch fuer QuickTask.
 
 Ollama uebersetzt jede ausgewaehlte vollstaendige Commit-Nachricht, auch aus dem Tuerkischen,
 ins Deutsche und Englische und formuliert jeweils einen kurzen Aufgabentitel.

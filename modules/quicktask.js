@@ -165,78 +165,9 @@ function findGitHubCommitEmployee(commit,employees){
   return matches.length===1?String(matches[0].id):'';
 }
 
-function getQuickTaskGitHubTokenCandidates(){
-  var candidates=[];
-  function pushToken(value){
-    value=String(value||'').trim();
-    if(value&&candidates.indexOf(value)===-1)candidates.push(value);
-  }
-  var auth=getAuthManager();
-  var user=auth&&typeof auth.getCurrentUser==='function'?auth.getCurrentUser():null;
-  if(user&&user.github)pushToken(user.github.privateAccessToken);
-  try{pushToken(window.sessionStorage.getItem('projektDashboard.githubApiToken'));}catch(_err){}
-  // Zentraler Dashboard-Token (Repository-Verwaltung) als Fallback
-  if(window.DataLayer&&typeof window.DataLayer.getStoredValue==='function'){
-    pushToken(window.DataLayer.getStoredValue('pd_github_central_token_v1',''));
-  }
-  // Letzte Option: ohne Token (oeffentliche Repositories)
-  candidates.push('');
-  return candidates;
-}
-
 function fetchQuickTaskGitHubCommits(project){
-  var github=project&&project.github?project.github:{};
-  if(!github.owner||!github.repo)return Promise.reject(new Error('Das Projekt hat keinen GitHub-Link.'));
-  var until=new Date().toISOString();
-  var candidates=getQuickTaskGitHubTokenCandidates();
-  var tokenIndex=0;
-  var seen=new Set();
-
-  function requestPage(page,found){
-    var url='/api/github/commits?owner='+encodeURIComponent(github.owner)+'&repo='+encodeURIComponent(github.repo)+'&per_page=100&page='+page+'&until='+encodeURIComponent(until);
-    var token=candidates[tokenIndex];
-    return fetch(url,{headers:token?{'X-GitHub-Token':token}:{}}).then(function(response){
-      return response.json().then(function(body){
-        if(response.status===409)return [];
-        if(!response.ok){
-          if(body&&body.authRequired)throw new Error('Anmeldung erforderlich. Bitte am Dashboard neu anmelden.');
-          // Ungueltiger GitHub-Token: naechste Token-Quelle versuchen (zentraler Token, danach ohne Token)
-          if(response.status===401&&token&&tokenIndex<candidates.length-1){
-            tokenIndex+=1;
-            return null;
-          }
-          throw new Error(body&&(body.error||body.message)||('GitHub API HTTP '+response.status));
-        }
-        if(!Array.isArray(body))throw new Error('GitHub hat keine gueltige Commit-Liste geliefert.');
-        return body;
-      });
-    }).then(function(items){
-      if(items===null)return requestPage(page,found);
-      var pageCommits=items.map(function(item){
-        var commit=item&&item.commit||{};
-        var author=commit.author||{};
-        var committer=commit.committer||{};
-        var timestamp=committer.date||author.date||'';
-        return {
-          sha:String(item&&item.sha||'').trim(),
-          message:String(commit.message||'').trim(),
-          author:String(author.name||(item&&item.author&&item.author.login)||'Unbekannt').trim(),
-          authorLogin:String(item&&item.author&&item.author.login||'').trim(),
-          date:timestamp,
-          url:String(item&&item.html_url||'').trim()
-        };
-      }).filter(function(commit){
-        if(!commit.sha||!isFinite(Date.parse(commit.date)))throw new Error('GitHub hat einen Commit ohne SHA oder gueltigen Zeitpunkt geliefert.');
-        if(Date.parse(commit.date)>Date.parse(until)||seen.has(commit.sha))return false;
-        seen.add(commit.sha);
-        return true;
-      });
-      var all=found.concat(pageCommits);
-      if(items.length===100)return requestPage(page+1,all);
-      return all;
-    });
-  }
-  return requestPage(1,[]);
+  if(!window.AIConfModule||typeof window.AIConfModule.fetchRecentCommits!=='function')return Promise.reject(new Error('Der GitHub-Commit-Abruf ist nicht verfuegbar.'));
+  return window.AIConfModule.fetchRecentCommits(project,'',new Date().toISOString());
 }
 
 function getGitHubCommitDocumentationTaskId(sha,project){
@@ -1052,7 +983,7 @@ function openQuickTaskModal(prefill){
         fetchQuickTaskGitHubCommits(selection.project).then(function(commits){
           commits=commits.filter(function(commit){return !getGitHubCommitDocumentationTaskId(commit.sha,selection.project);});
           if(!commits.length){
-            review.innerHTML='<div>Keine neuen Commits im Standard-Branch gefunden.</div>';
+            review.innerHTML='<div>Keine neuen Commits in den Branches gefunden.</div>';
             review.classList.remove('hidden');
             updateAiStatus('Keine neuen Commits gefunden.',false);
             return;
