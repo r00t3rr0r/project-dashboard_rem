@@ -146,11 +146,9 @@ function groupGitHubCommitsByDay(commits){
 function groupGitHubCommitDrafts(commits,defaultBranch){
   var byBranch=Object.create(null),daily=[];
   commits.forEach(function(commit){
-    var branches=Array.isArray(commit.branches)?commit.branches:(commit.branch?[commit.branch]:[]);
+    var branches=Array.isArray(commit.branches)&&commit.branches.length?commit.branches:(commit.branch?[commit.branch]:[]);
     var candidates=branches.filter(function(name){return name!==defaultBranch;});
-    var selected=String(commit.taskBranch||'');
-    if(selected&&candidates.indexOf(selected)===-1)throw new Error('Der ausgewaehlte Branch gehoert nicht zum Commit '+commit.sha+'.');
-    if(!selected&&candidates.length===1)selected=candidates[0];
+    var selected=candidates[0]||'';
     commit.taskBranch=selected;
     if(!selected){daily.push(commit);return;}
     if(!byBranch[selected])byBranch[selected]=[];
@@ -974,18 +972,16 @@ function openQuickTaskModal(prefill){
             +'<div class="form-group"><label for="qtm-github-desc-'+key+'">Beschreibung</label><textarea id="qtm-github-desc-'+key+'" rows="6">'+escapeHtml(group.draft.description)+'</textarea></div>'
             +'<div class="form-group"><label for="qtm-github-subtasks-'+key+'">Teilaufgaben (eine pro Zeile)</label><textarea id="qtm-github-subtasks-'+key+'" rows="4">'+escapeHtml(group.draft.subtasks.join('\n'))+'</textarea></div></section>';
         }).join('')
-        +'<h3>Commits zuordnen</h3><p>GitHub-Konten und hinterlegte Commit-Aliase werden vorgeschlagen. Bitte jede Zuordnung pruefen. Bei mehreren Feature-Branches muss ein Branch ausgewaehlt werden; die Branch-Zugehoerigkeit belegt nicht den Ursprungs-Branch.</p>'
+        +'<h3>Commits zuordnen</h3><p>GitHub-Konten und hinterlegte Commit-Aliase werden vorgeschlagen. Bitte jede Zuordnung pruefen. Bei mehreren Feature-Branches wird der erste zugeordnete Feature-Branch verwendet; die Branch-Zugehoerigkeit belegt nicht den Ursprungs-Branch.</p>'
         +groups.map(function(group){
           return '<section class="qtm-new-section"><h3>'+escapeHtml(groupHeading(group))+'</h3>'+group.commits.map(function(commit){
             var id='qtm-github-assignee-'+commit.sha;
-            var candidates=(Array.isArray(commit.branches)?commit.branches:(commit.branch?[commit.branch]:[])).filter(function(name){return name!==githubDraftDefaultBranch;});
             return '<div class="form-group"><label for="'+escapeAttr(id)+'">'+escapeHtml(commit.title)+' · '+escapeHtml(commit.author)+(commit.authorLogin?' (@'+escapeHtml(commit.authorLogin)+')':'')+' ['+escapeHtml(commit.sha.slice(0,7))+']</label>'
               +'<select id="'+escapeAttr(id)+'" required><option value="">-- Mitarbeiter auswaehlen --</option>'
               +employees.map(function(employee){
                 var employeeId=String(employee&&employee.id||'');
                 return '<option value="'+escapeAttr(employeeId)+'"'+(employeeId===String(commit.employeeId||'')?' selected':'')+'>'+escapeHtml(employee.name||employeeId)+'</option>';
-              }).join('')+'</select>'
-              +(candidates.length>1?'<label for="qtm-github-branch-'+escapeAttr(commit.sha)+'">Aufgaben-Branch</label><select id="qtm-github-branch-'+escapeAttr(commit.sha)+'" required><option value="">-- Branch auswaehlen --</option>'+candidates.map(function(name){return '<option value="'+escapeAttr(name)+'"'+(name===commit.taskBranch?' selected':'')+'>'+escapeHtml(name)+'</option>';}).join('')+'</select>':'')+'</div>';
+              }).join('')+'</select>'+window.AIConfModule.renderCommitBranchDetails(commit)+'</div>';
           }).join('')+'</section>';
         }).join('');
       host.classList.remove('hidden');
@@ -1012,19 +1008,6 @@ function openQuickTaskModal(prefill){
             try{applyGitHubCommitDrafts(nextCommits,project);}
             catch(error){select.value=String(commit.employeeId||'');updateAiStatus('Commit-Zuordnung fehlgeschlagen: '+String(error&&error.message||error),true);return;}
             updateAiStatus('Commit-Zuordnung aktualisiert.',false);
-          });
-          var branchSelect=document.getElementById('qtm-github-branch-'+commit.sha);
-          if(branchSelect)branchSelect.addEventListener('change',function(){
-            if(githubDraftEdited&&!window.confirm('Die Zuordnung gruppiert die Commits neu. Bearbeitete Aufgabenfelder werden zurueckgesetzt. Fortfahren?')){
-              branchSelect.value=String(commit.taskBranch||'');return;
-            }
-            var nextBranch=String(branchSelect.value||'');
-            var nextCommits=githubDraftSourceCommits.map(function(item){
-              return item.sha===commit.sha?Object.assign({},item,{taskBranch:nextBranch}):item;
-            });
-            try{applyGitHubCommitDrafts(nextCommits,project);}
-            catch(error){branchSelect.value=String(commit.taskBranch||'');updateAiStatus('Branch-Zuordnung fehlgeschlagen: '+String(error&&error.message||error),true);return;}
-            updateAiStatus('Branch-Zuordnung aktualisiert.',false);
           });
         });
       });
@@ -1253,11 +1236,6 @@ function openQuickTaskModal(prefill){
         }
         var selectedProject=projects.find(function(project){return String(project.id)===githubDraftProjectId;});
         if(!selectedProject){updateGitHubDraftStatus('Projekt fuer GitHub-Tagesaufgaben nicht gefunden.');return;}
-        var unresolvedBranch=githubDraftSourceCommits.some(function(commit){
-          var branches=Array.isArray(commit.branches)?commit.branches:(commit.branch?[commit.branch]:[]);
-          return branches.filter(function(name){return name!==githubDraftDefaultBranch;}).length>1&&!commit.taskBranch;
-        });
-        if(unresolvedBranch){updateGitHubDraftStatus('Bitte fuer jeden mehrdeutigen Commit einen Aufgaben-Branch auswaehlen.');return;}
         var alreadyImported=githubDraftGroups.some(function(group){return group.commits.some(function(commit){return !!getGitHubCommitDocumentationTaskId(commit.sha,selectedProject);});});
         if(alreadyImported){updateGitHubDraftStatus('Mindestens ein Commit wurde inzwischen dokumentiert. Bitte Commits erneut abrufen.');return;}
         var missingAssignee=githubDraftGroups.some(function(group){return group.commits.some(function(commit){

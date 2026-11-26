@@ -338,10 +338,10 @@ test('commit rows keep branch names in collapsed details outside the selection l
   h.window.AIConfModule.renderCommitSelection(h.host,commits,()=>{});
   const rows=Array.from(h.host.innerHTML.matchAll(/<div class="commit-selection-item" data-commit-row="(\d+)"[^>]*>([\s\S]*?)<\/div>/g),match=>match[2]);
   assert.equal(rows.length,3);
-  assert.match(rows[0],/<\/label><details class="commit-branch-details"><summary>3 Branches<\/summary>/);
+  assert.match(rows[0],/<\/label><details class="commit-branch-details"><summary title="main\nfeature\/&lt;test>\nthird">3 Branches<\/summary>/);
   assert.match(rows[0],/<li>feature\/&lt;test><\/li>/);
   assert.doesNotMatch(rows[0],/<details[^>]* open/);
-  assert.match(rows[1],/<summary>1 Branch<\/summary><ul><li>single<\/li><\/ul>/);
+  assert.match(rows[1],/<summary title="single">1 Branch<\/summary><ul><li>single<\/li><\/ul>/);
   assert.doesNotMatch(rows[2],/<details/);
   assert(h.choices.every(choice=>choice.checked));
 });

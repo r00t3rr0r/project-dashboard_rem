@@ -273,21 +273,17 @@ test('feature branch commits across days and imports extend one task without cha
   assert.equal(data.getCalendarEvents().length,3);
 });
 
-test('ambiguous feature branches require an explicit choice before saving',async()=>{
+test('multiple feature branches use the first and expose all branch names as a tooltip',async()=>{
   const {h,element,created}=modalHarness();
   const item={sha:'a'.repeat(40),date:'2020-01-01T10:00:00Z',employeeId:'alice',author:'Alice',message:'Original',
-    title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['main','feature/a','feature/b']};
+    title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['main','feature/b','feature/a']};
   h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[item]});
   element('qtm-project').value='p1';
   element('qtm-github-assignee-'+item.sha).value='alice';
-  element('qt-submit').click();
-  assert.equal(created.length,0);
-  assert.match(element('qtm-ai-status').textContent,/mehrdeutigen Commit/);
-  const select=element('qtm-github-branch-'+item.sha);
-  select.value='feature/b';
-  select.listeners.change();
-  element('qtm-github-assignee-'+item.sha).value='alice';
   assert.equal(element('qtm-title').value,'feature/b');
+  const html=element('qtm-github-daily-drafts').innerHTML;
+  assert.match(html,/<summary title="main\nfeature\/b\nfeature\/a">3 Branches<\/summary>/);
+  assert.doesNotMatch(html,/qtm-github-branch-/);
   element('qt-submit').click();
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(created[0].githubCommitImport.taskBranch,'feature/b');
@@ -302,11 +298,11 @@ test('regrouping requires confirmation before discarding edited task fields',()=
   title.value='Eigener Titel';
   title.listeners.input();
   h.window.confirm=()=>false;
-  const select=element('qtm-github-branch-'+item.sha);
-  select.value='feature/b';
+  const select=element('qtm-github-assignee-'+item.sha);
+  select.value='bob';
   select.listeners.change();
   assert.equal(title.value,'Eigener Titel');
-  assert.equal(select.value,'');
+  assert.equal(select.value,'alice');
 });
 
 test('an existing branch task must be editable before it can be extended',async()=>{

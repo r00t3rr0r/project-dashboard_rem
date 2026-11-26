@@ -274,7 +274,7 @@ Liefert die Branch-Liste (100 pro Seite) analog GitHub REST API v3.
 Im Dialog "Neue Aufgabe" laedt "Neue GitHub-Commits abrufen" alle Seiten der
 Historien aller Repository-Branches bis zum Abrufzeitpunkt. Gemeinsame Commits
 werden anhand ihrer SHA zusammengefasst; ihre Branches sind in der Vorschau
-ueber eine einklappbare Anzahl einsehbar.
+ueber einen Tooltip und eine einklappbare Anzahl einsehbar.
 Fehler beim Laden der Branches oder einer Historie werden angezeigt; unvollstaendige
 Ergebnisse werden nicht als vollstaendig ausgegeben. Bereits im Projekt
 dokumentierte SHAs aus QuickTask oder AI Conf werden ausgelassen; nicht
@@ -283,9 +283,9 @@ Uebersetzung zeigt eine Vorschau die Originalnachrichten, Autoren und Zeitpunkte
 Standardmaessig sind die neuesten 20 ausgewaehlt. Mit lokalem Zeitraum und
 Anzahl kann die Auswahl neu gesetzt und danach einzeln angepasst werden; eine
 leere Anzahl bedeutet alle Treffer. Erst die bestaetigte Auswahl wird uebersetzt.
-Ein einzelner zugehoeriger Feature-Branch wird als Aufgaben-Branch vorgeschlagen;
-bei mehreren Feature-Branches muss einer ausgewaehlt werden. Branch-Zugehoerigkeit
-belegt nicht, wo ein Commit urspruenglich erstellt wurde. Fuer jeden ausgewaehlten
+Der erste zugehoerige Feature-Branch in der von GitHub gelieferten Reihenfolge
+wird automatisch als Aufgaben-Branch verwendet. Branch-Zugehoerigkeit
+belegt nicht, wo ein Commit urspruenglich erstellt wurde. Fuer jeden zugeordneten
 Feature-Branch wird pro Projekt und Repository eine Aufgabe mit dem Branch-Namen
 angelegt; spaetere Commits werden als Teilaufgaben hinzugefuegt. Bestehende
 Branch-Aufgaben behalten Titel und Status, alte Tagesaufgaben bleiben unveraendert.
@@ -294,13 +294,12 @@ Standard-Branch im Projekt nicht hinterlegt, wird er ueber GitHub ermittelt.
 Im Arbeitsfluss sind die zugeordneten Commits an ihren jeweiligen Tagen sichtbar;
 ein Commit belegt keine Arbeitsdauer. Ollama
 uebersetzt die vollstaendige Nachricht unabhaengig von der Ausgangssprache,
-auch aus dem Tuerkischen, nach Deutsch und Englisch. Fuer jeden lokalen
-Commit-Tag entsteht eine eigene erledigte Aufgabe mit den ausgewaehlten Commits
-als erledigten Teilaufgaben. Titel, Beschreibung und Teilaufgaben koennen pro
-Tag bearbeitet werden. Der Titelvorschlag nutzt bis zu zwei verschiedene
-deutsche Commit-Titel und verweist gegebenenfalls auf weitere; jede
-Teilaufgabe muss die zugehoerige vollstaendige SHA enthalten. Planung, Aufwand,
-Labels und hochgeladene Dateien gelten fuer jede Tagesaufgabe. Vor dem
+auch aus dem Tuerkischen, nach Deutsch und Englisch. Neue Branch-Aufgaben und
+Tagesaufgaben werden als erledigt angelegt; Commits werden erledigte Teilaufgaben.
+Fuer Tagesaufgaben nutzt der Titelvorschlag bis zu zwei verschiedene deutsche
+Commit-Titel und verweist gegebenenfalls auf weitere; jede Teilaufgabe muss die
+zugehoerige vollstaendige SHA enthalten. Planung, Aufwand, Labels und
+hochgeladene Dateien gelten fuer neu angelegte Aufgaben. Vor dem
 Speichern muss jeder Commit einem zulaessigen Mitarbeiter zugeordnet werden.
 Eine eindeutige Uebereinstimmung zwischen GitHub-Autorenlogin und
 GitHub-Benutzername bzw. Profillink im Mitarbeiterprofil wird vorgeschlagen;

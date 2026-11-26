@@ -462,6 +462,10 @@ function localDayKey(date){
 function commitBranchList(commit){
   return Array.isArray(commit.branches)&&commit.branches.length?commit.branches:(commit.branch?[commit.branch]:[]);
 }
+function renderCommitBranchDetails(commit){
+  var branches=commitBranchList(commit);
+  return branches.length?'<details class="commit-branch-details"><summary title="'+escapeAttr(branches.join('\n'))+'">'+branches.length+' Branch'+(branches.length===1?'':'es')+'</summary><ul>'+branches.map(function(name){return '<li>'+escapeHtml(name)+'</li>';}).join('')+'</ul></details>':'';
+}
 function renderCommitSelection(host,commits,onTranslate,meta){
   var ordered=commits.slice().sort(function(a,b){return Date.parse(b.date)-Date.parse(a.date);});
   var repository=meta&&meta.repository?meta.repository:'';
@@ -482,8 +486,7 @@ function renderCommitSelection(host,commits,onTranslate,meta){
       rows+='<div class="commit-day-head" data-commit-day-head="'+day+'"><span class="material-symbols-rounded" aria-hidden="true">calendar_today</span><strong>'+escapeHtml(date.toLocaleDateString('de-DE',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'}))+'</strong><span class="commit-day-count">'+count+' Commit'+(count===1?'':'s')+'</span><button type="button" class="btn btn-secondary" data-commit-day="'+day+'">Tag wählen</button></div>';
       lastDay=day;
     }
-    var commitBranches=commitBranchList(commit);
-    var branchDetails=commitBranches.length?'<details class="commit-branch-details"><summary>'+commitBranches.length+' Branch'+(commitBranches.length===1?'':'es')+'</summary><ul>'+commitBranches.map(function(name){return '<li>'+escapeHtml(name)+'</li>';}).join('')+'</ul></details>':'';
+    var branchDetails=renderCommitBranchDetails(commit);
     rows+='<div class="commit-selection-item" data-commit-row="'+index+'" data-commit-day-of="'+day+'"><label class="commit-selection-label"><input type="checkbox" data-commit-choice="'+escapeAttr(commit.sha)+'"'+(index<20?' checked':'')+'><span><strong>'+escapeHtml(commit.message.split('\n')[0]||'(Ohne Nachricht)')+'</strong><span class="commit-item-meta"><time>'+escapeHtml(date.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}))+'</time><span>'+escapeHtml(commit.author)+'</span><code>'+escapeHtml(commit.sha.slice(0,7))+'</code></span><small class="commit-selection-message">'+escapeHtml(commit.message)+'</small></span></label>'+branchDetails+'</div>';
   });
   host.innerHTML='<fieldset class="commit-selection"><legend>Commits vor der Uebersetzung auswaehlen</legend>'
@@ -849,6 +852,7 @@ window.AIConfModule={render:render,getConfiguration:readConfig};
 window.AIConfModule.translateCommitBatch=translateCommitBatch;
 window.AIConfModule.commitCalendarData=commitCalendarData;
 window.AIConfModule.renderCommitSelection=renderCommitSelection;
+window.AIConfModule.renderCommitBranchDetails=renderCommitBranchDetails;
 window.AIConfModule.fetchRecentCommits=fetchRecentCommits;
 window.AIConfModule.fetchGitHubDefaultBranch=fetchGitHubDefaultBranch;
 window.addEventListener('localOllamaStatusChanged',function(event){syncActivityUI(event.detail);});
