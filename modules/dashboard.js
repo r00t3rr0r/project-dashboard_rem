@@ -846,34 +846,37 @@
       return;
     }
 
-    var blockers = applyBlockerFilters(allRows);
+    var showFilters = activeRows.length > 1;
+    var blockers = showFilters ? applyBlockerFilters(allRows) : activeRows;
 
     var html = '';
     html += '<div class="dashboard-notice-head">';
     html += '  <span class="dashboard-notice-kicker">Blocker-Register</span>';
     html += '  <span class="dashboard-notice-count" title="Angezeigte / alle Einträge" aria-label="' + blockers.length + ' von ' + allRows.length + ' Einträgen angezeigt">' + blockers.length + '/' + allRows.length + '</span>';
     html += '</div>';
-    html += '<div class="dashboard-blocker-controls">';
-    html += '  <label>Zeitraum <select data-blocker-filter="scope">';
-    html += '    <option value="active"' + (blockerFilterState.scope === 'active' ? ' selected' : '') + '>Aktiv</option>';
-    html += '    <option value="last30"' + (blockerFilterState.scope === 'last30' ? ' selected' : '') + '>Letzte 30 Tage</option>';
-    html += '    <option value="all"' + (blockerFilterState.scope === 'all' ? ' selected' : '') + '>Alle</option>';
-    html += '  </select></label>';
-    html += '  <label>Ziel <select data-blocker-filter="target">';
-    html += '    <option value="all"' + (blockerFilterState.target === 'all' ? ' selected' : '') + '>Aufgaben + Projekte</option>';
-    html += '    <option value="task"' + (blockerFilterState.target === 'task' ? ' selected' : '') + '>Nur Aufgaben</option>';
-    html += '    <option value="project"' + (blockerFilterState.target === 'project' ? ' selected' : '') + '>Nur Projekte</option>';
-    html += '  </select></label>';
-    html += '  <label>Projekt <select data-blocker-filter="projectId">';
-    html += '    <option value="all">Alle Projekte</option>';
-    html +=      buildProjectFilterOptions(allRows);
-    html += '  </select></label>';
-    html += '  <label>Sortierung <select data-blocker-filter="sort">';
-    html += '    <option value="newest"' + (blockerFilterState.sort === 'newest' ? ' selected' : '') + '>Neueste zuerst</option>';
-    html += '    <option value="oldest"' + (blockerFilterState.sort === 'oldest' ? ' selected' : '') + '>Älteste zuerst</option>';
-    html += '    <option value="longest"' + (blockerFilterState.sort === 'longest' ? ' selected' : '') + '>Längste Dauer zuerst</option>';
-    html += '  </select></label>';
-    html += '</div>';
+    if (showFilters) {
+      html += '<div class="dashboard-blocker-controls">';
+      html += '  <label>Zeitraum <select data-blocker-filter="scope">';
+      html += '    <option value="active"' + (blockerFilterState.scope === 'active' ? ' selected' : '') + '>Aktiv</option>';
+      html += '    <option value="last30"' + (blockerFilterState.scope === 'last30' ? ' selected' : '') + '>Letzte 30 Tage</option>';
+      html += '    <option value="all"' + (blockerFilterState.scope === 'all' ? ' selected' : '') + '>Alle</option>';
+      html += '  </select></label>';
+      html += '  <label>Ziel <select data-blocker-filter="target">';
+      html += '    <option value="all"' + (blockerFilterState.target === 'all' ? ' selected' : '') + '>Aufgaben + Projekte</option>';
+      html += '    <option value="task"' + (blockerFilterState.target === 'task' ? ' selected' : '') + '>Nur Aufgaben</option>';
+      html += '    <option value="project"' + (blockerFilterState.target === 'project' ? ' selected' : '') + '>Nur Projekte</option>';
+      html += '  </select></label>';
+      html += '  <label>Projekt <select data-blocker-filter="projectId">';
+      html += '    <option value="all">Alle Projekte</option>';
+      html +=      buildProjectFilterOptions(allRows);
+      html += '  </select></label>';
+      html += '  <label>Sortierung <select data-blocker-filter="sort">';
+      html += '    <option value="newest"' + (blockerFilterState.sort === 'newest' ? ' selected' : '') + '>Neueste zuerst</option>';
+      html += '    <option value="oldest"' + (blockerFilterState.sort === 'oldest' ? ' selected' : '') + '>Älteste zuerst</option>';
+      html += '    <option value="longest"' + (blockerFilterState.sort === 'longest' ? ' selected' : '') + '>Längste Dauer zuerst</option>';
+      html += '  </select></label>';
+      html += '</div>';
+    }
 
     if (!blockers.length) {
       html += '<p class="text-muted">Keine Einträge für den gewählten Filter.</p>';

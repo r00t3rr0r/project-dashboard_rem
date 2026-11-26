@@ -4260,22 +4260,28 @@ body.light-mode .kanban-pill-chain .material-symbols-rounded {
 
 .dashboard-blocker-controls {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr));
+  gap: 0.45rem;
   margin-bottom: 0.75rem;
 }
 
 .dashboard-blocker-controls label {
   display: grid;
-  gap: 0.25rem;
-  font-size: 0.74rem;
+  gap: 0.2rem;
+  min-width: 0;
+  font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-secondary);
 }
 
 .dashboard-blocker-controls select {
+  width: 100%;
+  min-width: 0;
   min-height: 2rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.55rem;
+  font-size: 0.78rem;
 }
 
 .dashboard-blocker-zone .dashboard-notice-list {

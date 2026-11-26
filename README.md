@@ -20,7 +20,7 @@ Im „Projekt-Fortschritt“ erscheinen Aufgaben mit mehreren Projektzuordnungen
 Projekt, Aufgabe und Teilaufgaben sind dort als getrennte Ebenen gekennzeichnet. Bei Aufgaben mit importierten GitHub-Commits werden die neuesten zugeordneten Commits angezeigt; weitere lassen sich aufklappen und öffnen die jeweilige Aufgabendetailansicht. Die Statusanimation berücksichtigt die Systemeinstellung für reduzierte Bewegung.
 Projektkarten mit aktiven Aufgaben und ihre Fortschrittsfelder zeigen einen umlaufenden Lichtimpuls; bei reduzierter Bewegung bleibt die Kennzeichnung statisch.
 
-Das Blocker-Register trennt Grund, Projekt und verursachenden Blocker optisch. Bei aktiven Blockern läuft die Dauer sekundengenau seit Beginn; bei aufgelösten Einträgen zeigt sie die abgeschlossene Dauer. Fehlt ein gültiger Zeitpunkt, wird die Dauer als nicht verfügbar gekennzeichnet.
+Das Blocker-Register trennt Grund, Projekt und verursachenden Blocker optisch. Bei aktiven Blockern läuft die Dauer sekundengenau seit Beginn; bei aufgelösten Einträgen zeigt sie die abgeschlossene Dauer. Fehlt ein gültiger Zeitpunkt, wird die Dauer als nicht verfügbar gekennzeichnet. Filter und Sortierung stehen ab zwei aktiven Blockern zur Verfügung; bei nur einem aktiven Blocker wird dieser unabhängig von gespeicherten Filtern angezeigt.
 
 ## Repository-Verwaltung (Projekte-Seite)
 

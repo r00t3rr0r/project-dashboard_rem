@@ -74,11 +74,40 @@ test('resolved history has a fixed duration and no live ticker or resolve action
       {from: '2026-11-25T10:00:00Z', until: '2026-11-25T11:05:06Z', reason: 'Warten', resolution: 'Erledigt', blockerTitle: 'Ehemaliger Blocker'},
       {from: '2026-11-26T11:00:00Z', reason: 'Offen'}
     ]
-  }], []);
+  }, {id: 'second', title: 'Weitere Aufgabe', blocked: true, blockedAt: '2026-11-26T11:30:00Z'}], []);
   h.api.updateBlockerFilter('scope', 'all');
   assert.match(h.host.innerHTML, /Dauer<\/span>\s*<span class="blocker-card-duration">01:05:06/);
   assert.match(h.host.innerHTML, /blocker-detail-resolution"><dt>Auflösung<\/dt><dd>Erledigt/);
   assert.match(h.host.innerHTML, /blocker-detail-blocker"><dt>Blocker<\/dt><dd>Ehemaliger Blocker/);
-  assert.equal((h.host.innerHTML.match(/data-blocker-start=/g) || []).length, 1);
-  assert.equal((h.host.innerHTML.match(/data-resolve-blocker=/g) || []).length, 1);
+  assert.equal((h.host.innerHTML.match(/data-blocker-start=/g) || []).length, 2);
+  assert.equal((h.host.innerHTML.match(/data-resolve-blocker=/g) || []).length, 2);
+});
+
+test('filters appear only with multiple active blockers and do not hide the sole active blocker', () => {
+  const tasks = [
+    {id: 'one', title: 'Erster', blocked: true, blockedAt: '2026-11-26T10:00:00Z'},
+    {id: 'two', title: 'Zweiter', blocked: true, blockedAt: '2026-11-26T11:00:00Z'}
+  ];
+  const h = makeDashboard(tasks, []);
+  h.api.renderDashboardBlockers();
+  assert.equal((h.host.innerHTML.match(/data-blocker-filter=/g) || []).length, 4);
+  h.api.updateBlockerFilter('target', 'project');
+  assert.match(h.host.innerHTML, /Keine Einträge für den gewählten Filter/);
+
+  tasks[1].blocked = false;
+  h.api.renderDashboardBlockers();
+  assert.doesNotMatch(h.host.innerHTML, /data-blocker-filter=/);
+  assert.match(h.host.innerHTML, /Erster/);
+  assert.doesNotMatch(h.host.innerHTML, /Keine Einträge/);
+
+  tasks[1].blocked = true;
+  h.api.renderDashboardBlockers();
+  assert.equal((h.host.innerHTML.match(/data-blocker-filter=/g) || []).length, 4);
+  assert.match(h.host.innerHTML, /value="project" selected/);
+  assert.match(h.host.innerHTML, /Keine Einträge für den gewählten Filter/);
+
+  tasks[0].blocked = false;
+  tasks[1].blocked = false;
+  h.api.renderDashboardBlockers();
+  assert.equal(h.host.innerHTML, '');
 });
