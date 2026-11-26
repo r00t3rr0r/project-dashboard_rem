@@ -1134,7 +1134,7 @@ function refreshAiHealthStatus(force){
   }).catch(function(err){
     AI_HEALTH_STATE.checkedAt=new Date().toISOString();
     AI_HEALTH_STATE.backendStatus='error';
-    AI_HEALTH_STATE.ollamaStatus='unknown';
+    AI_HEALTH_STATE.ollamaStatus=provider==='ollama'?'unknown':'error';
     AI_HEALTH_STATE.models=[];
     AI_HEALTH_STATE.error=err&&err.message?err.message:String(err);
     AI_HEALTH_STATE.loading=false;
@@ -3389,11 +3389,11 @@ function renderInfoHub(project,flow){
     +(window.LocalOllama&&window.LocalOllama.providerSelectHtml?window.LocalOllama.providerSelectHtml('ai-provider-'+project.id):'')
     +'<div class="ai-health-grid">'
     +(provider==='ollama'?'<p>Backend: <span class="ai-health-pill '+statusClassFromState(AI_HEALTH_STATE.backendStatus)+'">'+statusTextFromState(AI_HEALTH_STATE.backendStatus)+'</span></p>':'')
-    +'<p>'+escapeHtml(provider==='ollama'?'Ollama':provider==='claude'?'Claude-Schluessel':'ChatGPT-Schluessel')+': <span class="ai-health-pill '+statusClassFromState(AI_HEALTH_STATE.ollamaStatus)+'">'+statusTextFromState(AI_HEALTH_STATE.ollamaStatus)+'</span></p>'
+    +'<p>'+escapeHtml(provider==='ollama'?'Ollama':provider==='claude'?'Claude':'ChatGPT')+': <span class="ai-health-pill '+statusClassFromState(AI_HEALTH_STATE.ollamaStatus)+'">'+statusTextFromState(AI_HEALTH_STATE.ollamaStatus)+'</span></p>'
     +(provider==='ollama'?'<p>Modell: <span class="ai-health-pill '+statusClassFromState(modelState)+'">'+statusTextFromState(modelState)+'</span></p>':'')
     +'</div>'
     +'<p class="text-muted mt-1">Letzter Health-Check: '+(AI_HEALTH_STATE.checkedAt?formatDateTime(AI_HEALTH_STATE.checkedAt):'n/a')+(AI_HEALTH_STATE.endpoint?' · Endpoint: '+escapeHtml(AI_HEALTH_STATE.endpoint):'')+'</p>'
-    +(provider==='ollama'?'<label for="ai-model-'+escapeHtml(project.id)+'" class="text-muted">Ollama-Modell</label><select id="ai-model-'+escapeHtml(project.id)+'">'+renderModelOptions(selectedModel)+'</select>':'<p class="text-muted">Cloud-Modell wird durch die KI-Schnittstelle vorgegeben. Der Check prueft nur, ob ein Schluessel hinterlegt ist.</p>')
+    +(provider==='ollama'?'<label for="ai-model-'+escapeHtml(project.id)+'" class="text-muted">Ollama-Modell</label><select id="ai-model-'+escapeHtml(project.id)+'">'+renderModelOptions(selectedModel)+'</select>':'<p class="text-muted">Das Cloud-Modell wird unter AI Conf ausgewaehlt. Der Check ruft die Modellliste des Anbieters ab.</p>')
     +'<div class="project-actions-inline mt-1">'
     +'<button class="btn btn-secondary" data-action="edit-ai-knowledge" data-id="'+escapeHtml(project.id)+'">Wissensdatei bearbeiten</button>'
     +'<button class="btn btn-secondary" data-action="check-ai-health" data-id="'+escapeHtml(project.id)+'">Verbindung pruefen</button>'

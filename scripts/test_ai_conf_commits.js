@@ -7,9 +7,9 @@ const {test} = require('node:test');
 function makeHarness() {
   const project = {id:'p1',title:'Testprojekt',github:{owner:'acme',repo:'app'}};
   const tasks = [], requests = [], notifications = [], openedDrafts = [];
-  const controls={},choices=[];
+  const controls={},choices=[],listeners={};
   function control(selector){
-    return controls[selector]||(controls[selector]={value:selector==='[data-commit-limit]'?'20':'',textContent:'',disabled:false,listeners:{},
+    return controls[selector]||(controls[selector]={value:selector==='[data-commit-limit]'?'20':'',textContent:'',disabled:false,listeners:{},dataset:{},style:{},setAttribute(){},classList:{add(){},remove(){}},
       addEventListener(event,listener){this.listeners[event]=listener;},
       click(){if(this.listeners.click)this.listeners.click.call(this);}});
   }
@@ -29,11 +29,12 @@ function makeHarness() {
   const select = {value:project.id,disabled:false};
   const button = {disabled:false};
   const root = {
+    isConnected:true,
     querySelector:selector=>selector==='#ai-assistant-project'?select:selector==='#ai-assistant-import'?button:host,
     querySelectorAll:selector=>selector==='[data-assistant]'?[button]:[]
   };
   const window = {
-    addEventListener(){},
+    addEventListener(name,fn){listeners[name]=fn;},
     dispatchEvent(){},
     DataLayer:{getTasks:()=>tasks,getProjects:()=>[project],isTaskLinkedToProject:(task,id)=>task.projectId===id,createTask:task=>{tasks.push(task);return task;}},
     AuthManager:{getCurrentUser:()=>({github:{privateAccessToken:'test-token'}})},
@@ -48,10 +49,10 @@ function makeHarness() {
   };
   const source = fs.readFileSync(path.join(__dirname,'../modules/ai-conf.js'),'utf8').replace(
     'window.AIConfModule={render:render,getConfiguration:readConfig};',
-    'window.AIConfModule={fetchProjectKnowledge,fetchRecentCommits,translateCommitBatch,groupCommitTopics,importCommitTask,importCommitTopicTasks,importedCommitShas,runCommitAssistant,saveConfig,getConfiguration:readConfig,setDraft:function(value){assistantDraft=value;}};'
+    'window.AIConfModule={fetchProjectKnowledge,fetchRecentCommits,translateCommitBatch,groupCommitTopics,importCommitTask,importCommitTopicTasks,importedCommitShas,runCommitAssistant,refreshModels,bindEvents,setModelProvider:function(provider){activeModelProvider=provider;},saveConfig,getConfiguration:readConfig,setDraft:function(value){assistantDraft=value;}};'
   );
   vm.runInNewContext(source,sandbox);
-  return {api:window.AIConfModule,window,sandbox,project,tasks,requests,notifications,openedDrafts,root,host,select,button,controls,choices};
+  return {api:window.AIConfModule,window,sandbox,project,tasks,requests,notifications,openedDrafts,root,host,select,button,controls,choices,listeners};
 }
 async function translateSelection(harness){
   harness.host.querySelector('[data-commit-translate]').click();
@@ -157,6 +158,59 @@ test('model selection survives string-backed storage and reload',()=>{
   assert.equal(JSON.parse(stored).routing,'fallback');
   assert.equal(harness.api.getConfiguration().primaryModel,'text-primary');
   assert.equal(harness.api.getConfiguration().fallbackModel,'text-fallback');
+});
+
+test('switching providers while a model request is pending displays only the new provider',async()=>{
+  const h=makeHarness(),pending={};
+  const config={providerModels:{ollama:{primaryModel:'local-model'},openai:{primaryModel:'gpt-model'}}};
+  h.window.DataLayer.getStoredValue=()=>config;
+  h.window.LocalOllama.health=provider=>new Promise(resolve=>{pending[provider]=resolve;});
+  h.root.querySelector=selector=>selector==='.ai-conf-layout'?{}:h.host.querySelector(selector);
+  h.sandbox.document.getElementById=()=>h.root;
+  h.api.setModelProvider('ollama');
+  const old=h.api.refreshModels(h.root,config,true);
+  h.listeners.aiProviderChanged({detail:{provider:'openai'}});
+  pending.openai({body:{status:'ok',models:[{name:'gpt-model'}]}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(h.controls['#ai-primary-model'].value,'gpt-model');
+  pending.ollama({body:{status:'ok',models:[{name:'local-model'}]}});
+  await old;
+  assert.equal(h.controls['#ai-primary-model'].value,'gpt-model');
+  assert(!h.controls['#ai-primary-model'].innerHTML.includes('local-model'));
+});
+
+test('model list errors are visible rather than reporting a successful connection',async()=>{
+  const h=makeHarness();
+  h.root.querySelector=selector=>h.host.querySelector(selector);
+  h.api.setModelProvider('openai');
+  h.window.LocalOllama.health=async()=>({body:{status:'error',error:'API-Schluessel abgelehnt'}});
+  await h.api.refreshModels(h.root,{},true);
+  assert.match(h.controls['#ai-conf-runtime-state'].outerHTML,/API-Schluessel abgelehnt/);
+});
+
+test('model selections are saved independently per provider and temperature zero is preserved',async()=>{
+  const h=makeHarness(),config={templates:[],primaryModel:'local-old'};
+  let stored;
+  h.window.DataLayer.setStoredValue=(_key,value)=>{stored=JSON.parse(value);};
+  h.window.LocalOllama.health=async provider=>({body:{status:'ok',models:[{name:provider==='ollama'?'local-new':'gpt-new'}]}});
+  h.root.querySelector=selector=>selector==='.ai-conf-layout'?{}:h.host.querySelector(selector);
+  h.root.querySelectorAll=()=>[];
+  h.sandbox.document.getElementById=()=>h.root;
+  h.api.setModelProvider('ollama');
+  h.api.bindEvents(h.root,config,[]);
+  await h.api.refreshModels(h.root,config,true);
+  h.controls['#ai-primary-model'].value='local-new';
+  h.controls['#ai-primary-model'].listeners.change.call(h.controls['#ai-primary-model']);
+  h.listeners.aiProviderChanged({detail:{provider:'openai'}});
+  await new Promise(resolve=>setImmediate(resolve));
+  h.controls['#ai-primary-model'].value='gpt-new';
+  h.controls['#ai-primary-model'].listeners.change.call(h.controls['#ai-primary-model']);
+  h.controls['#ai-temperature'].value='0';
+  h.controls['#ai-conf-save'].click();
+  assert.equal(stored.primaryModel,'local-new');
+  assert.equal(stored.providerModels.ollama.primaryModel,'local-new');
+  assert.equal(stored.providerModels.openai.primaryModel,'gpt-new');
+  assert.equal(stored.temperature,0);
 });
 
 test('AI workflows retrieve project knowledge only for admins through the protected endpoint',async()=>{

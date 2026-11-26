@@ -5,8 +5,10 @@
 
 var STORAGE_KEY='pd_ai_configuration';
 var healthRequestSequence=0;
-var healthCheckPending=false;
 var lastHealthCheckAt=0;
+var activeModelProvider='';
+var activeModelConfig=null;
+var modelDraftSelections={};
 var assistantDraft={projectId:'',mode:'',ownerId:'',items:[]};
 var routineDraft={projectId:'',name:'',description:'',target:'server',runtime:'bash',inputs:'',script:'',questions:[],status:'draft'};
 var githubDraft={questions:[],answers:{},data:null};
@@ -57,16 +59,18 @@ function saveConfig(config){
   window.dispatchEvent(new CustomEvent('aiConfigurationChanged',{detail:config}));
 }
 function modelName(model){return String(model&& (model.name||model.model)||'').trim();}
-function getModels(){
-  if(!window.LocalOllama||!window.LocalOllama.health)return Promise.resolve([]);
-  return window.LocalOllama.health().then(function(result){
+function getModels(provider){
+  if(!window.LocalOllama||!window.LocalOllama.health)return Promise.reject(new Error('KI-Schnittstelle ist nicht verfuegbar.'));
+  return window.LocalOllama.health(provider).then(function(result){
     var body=result&&result.body?result.body:result||{};
+    if(body.status==='error')throw new Error(body.error||'Verbindung fehlgeschlagen.');
+    if(!Array.isArray(body.models))throw new Error('Ungueltige Modellliste.');
     return Array.isArray(body.models)?body.models.map(modelName).filter(Boolean):[];
   });
 }
 function statusLabel(models,error,checking){
   if(checking)return '<span class="ai-conf-state is-checking" id="ai-conf-runtime-state">Verbindung wird geprueft</span>';
-  if(error)return '<span class="ai-conf-state is-error" id="ai-conf-runtime-state">Ollama nicht erreichbar</span>';
+  if(error)return '<span class="ai-conf-state is-error" id="ai-conf-runtime-state" role="alert">'+escapeHtml(error)+'</span>';
   if(!models.length)return '<span class="ai-conf-state is-warning" id="ai-conf-runtime-state">Keine Modelle erkannt</span>';
   return '<span class="ai-conf-state is-ready" id="ai-conf-runtime-state">'+models.length+' Modell'+(models.length===1?'':'e')+' bereit</span>';
 }
@@ -95,7 +99,7 @@ if(window.DataLayer&&typeof window.DataLayer.on==='function'){
   });
 }
 function modelOptions(models,selected){
-  return '<option value="">Automatisch zuweisen</option>'+models.map(function(model){return '<option value="'+escapeHtml(model)+'"'+(model===selected?' selected':'')+'>'+escapeHtml(model)+'</option>';}).join('');
+  return '<option value="">Automatisch zuweisen</option>'+(selected&&models.indexOf(selected)===-1?'<option value="'+escapeAttr(selected)+'" selected>'+escapeHtml(selected)+' (nicht in der Modellliste)</option>':'')+models.map(function(model){return '<option value="'+escapeAttr(model)+'"'+(model===selected?' selected':'')+'>'+escapeHtml(model)+'</option>';}).join('');
 }
 function getProjects(){
   if(!window.DataLayer||typeof window.DataLayer.getProjects!=='function')return [];
@@ -887,34 +891,40 @@ function importAssistantTasks(root){
   renderAssistantDraft(root);
   notify(created.length+' Aufgaben fuer '+projectTitle(project)+' angelegt.',false);
 }
+function modelSelection(config,provider){
+  if(modelDraftSelections[provider])return modelDraftSelections[provider];
+  var stored=config.providerModels&&config.providerModels[provider];
+  if(!stored)stored=provider==='ollama'?config:{};
+  return modelDraftSelections[provider]={primaryModel:String(stored.primaryModel||''),fallbackModel:String(stored.fallbackModel||'')};
+}
 function updateModelSelect(select,models,configuredValue){
   if(!select)return;
-  var selected=select.dataset.modelsLoaded==='true'?select.value:configuredValue;
-  select.innerHTML=modelOptions(models,selected);
-  select.value=models.indexOf(selected)!==-1?selected:'';
+  select.innerHTML=modelOptions(models,configuredValue);
+  select.value=configuredValue||'';
   select.dataset.modelsLoaded='true';
 }
 function refreshModels(root,config,showChecking){
-  if(healthCheckPending)return;
-  healthCheckPending=true;
   var requestId=++healthRequestSequence;
+  var provider=activeModelProvider||'ollama';
   var state=root.querySelector('#ai-conf-runtime-state');
   var refreshButton=root.querySelector('#ai-conf-refresh');
   if(state&&showChecking){state.className='ai-conf-state is-checking';state.textContent='Verbindung wird geprueft';}
   if(refreshButton){refreshButton.disabled=true;refreshButton.classList.add('is-loading');}
-  getModels().then(function(models){
+  return getModels(provider).then(function(models){
     if(requestId!==healthRequestSequence||!root.isConnected)return;
-    updateModelSelect(root.querySelector('#ai-primary-model'),models,config.primaryModel||'');
-    updateModelSelect(root.querySelector('#ai-fallback-model'),models,config.fallbackModel||'');
+    var selection=modelSelection(config,provider);
+    updateModelSelect(root.querySelector('#ai-primary-model'),models,selection.primaryModel);
+    updateModelSelect(root.querySelector('#ai-fallback-model'),models,selection.fallbackModel);
     var current=root.querySelector('#ai-conf-runtime-state');
     if(current)current.outerHTML=statusLabel(models,'',false);
   }).catch(function(error){
     if(requestId!==healthRequestSequence||!root.isConnected)return;
+    updateModelSelect(root.querySelector('#ai-primary-model'),[], '');
+    updateModelSelect(root.querySelector('#ai-fallback-model'),[], '');
     var current=root.querySelector('#ai-conf-runtime-state');
     if(current)current.outerHTML=statusLabel([],error&&error.message?error.message:'Verbindung fehlgeschlagen',false);
   }).finally(function(){
     if(requestId!==healthRequestSequence)return;
-    healthCheckPending=false;
     lastHealthCheckAt=Date.now();
     var button=root.querySelector('#ai-conf-refresh');
     if(button){button.disabled=false;button.classList.remove('is-loading');}
@@ -951,10 +961,13 @@ function syncActivityUI(status){
   if(stop)stop.disabled=!busy||current.status==='stopping';
 }
 function renderWorkspace(root,config,models,error,checking){
-  var selectedPrimary=config.primaryModel||'';
-  var selectedFallback=config.fallbackModel||'';
+  var provider=window.LocalOllama&&window.LocalOllama.getProvider?window.LocalOllama.getProvider():'ollama';
+  activeModelProvider=provider;activeModelConfig=config;
+  var selection=modelSelection(config,provider);
+  var selectedPrimary=selection.primaryModel;
+  var selectedFallback=selection.fallbackModel;
   root.innerHTML=''
-    +'<div class="ai-conf-statusbar"><div><strong>Ollama Laufzeit</strong><span>Lokale Modelle und intelligente Zuweisung</span></div>'+statusLabel(models,error,checking)+'<button class="toolbar-icon-btn" type="button" id="ai-conf-refresh" title="Modelle neu laden" aria-label="Modelle neu laden"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button></div>'
+    +'<div class="ai-conf-statusbar"><div><strong>KI-Laufzeit</strong><span>Modelle der gewaehlten Schnittstelle</span></div>'+statusLabel(models,error,checking)+'<button class="toolbar-icon-btn" type="button" id="ai-conf-refresh" title="Modelle neu laden" aria-label="Modelle neu laden"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button></div>'
     +'<div class="ai-conf-layout">'
       +'<section class="ai-conf-panel ai-conf-runtime"><div class="ai-conf-panel-head"><div><p class="section-kicker">Modellrouting</p><h2>Auswahl &amp; Fallback</h2></div><span class="material-symbols-rounded" aria-hidden="true">account_tree</span></div>'
         +'<div class="ai-conf-fields">'
@@ -962,7 +975,7 @@ function renderWorkspace(root,config,models,error,checking){
           +'<label class="form-group"><span>Routing-Modus</span><select id="ai-routing"><option value="auto"'+(config.routing==='auto'?' selected':'')+'>Automatisch nach Aufgabe</option><option value="fixed"'+(config.routing==='fixed'?' selected':'')+'>Primärmodell erzwingen</option><option value="fallback"'+(config.routing==='fallback'?' selected':'')+'>Primärmodell mit Fallback</option></select></label>'
           +'<label class="form-group"><span>Primärmodell</span><select id="ai-primary-model">'+modelOptions(models,selectedPrimary)+'</select></label>'
           +'<label class="form-group"><span>Fallback-Modell</span><select id="ai-fallback-model">'+modelOptions(models,selectedFallback)+'</select></label>'
-          +'<label class="form-group"><span>Temperatur <output id="ai-temperature-value">'+escapeHtml(config.temperature)+'</output></span><input id="ai-temperature" type="range" min="0" max="1" step="0.1" value="'+escapeHtml(config.temperature)+'"></label>'
+          +'<label class="form-group"><span>Temperatur <output id="ai-temperature-value">'+escapeHtml(config.temperature)+'</output></span><input id="ai-temperature" type="range" min="0" max="1" step="0.1" value="'+escapeHtml(config.temperature)+'"><small>Einige Claude- und OpenAI-Modelle unterstuetzen keine Temperatureinstellung.</small></label>'
           +'<label class="form-group"><span>Antwortbudget</span><input id="ai-max-tokens" type="number" min="200" max="6000" step="100" value="'+escapeHtml(config.maxTokens)+'"></label>'
         +'</div><button class="btn btn-primary" type="button" id="ai-conf-save"><span class="material-symbols-rounded" aria-hidden="true">save</span><span>KI-Konfiguration speichern</span></button>'
       +'</section>'
@@ -991,21 +1004,28 @@ function bindEvents(root,config,models){
   if(window.LocalOllama&&window.LocalOllama.bindProviderSelect){
     window.LocalOllama.bindProviderSelect(root);
     var providerSelect=root.querySelector('#ai-provider');
-    if(providerSelect)providerSelect.addEventListener('change',function(){refreshModels(root,config,true);});
+    if(providerSelect)providerSelect.addEventListener('change',function(){window.LocalOllama.setProvider(this.value);});
   }
+  ['primary','fallback'].forEach(function(kind){
+    var select=root.querySelector('#ai-'+kind+'-model');
+    if(select)select.addEventListener('change',function(){modelSelection(config,activeModelProvider)[kind+'Model']=this.value;});
+  });
   root.querySelector('#ai-conf-stop').addEventListener('click',function(){if(window.LocalOllama&&window.LocalOllama.stopAll)window.LocalOllama.stopAll();});
   root.querySelector('#ai-assistant-project').addEventListener('change',function(){config.assistantProjectId=this.value;saveConfig(config);assistantDraft={projectId:'',mode:'',items:[]};renderAssistantDraft(root);});
   root.querySelectorAll('[data-assistant]').forEach(function(button){button.addEventListener('click',function(){var mode=this.getAttribute('data-assistant');if(mode==='githubCommits')runCommitAssistant(root);else if(mode==='githubE2E'||mode==='routine')runSpecialAssistant(root,mode);else runAssistant(root,mode);});});
   root.querySelector('#ai-temperature').addEventListener('input',function(){root.querySelector('#ai-temperature-value').value=this.value;root.querySelector('#ai-temperature-value').textContent=this.value;});
   root.querySelector('#ai-open-quicktask').addEventListener('click',function(){navigate('quicktask');});
   root.querySelector('#ai-open-health').addEventListener('click',function(){navigate('healthcheck');});
-  root.querySelector('#ai-add-template').addEventListener('click',function(){config.templates.push({id:'custom-'+Date.now(),name:'Neue Vorlage',scope:'Eigener Workflow',text:'Beschreibe Ziel, Kontext, Regeln und gewuenschtes Ausgabeformat.'});renderWorkspace(root,config,models,'');});
-  root.querySelectorAll('.ai-template-delete').forEach(function(button){button.addEventListener('click',function(){var item=this.closest('.ai-template-item');config.templates.splice(Number(item.getAttribute('data-index')),1);renderWorkspace(root,config,models,'');});});
+  root.querySelector('#ai-add-template').addEventListener('click',function(){config.templates.push({id:'custom-'+Date.now(),name:'Neue Vorlage',scope:'Eigener Workflow',text:'Beschreibe Ziel, Kontext, Regeln und gewuenschtes Ausgabeformat.'});renderWorkspace(root,config,[],'',true);refreshModels(root,config,true);});
+  root.querySelectorAll('.ai-template-delete').forEach(function(button){button.addEventListener('click',function(){var item=this.closest('.ai-template-item');config.templates.splice(Number(item.getAttribute('data-index')),1);renderWorkspace(root,config,[],'',true);refreshModels(root,config,true);});});
   root.querySelector('#ai-conf-save').addEventListener('click',function(){
     config.routing=root.querySelector('#ai-routing').value;
-    config.primaryModel=root.querySelector('#ai-primary-model').value;
-    config.fallbackModel=root.querySelector('#ai-fallback-model').value;
-    config.temperature=Math.max(0,Math.min(1,Number(root.querySelector('#ai-temperature').value)||0.3));
+    config.providerModels=Object.assign({},config.providerModels||{},modelDraftSelections);
+    var ollamaSelection=modelSelection(config,'ollama');
+    config.primaryModel=ollamaSelection.primaryModel;
+    config.fallbackModel=ollamaSelection.fallbackModel;
+    var temperature=Number(root.querySelector('#ai-temperature').value);
+    config.temperature=isFinite(temperature)?Math.max(0,Math.min(1,temperature)):0.3;
     config.maxTokens=Math.max(200,Math.min(6000,Number(root.querySelector('#ai-max-tokens').value)||3200));
     config.autoAssign=root.querySelector('#ai-auto-assign').checked;
     config.progressReview=root.querySelector('#ai-progress-review').checked;
@@ -1023,4 +1043,12 @@ window.AIConfModule.renderCommitBranchDetails=renderCommitBranchDetails;
 window.AIConfModule.fetchRecentCommits=fetchRecentCommits;
 window.AIConfModule.fetchGitHubDefaultBranch=fetchGitHubDefaultBranch;
 window.addEventListener('localOllamaStatusChanged',function(event){syncActivityUI(event.detail);});
+window.addEventListener('aiProviderChanged',function(event){
+  var root=document.getElementById('ai-conf-root'),provider=event&&event.detail&&event.detail.provider;
+  if(!root||!root.querySelector('.ai-conf-layout')||!provider||provider===activeModelProvider)return;
+  activeModelProvider=provider;
+  updateModelSelect(root.querySelector('#ai-primary-model'),[],'');
+  updateModelSelect(root.querySelector('#ai-fallback-model'),[],'');
+  refreshModels(root,activeModelConfig||readConfig(),true);
+});
 })();

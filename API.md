@@ -413,18 +413,32 @@ Regressionstests: `node --test scripts/test_quicktask_github_commits.js scripts/
 `python3 -m unittest scripts.test_storage_concurrency.GitHubCommitQueryTest`.
 Nach Serveraenderungen den Storage-Server neu starten.
 
-### Ollama-Modellrouting
+### Modellrouting
 
 "Auswahl & Fallback" wird als JSON im zentralen Key `pd_ai_configuration`
 gespeichert. Der Client wartet auf `DataLayer.ready`, bevor er die Modellauswahl
-liest, und sendet das ausgewaehlte Modell sowohl in `model` als auch in
-`promptConfig.model` an den Server. Die Server-Endpunkte verwenden diese Auswahl.
+liest. Primaer- und Fallbackmodell werden pro Schnittstelle getrennt gespeichert;
+alte Modellwerte werden fuer Ollama uebernommen. Ollama sendet das ausgewaehlte
+Modell sowohl in `model` als auch in `promptConfig.model` an den Server.
 Der Modus `fixed` erzwingt ausschliesslich das Primaermodell; die anderen Modi
 duerfen das konfigurierte Fallback verwenden, wenn das Primaermodell fehlt oder
-keine Textgenerierung unterstuetzt.
+keine Textgenerierung unterstuetzt. Bei leerer Auswahl wird ein Modell aus der
+aktuell geladenen Liste verwendet.
 
-Die automatische Auswahl und die Modell-Selects schliessen reine Embedding-Modelle
+Ollama wird bei lokalem Dashboard direkt ueber Loopback angesprochen, bei
+Remote-Zugriff ueber die konfigurierte Ollama-Instanz des Storage-Servers. Die
+automatische Auswahl und die Modell-Selects schliessen reine Embedding-Modelle
 aus (Ollama-Capabilities, bei aelteren Metadaten bekannte Embedding-Modellnamen).
+Fuer Claude und ChatGPT laedt der Browser die Modellliste direkt vom jeweiligen
+Anbieter mit dem API-Schluessel des angemeldeten Mitarbeiters. Claude-Seiten
+werden vollstaendig abgerufen. Der Verbindungsstatus zeigt API- und
+Netzwerkfehler an; die Modellabfrage bestaetigt keine erfolgreiche Generierung.
+Die OpenAI-Modellliste enthaelt auch Modelle ohne Chat-Unterstuetzung, da die
+Liste keine entsprechenden Faehigkeiten ausweist. Bei solchen Modellen zeigt die
+Generierung den API-Fehler an. Fuer Claude ab 4.7 und Mythos sowie fuer OpenAI
+GPT-5- und o-Modelle wird die nicht unterstuetzte Temperatureinstellung nicht
+gesendet. Externe KI-Anbieter erhalten bei der Generierung
+die jeweiligen Eingaben; sensible Inhalte vorher pruefen.
 Ein alter Speicherwert `[object Object]` enthaelt keine rekonstruierbaren
 Modellnamen: Auswahl nach dem Update einmal erneut waehlen und speichern.
 

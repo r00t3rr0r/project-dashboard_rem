@@ -4,14 +4,15 @@
    ======================================== */
 (function(){'use strict';
 
-var OLLAMA_BASES=['http://127.0.0.1:11434','http://localhost:11434','http://178.105.213.50/11434'];
+var OLLAMA_BASES=['http://127.0.0.1:11434','http://localhost:11434'];
 var PROVIDER_KEY='pd_ai_provider';
 var PROVIDERS={
   ollama:{label:'Ollama (lokal)'},
-  claude:{label:'Claude',keyField:'claude',model:'claude-sonnet-4-5'},
-  openai:{label:'ChatGPT',keyField:'openai',model:'gpt-4o-mini'}
+  claude:{label:'Claude',keyField:'claude'},
+  openai:{label:'ChatGPT',keyField:'openai'}
 };
-var discoveredModels=[];
+var discoveredModels={ollama:[],claude:[],openai:[]};
+var modelDiscoverySequence={ollama:0,claude:0,openai:0};
 var activeOperations=[];
 var operationSequence=0;
 var progressTimer=null;
@@ -197,14 +198,18 @@ function localFetch(path,options){
   return tryBase(0,null);
 }
 
-function health(){
-  var provider=getProvider();
-  if(isCloudProvider(provider))return cloudHealth(provider);
+function health(provider){
+  provider=provider||getProvider();
+  var sequence=++modelDiscoverySequence[provider];
+  discoveredModels[provider]=[];
+  if(isCloudProvider(provider))return cloudHealth(provider,sequence);
   if(isRemoteProxyMode()){
     return remoteFetch('/api/ai/health','GET').then(function(result){
       var body=Object.assign({},result.body||{status:'error'});
+      if(body.status==='error')throw new Error(body.error||'Ollama nicht erreichbar.');
+      if(!Array.isArray(body.models))throw new Error('Ollama hat keine gueltige Modellliste geliefert.');
       body.models=generationModels(body.models);
-      discoveredModels=body.models.map(function(item){return String(item&&(item.name||item.model)||item||'').trim();}).filter(Boolean);
+      if(sequence===modelDiscoverySequence.ollama)discoveredModels.ollama=body.models.map(function(item){return String(item&&(item.name||item.model)||item||'').trim();}).filter(Boolean);
       return {
         endpoint:result.endpoint,
         body:body
@@ -212,8 +217,9 @@ function health(){
     });
   }
   return localFetch('/api/tags',{method:'GET'}).then(function(result){
+    if(!Array.isArray(result.body.models))throw new Error('Ollama hat keine gueltige Modellliste geliefert.');
     var models=generationModels(result.body.models);
-    discoveredModels=models.map(function(item){return String(item&&(item.name||item.model)||item||'').trim();}).filter(Boolean);
+    if(sequence===modelDiscoverySequence.ollama)discoveredModels.ollama=models.map(function(item){return String(item&&(item.name||item.model)||item||'').trim();}).filter(Boolean);
     return {
       endpoint:result.endpoint,
       body:{status:'ok',models:models,ollamaBaseUrl:result.endpoint.replace(/\/api\/tags$/,'')}
@@ -235,19 +241,22 @@ function resolvedPayload(payload){
   return next;
 }
 
-function resolveModels(){
+function resolveModels(provider){
+  provider=provider||getProvider();
   return Promise.resolve(window.DataLayer&&window.DataLayer.ready).then(function(){
   var global=globalConfig();
   var routing=String(global.routing||'auto').toLowerCase();
-  var primary=String(global.primaryModel||'').trim();
-  var fallback=String(global.fallbackModel||'').trim();
+  var selections=global.providerModels&&global.providerModels[provider];
+  if(!selections)selections=provider==='ollama'?global:{};
+  var primary=String(selections.primaryModel||'').trim();
+  var fallback=String(selections.fallbackModel||'').trim();
   var configured=routing==='fixed'?[primary]:(routing==='fallback'?[primary,fallback]:[primary,fallback]);
   configured=configured.filter(function(model,index){return !!model&&configured.indexOf(model)===index;});
   if(configured.length)return Promise.resolve(configured);
-  if(discoveredModels.length)return Promise.resolve([discoveredModels[0]]);
-  return health().then(function(){
-    if(discoveredModels.length)return [discoveredModels[0]];
-    throw new Error('Kein textgenerierendes Ollama-Modell verfuegbar. Bitte unter Auswahl & Fallback ein installiertes Textmodell auswaehlen. Embedding-Modelle unterstuetzen keine Textgenerierung.');
+  if(provider==='ollama'&&discoveredModels[provider].length)return Promise.resolve([discoveredModels[provider][0]]);
+  return health(provider).then(function(){
+    if(discoveredModels[provider].length)return [discoveredModels[provider][0]];
+    throw new Error('Kein textgenerierendes Modell fuer '+PROVIDERS[provider].label+' verfuegbar. Bitte unter Auswahl & Fallback ein Modell auswaehlen.');
   });
   });
 }
@@ -259,7 +268,7 @@ function applyModel(payload,model){
 }
 
 function isModelUnavailableError(error){
-  return /model .+ not found|model.*nicht gefunden|unknown model|does not support generate|does not support completion/i.test(String(error&&error.message||error||''));
+  return error&&(error.code==='model_not_found'||error.code==='not_found_error'&&error.status===404)||/model .+ not found|model.*nicht gefunden|unknown model|does not support generate|does not support completion/i.test(String(error&&error.message||error||''));
 }
 
 function wrapResult(path,payload,text){
@@ -388,7 +397,7 @@ function bindProviderSelect(root){
 
 if(typeof document!=='undefined')document.addEventListener('change',function(event){
   var target=event.target;
-  if(target&&target.hasAttribute&&target.hasAttribute('data-ai-provider-select'))setProvider(target.value);
+  if(target&&target.hasAttribute&&target.hasAttribute('data-ai-provider-select')&&getProvider()!==target.value)setProvider(target.value);
 });
 
 if(typeof document!=='undefined'&&window.addEventListener)window.addEventListener('aiProviderChanged',function(event){
@@ -407,18 +416,24 @@ function cloudComplete(provider,requestBody,options){
   if(provider==='claude'){
     url='https://api.anthropic.com/v1/messages';
     headers={'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'};
-    body={model:requestBody.model,max_tokens:requestBody.maxTokens,temperature:requestBody.temperature,messages:[{role:'user',content:requestBody.prompt}]};
+    body={model:requestBody.model,max_tokens:requestBody.maxTokens,messages:[{role:'user',content:requestBody.prompt}]};
+    var claudeVersion=requestBody.model.match(/^claude-(?:[a-z]+-)?(\d+)[.-](\d+)/i);
+    if(!/^claude-mythos/i.test(requestBody.model)&&(!claudeVersion||Number(claudeVersion[1])<4||(Number(claudeVersion[1])===4&&Number(claudeVersion[2])<7)))body.temperature=requestBody.temperature;
   }else{
     url='https://api.openai.com/v1/chat/completions';
     headers={'Content-Type':'application/json','Authorization':'Bearer '+key};
-    body={model:requestBody.model,max_tokens:requestBody.maxTokens,temperature:requestBody.temperature,messages:[{role:'user',content:requestBody.prompt}]};
+    body={model:requestBody.model,max_completion_tokens:requestBody.maxTokens,messages:[{role:'user',content:requestBody.prompt}]};
+    if(!/^(?:o[1-9]|gpt-5)(?:[-.]|$)/i.test(requestBody.model))body.temperature=requestBody.temperature;
     if(requestBody.json)body.response_format={type:'json_object'};
   }
   return fetch(url,{method:'POST',headers:headers,body:JSON.stringify(body),signal:options&&options.signal?options.signal:undefined}).then(function(response){
     return response.json().catch(function(){return {};}).then(function(data){
       if(!response.ok){
         var message=data&&data.error&&(data.error.message||data.error)||'HTTP '+response.status;
-        throw new Error(PROVIDERS[provider].label+': '+(typeof message==='string'?message:JSON.stringify(message)));
+        var apiError=new Error(PROVIDERS[provider].label+': '+(typeof message==='string'?message:JSON.stringify(message)));
+        apiError.code=data&&data.error&&(data.error.code||data.error.type);
+        apiError.status=response.status;
+        throw apiError;
       }
       if(requestBody.requireComplete&&((provider==='claude'&&data.stop_reason==='max_tokens')||(provider==='openai'&&data.choices&&data.choices[0]&&data.choices[0].finish_reason==='length'))){
         var error=new Error('Die KI-Antwort wurde abgeschnitten.');
@@ -434,26 +449,57 @@ function cloudComplete(provider,requestBody,options){
   });
 }
 
-function cloudHealth(provider){
-  var model=PROVIDERS[provider].model;
-  discoveredModels=[model];
-  if(!providerKey(provider))return Promise.resolve({endpoint:provider,body:{status:'error',error:missingKeyError(provider).message,models:[{name:model}]}});
-  return Promise.resolve({endpoint:provider,body:{status:'ok',provider:provider,models:[{name:model}]}});
+function cloudHealth(provider,sequence){
+  var key=providerKey(provider);
+  if(!key)return Promise.reject(missingKeyError(provider));
+  var base=provider==='claude'?'https://api.anthropic.com/v1/models':'https://api.openai.com/v1/models';
+  var headers=provider==='claude'?{'x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}:{'Authorization':'Bearer '+key};
+  var models=[],seen=Object.create(null),cursors=Object.create(null);
+  function page(cursor){
+    var url=base+(cursor?'?after_id='+encodeURIComponent(cursor):'');
+    return fetch(url,{method:'GET',headers:headers,credentials:'omit',redirect:'error'}).then(function(response){
+      return response.json().then(function(data){
+        if(!response.ok)throw new Error(PROVIDERS[provider].label+': '+String(data&&data.error&&data.error.message||'HTTP '+response.status));
+        if(!data||!Array.isArray(data.data))throw new Error(PROVIDERS[provider].label+': Ungueltige Modellliste.');
+        data.data.forEach(function(model){
+          var id=String(model&&model.id||'').trim();
+          if(!id)throw new Error(PROVIDERS[provider].label+': Modell ohne Kennung.');
+          if(!seen[id]){seen[id]=true;models.push({name:id});}
+        });
+        if(provider==='claude'&&data.has_more){
+          var next=String(data.last_id||'').trim();
+          if(!next||cursors[next])throw new Error('Claude: Ungueltige Seitennavigation der Modellliste.');
+          cursors[next]=true;return page(next);
+        }
+        if(provider==='openai')models.sort(function(a,b){
+          function rank(name){return /^(gpt-|o[1-9])/i.test(name)&&!/audio|realtime|transcri|tts|embedding/i.test(name)?0:1;}
+          return rank(a.name)-rank(b.name)||a.name.localeCompare(b.name);
+        });
+        if(sequence===modelDiscoverySequence[provider])discoveredModels[provider]=models.map(function(model){return model.name;});
+        return {endpoint:base,body:{status:'ok',provider:provider,models:models}};
+      });
+    });
+  }
+  return page('');
 }
 
 function generateCloud(provider,path,payload,options){
   payload=resolvedPayload(payload);
   var config=configFrom(payload);
-  var model=PROVIDERS[provider].model;
-  applyModel(payload,model);
-  var requestBody={model:model,prompt:buildPrompt(path,payload),temperature:config.temperature,maxTokens:config.maxTokens,json:isJsonPath(path),requireComplete:path==='/api/ai/project-knowledge'};
-  return cloudComplete(provider,requestBody,options).then(function(text){
+  return resolveModels(provider).then(function(models){
+  var requestBody={model:models[0],prompt:'',temperature:config.temperature,maxTokens:config.maxTokens,json:isJsonPath(path),requireComplete:path==='/api/ai/project-knowledge'};
+  function complete(model){applyModel(payload,model);requestBody.model=model;requestBody.prompt=buildPrompt(path,payload);return cloudComplete(provider,requestBody,options);}
+  return complete(models[0]).catch(function(error){
+    if(models.length<2||!isModelUnavailableError(error))throw error;
+    return complete(models[1]);
+  }).then(function(text){
     try{return wrapResult(path,payload,text);}catch(firstError){
       if(!isJsonPath(path))throw firstError;
       var retry=Object.assign({},requestBody,{temperature:0,maxTokens:Math.min(6000,Math.max(3600,config.maxTokens*2))});
       retry.prompt+='\n\nDie vorige Ausgabe war unvollstaendig oder syntaktisch ungueltig. Gib ausschliesslich ein einziges gueltiges JSON-Objekt aus.';
       return cloudComplete(provider,retry,options).then(function(retryText){return wrapResult(path,payload,retryText);});
     }
+  });
   });
 }
 
@@ -462,7 +508,7 @@ function generateCore(path,payload,options){
   if(isCloudProvider(provider))return generateCloud(provider,path,payload,options);
   payload=resolvedPayload(payload);
   var config=configFrom(payload||{});
-  return (path==='/api/ai/project-knowledge'&&payload.model?Promise.resolve([payload.model]):resolveModels()).then(function(models){
+  return (path==='/api/ai/project-knowledge'&&payload.model?Promise.resolve([payload.model]):resolveModels(provider)).then(function(models){
     var selectedModel=models[0];
     applyModel(payload,selectedModel);
     if(isRemoteProxyMode()){

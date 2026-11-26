@@ -98,7 +98,7 @@ test('local dashboard updates request structured JSON with the supplied prompt',
 });
 
 test('selected cloud provider generates dashboard updates as JSON',async()=>{
-  const client=makeClient('127.0.0.1');
+  const client=makeClient('127.0.0.1',{providerModels:{openai:{primaryModel:'gpt-4o-mini'}}});
   client.window.localStorage={getItem:()=> 'openai'};
   client.window.AuthManager={getCurrentUser:()=>({aiKeys:{openai:'test-key'}})};
   let url,request;
@@ -115,7 +115,7 @@ test('selected cloud provider generates dashboard updates as JSON',async()=>{
 });
 
 test('Claude dashboard requests send the supplied prompt only',async()=>{
-  const client=makeClient('127.0.0.1');
+  const client=makeClient('127.0.0.1',{providerModels:{claude:{primaryModel:'claude-test'}}});
   client.window.localStorage={getItem:()=> 'claude'};
   client.window.AuthManager={getCurrentUser:()=>({aiKeys:{claude:'test-key'}})};
   let url,request;
@@ -126,6 +126,86 @@ test('Claude dashboard requests send the supplied prompt only',async()=>{
   await client.api.generate('/api/ai/dashboard-updates',{promptConfig:{prompt:'Freigegebener Text'},privateContext:'not to be sent'});
   assert.equal(url,'https://api.anthropic.com/v1/messages');
   assert.equal(request.messages[0].content,'Freigegebener Text');
+});
+
+test('Claude lists all pages with the employee key and rejects broken pagination',async()=>{
+  const client=makeClient('127.0.0.1');
+  client.window.localStorage={getItem:()=> 'claude'};
+  client.window.AuthManager={getCurrentUser:()=>({aiKeys:{claude:'test-key'}})};
+  const calls=[];
+  client.sandbox.fetch=async(url,init)=>{
+    calls.push({url,init});
+    return {ok:true,json:async()=>calls.length===1
+      ?{data:[{id:'claude-a'}],has_more:true,last_id:'claude-a'}
+      :{data:[{id:'claude-b'}],has_more:false}};
+  };
+  const result=await client.api.health();
+  assert.equal(result.body.models.map(model=>model.name).join(','),'claude-a,claude-b');
+  assert.equal(calls[0].init.headers['x-api-key'],'test-key');
+  assert.equal(calls[1].url,'https://api.anthropic.com/v1/models?after_id=claude-a');
+  client.sandbox.fetch=async()=>({ok:true,json:async()=>({data:[{id:'claude-a'}],has_more:true,last_id:'claude-a'})});
+  await assert.rejects(client.api.health(),/Seitennavigation/);
+});
+
+test('OpenAI model listing is real and errors never masquerade as available models',async()=>{
+  const client=makeClient('127.0.0.1');
+  client.window.localStorage={getItem:()=> 'openai'};
+  client.window.AuthManager={getCurrentUser:()=>({aiKeys:{openai:'test-key'}})};
+  let init;
+  client.sandbox.fetch=async(_url,options)=>{init=options;return {ok:true,json:async()=>({data:[{id:'text-embedding-3-small'},{id:'gpt-5'}]})};};
+  const result=await client.api.health();
+  assert.equal(result.body.models.map(model=>model.name).join(','),'gpt-5,text-embedding-3-small');
+  assert.equal(init.headers.Authorization,'Bearer test-key');
+  client.sandbox.fetch=async()=>({ok:false,status:401,json:async()=>({error:{message:'Invalid API key'}})});
+  await assert.rejects(client.api.health(),/Invalid API key/);
+  client.window.AuthManager.getCurrentUser=()=>({aiKeys:{}});
+  await assert.rejects(client.api.health(),/kein API-Schluessel/);
+});
+
+test('automatic cloud routing selects a discovered model instead of a previous Ollama model',async()=>{
+  const client=makeClient('127.0.0.1');
+  let provider='ollama',generated;
+  client.window.localStorage={getItem:()=>provider};
+  client.window.AuthManager={getCurrentUser:()=>({aiKeys:{openai:'test-key'}})};
+  await client.api.health();
+  provider='openai';
+  client.sandbox.fetch=async(_url,init)=>{
+    if(init.method==='GET')return {ok:true,json:async()=>({data:[{id:'gpt-5'}]})};
+    generated=JSON.parse(init.body);
+    return {ok:true,json:async()=>({choices:[{message:{content:'Antwort'}}]})};
+  };
+  await client.api.generate('/api/ai/meeting-to-concept',{});
+  assert.equal(generated.model,'gpt-5');
+});
+
+for(const provider of ['claude','openai']){
+  test(provider+': selected primary and fallback control cloud generation',async()=>{
+    const config={routing:'fallback',providerModels:{ollama:{primaryModel:'local'},[provider]:{primaryModel:'missing',fallbackModel:provider==='claude'?'claude-opus-5-5':'gpt-5'}}};
+    const client=makeClient('127.0.0.1',config),requests=[];
+    client.window.localStorage={getItem:()=>provider};
+    client.window.AuthManager={getCurrentUser:()=>({aiKeys:{[provider]:'test-key'}})};
+    client.sandbox.fetch=async(_url,init)=>{
+      const body=JSON.parse(init.body);requests.push(body);
+      if(body.model==='missing')return {ok:false,status:404,json:async()=>({error:provider==='claude'?{type:'not_found_error',message:'model: missing'}:{code:'model_not_found',message:'model missing not found'}})};
+      return {ok:true,json:async()=>provider==='claude'?{content:[{text:'Antwort'}]}:{choices:[{message:{content:'Antwort'}}]}};
+    };
+    const result=await client.api.generate('/api/ai/meeting-to-concept',{});
+    assert.equal(requests.map(request=>request.model).join(','),'missing,'+config.providerModels[provider].fallbackModel);
+    assert.equal(result.model,config.providerModels[provider].fallbackModel);
+    assert.equal(requests[1].temperature,undefined);
+    if(provider==='openai')assert.equal(requests[1].max_completion_tokens,3200);
+    config.routing='fixed';requests.length=0;
+    await assert.rejects(client.api.generate('/api/ai/meeting-to-concept',{}),/model/);
+    assert.equal(requests.length,1);
+  });
+}
+
+test('remote Ollama health errors and malformed model lists are explicit',async()=>{
+  const client=makeClient('178.105.213.50');
+  client.sandbox.fetch=async()=>({ok:true,json:async()=>({status:'error',error:'Ollama offline'})});
+  await assert.rejects(client.api.health(),/Ollama offline/);
+  client.sandbox.fetch=async()=>({ok:true,json:async()=>({status:'ok'})});
+  await assert.rejects(client.api.health(),/Modellliste/);
 });
 
 test('private analysis forces local model resolution without remote fallback',async()=>{
@@ -188,7 +268,7 @@ test('remote Ollama project knowledge sends the requested section to the backend
 });
 
 test('cloud project knowledge rejects truncated output',async()=>{
-  const client=makeClient('127.0.0.1');
+  const client=makeClient('127.0.0.1',{providerModels:{openai:{primaryModel:'gpt-4o-mini'}}});
   client.window.localStorage={getItem:()=> 'openai'};
   client.window.AuthManager={getCurrentUser:()=>({aiKeys:{openai:'test-key'}})};
   client.sandbox.fetch=async()=>({ok:true,json:async()=>({choices:[{finish_reason:'length',message:{content:'unvollstaendig'}}]})});
@@ -233,7 +313,7 @@ test('aborted local knowledge requests do not retry other Ollama endpoints',asyn
 for(const provider of ['claude','openai']){
   test(provider+': project knowledge uses the selected provider and returns markdown',async()=>{
     const client=makeClient('127.0.0.1');
-    client.window.AIConfModule={getConfiguration:()=>({maxTokens:200})};
+    client.window.AIConfModule={getConfiguration:()=>({maxTokens:200,providerModels:{[provider]:{primaryModel:'test-model'}}})};
     client.window.localStorage={getItem:()=>provider};
     client.window.AuthManager={getCurrentUser:()=>({aiKeys:{[provider]:'test-key'}})};
     let url,request;
@@ -246,7 +326,7 @@ for(const provider of ['claude','openai']){
     const result=await client.api.generate('/api/ai/project-knowledge',{knowledgePrompt:'Abschnitt',promptConfig:{maxTokens:4096}});
     assert.match(url,provider==='claude'?/anthropic\.com/:/openai\.com/);
     assert.equal(request.messages[0].content,'Abschnitt');
-    assert.equal(request.max_tokens,4096);
+    assert.equal(request[provider==='claude'?'max_tokens':'max_completion_tokens'],4096);
     assert.equal(result.markdown,'# Wissen');
     assert(result.bytes>0);
   });
