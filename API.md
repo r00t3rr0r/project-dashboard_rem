@@ -360,8 +360,13 @@ pro Thema einen zusammenfassenden Titel und eine Beschreibung auf Deutsch und
 Englisch. Die Vorschau zeigt die vorgeschlagene Zuordnung; Themen koennen
 abgewaehlt und Zusammenfassungen sowie Commit-Uebersetzungen bearbeitet werden.
 Eine falsche Zuordnung kann durch eine andere Commit-Auswahl und erneute
-Ausfuehrung korrigiert werden. Bei fehlenden oder widerspruechlichen
-KI-Zuordnungen wird kein Entwurf gespeichert und ein Fehler angezeigt.
+Ausfuehrung korrigiert werden. Fuer Commits ohne eindeutiges Thema, etwa bei
+fehlenden, widerspruechlichen oder unbekannten KI-Zuordnungen, entsteht jeweils
+eine gekennzeichnete Einzelaufgabe mit den bereits uebersetzten Commit-Titeln
+und -Nachrichten. Der Commit wird deren erledigte Teilaufgabe. Zusaetzliche
+Zuordnungen ohne passenden Commit werden gemeldet und ignoriert. Anfragefehler
+oder unvollstaendige Zusammenfassungen werden weiterhin angezeigt; erfolgreiche
+Commit-Uebersetzungen bleiben fuer einen erneuten Versuch zwischengespeichert.
 
 Pro ausgewaehltem Thema entsteht eine neue Aufgabe mit erledigten
 Commit-Teilaufgaben (`completed: true`), `status: done` und `progress: 100`.

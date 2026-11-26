@@ -87,14 +87,88 @@ test('groups related commits across batches by content and summarizes each topic
   assert.equal(groups[0].title,'Zusammenfassung 5');
 });
 
-test('rejects missing, duplicate and unknown thematic assignments and incomplete summaries',async()=>{
-  const h=makeHarness(),commits=[{sha:'a'.repeat(40),message:'A',title:'A'}];
-  for(const entries of [[],[{note:commits[0].sha,titleDe:'A',titleEn:'unknown'}],[{note:commits[0].sha,titleDe:'A',titleEn:'new:a'},{note:commits[0].sha,titleDe:'A',titleEn:'new:a'}]]){
-    h.window.LocalOllama.generate=async()=>({draft:{taskSuggestions:entries}});
-    await assert.rejects(h.api.groupCommitTopics(h.project,commits),/Zuordnung|Unbekanntes Thema/);
+test('unassigned or ambiguous commits become separate tasks using their existing translations',async()=>{
+  const h=makeHarness(),messages=[];
+  const commits=Array.from({length:6},(_,i)=>({sha:String(i+1).repeat(40),message:'Original '+i,title:'Titel '+i,titleEn:'Title '+i,descriptionDe:'Beschreibung '+i,descriptionEn:'Description '+i}));
+  let summaryCalls=0,assignCalls=0;
+  h.window.LocalOllama.generate=async(_path,payload)=>{
+    const data=JSON.parse(payload.draftInput);
+    if(!data.commits){
+      summaryCalls++;
+      return {draft:{taskSuggestions:[{titleDe:'Gemeinsames Thema',titleEn:'Shared topic',descriptionDe:'Gemeinsame Arbeit',descriptionEn:'Shared work'}]}};
+    }
+    assignCalls++;
+    if(assignCalls===1)return {draft:{taskSuggestions:[
+      {note:commits[0].sha,titleDe:'Verbesserung',titleEn:'AI-Configuration and Model Management Improvement'},
+      {note:commits[1].sha,titleDe:'Ohne Thema',titleEn:'none'},
+      {note:commits[2].sha,titleDe:'Gemeinsam',titleEn:'new:shared'},
+      {note:commits[3].sha,titleDe:'Gemeinsam',titleEn:'new:shared'},
+      {note:'unmatched',titleDe:'Zusatz',titleEn:'new:extra'}
+    ]}};
+    assert.equal(data.existingTopics.length,1);
+    return {draft:{taskSuggestions:[
+      {note:commits[4].sha,titleDe:'Mehrdeutig',titleEn:'new:x'},
+      {note:commits[4].sha,titleDe:'Mehrdeutig',titleEn:'new:y'}
+    ]}};
+  };
+  const groups=await h.api.groupCommitTopics(h.project,commits,message=>messages.push(message));
+  assert.equal(groups.length,5);
+  const standalone=groups.filter(group=>group.standalone);
+  assert.equal(standalone.length,4);
+  for(const group of standalone){
+    const commit=group.commits[0];
+    assert.equal(group.commits.length,1);
+    assert.equal(group.title,commit.title);
+    assert.equal(group.titleEn,commit.titleEn);
+    assert.equal(group.descriptionDe,commit.descriptionDe);
+    assert.equal(group.descriptionEn,commit.descriptionEn);
   }
+  assert.equal(groups.find(group=>!group.standalone).commits.length,2);
+  assert.equal(summaryCalls,1);
+  assert.equal(groups.reduce((sum,group)=>sum+group.commits.length,0),commits.length);
+  assert(messages.some(message=>message.includes(commits[0].sha.slice(0,7))&&message.includes('einzeln')));
+  assert(messages.some(message=>message.includes('Zusaetzliche KI-Zuordnungen')));
+});
+
+test('incomplete summaries and failed AI requests are still reported',async()=>{
+  const h=makeHarness(),commits=[{sha:'a'.repeat(40),message:'A',title:'A'}];
   h.window.LocalOllama.generate=async(_path,payload)=>({draft:{taskSuggestions:JSON.parse(payload.draftInput).commits?[{note:commits[0].sha,titleDe:'A',titleEn:'new:a'}]:[{titleDe:'A'}]}});
   await assert.rejects(h.api.groupCommitTopics(h.project,commits),/Zusammenfassung/);
+  h.window.LocalOllama.generate=async()=>{throw new Error('Modell nicht erreichbar');};
+  await assert.rejects(h.api.groupCommitTopics(h.project,commits),/Modell nicht erreichbar/);
+});
+
+test('cached translations survive a failed grouping and an unknown topic imports as one commit task',async()=>{
+  const h=makeHarness(),sha='a'.repeat(40),message='Fix AI configuration';
+  h.window.localStorage={};
+  const date=new Date(Date.now()-1000).toISOString();
+  h.sandbox.fetch=async(url)=>githubResponse(url,[{sha,commit:{message,committer:{date},author:{name:'Dev'}}}]);
+  let translationCalls=0,groupCalls=0;
+  h.window.LocalOllama.generate=async(_path,payload)=>{
+    const data=JSON.parse(payload.draftInput);
+    if(Array.isArray(data)){
+      translationCalls++;
+      return {draft:{taskSuggestions:data.map(translatedSuggestion)}};
+    }
+    groupCalls++;
+    if(groupCalls===1)throw new Error('Verbindung unterbrochen');
+    return {draft:{taskSuggestions:[{note:sha,titleDe:'Konfiguration',titleEn:'AI-Configuration and Model Management Improvement'}]}};
+  };
+  await h.api.runCommitAssistant(h.root);
+  await translateSelection(h);
+  assert.match(h.controls['[data-commit-status]'].textContent,/Verbindung unterbrochen/);
+  await translateSelection(h);
+  assert.equal(translationCalls,1);
+  assert.equal(groupCalls,2);
+  assert.match(h.host.innerHTML,/Einzelaufgabe: keine eindeutige thematische Zuordnung/);
+  h.root.querySelectorAll=selector=>selector==='[data-topic-choice]:checked'?[{getAttribute:()=>0}]:[];
+  h.api.importCommitTopicTasks(h.root);
+  const group=h.openedDrafts[0].githubCommitGroups[0];
+  assert.equal(group.title,'Anmeldung verbessert');
+  assert.equal(group.descriptionDe,'Anmeldung verbessert');
+  assert.equal(group.commits.length,1);
+  assert.equal(group.commits[0].sha,sha);
+  assert.equal(group.commits[0].message,message);
 });
 
 test('supports more than eight distinct topics without dropping commits',async()=>{
