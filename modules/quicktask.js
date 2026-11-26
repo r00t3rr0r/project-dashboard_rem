@@ -949,6 +949,8 @@ function openQuickTaskModal(prefill){
         document.getElementById('qtm-github-target').addEventListener('change',function(){
           githubTargetTaskId=String(this.value||'');
           updateTargetTitle();
+          document.getElementById('qtm-github-daily-status').textContent='';
+          updateAiStatus('Zielaufgabe aktualisiert.',false);
         });
       }
       group.commits.forEach(function(commit){

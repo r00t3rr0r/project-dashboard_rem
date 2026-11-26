@@ -283,20 +283,24 @@ Uebersetzung zeigt eine Vorschau die Originalnachrichten, Autoren und Zeitpunkte
 Standardmaessig sind die neuesten 20 ausgewaehlt. Mit lokalem Zeitraum und
 Anzahl kann die Auswahl neu gesetzt und danach einzeln angepasst werden; eine
 leere Anzahl bedeutet alle Treffer. Erst die bestaetigte Auswahl wird uebersetzt.
-Der erste zugehoerige Feature-Branch in der von GitHub gelieferten Reihenfolge
-wird automatisch als Aufgaben-Branch verwendet. Branch-Zugehoerigkeit
-belegt nicht, wo ein Commit urspruenglich erstellt wurde. Fuer jeden zugeordneten
-Feature-Branch wird pro Projekt und Repository eine Aufgabe mit dem Branch-Namen
-angelegt; spaetere Commits werden als Teilaufgaben hinzugefuegt. Bestehende
-Branch-Aufgaben behalten Titel und Status, alte Tagesaufgaben bleiben unveraendert.
-Commits ohne Feature-Branch bleiben Tagesaufgaben pro Mitarbeiter. Ist der
-Standard-Branch im Projekt nicht hinterlegt, wird er ueber GitHub ermittelt.
+Alle ausgewaehlten Commits werden als Teilaufgaben einer gemeinsamen Aufgabe
+vorbereitet, unabhaengig von Tag, Autor und Branch. Pro Commit wird der erste
+zugehoerige Feature-Branch in der von GitHub gelieferten Reihenfolge verwendet;
+bei Commits nur auf dem Standard-Branch wird dieser verwendet. Der erste
+Feature-Branch der Auswahl bestimmt den Titel einer neuen Aufgabe; ohne
+Feature-Branch werden uebersetzte Commit-Titel vorgeschlagen. Branch-Zugehoerigkeit
+belegt nicht, wo ein Commit urspruenglich erstellt wurde. Spaetere Importe
+verwenden eine passende Aufgabe des Projekts und Repositorys wieder. Passen
+mehrere Aufgaben, muss eine Zielaufgabe gewaehlt werden; Branch-Zuordnungen
+anderer Aufgaben bleiben erhalten. Bestehende Aufgaben behalten Titel und Status,
+alte Tagesaufgaben bleiben unveraendert. Ist der Standard-Branch im Projekt
+nicht hinterlegt, wird er ueber GitHub ermittelt.
 Im Arbeitsfluss sind die zugeordneten Commits an ihren jeweiligen Tagen sichtbar;
 ein Commit belegt keine Arbeitsdauer. Ollama
 uebersetzt die vollstaendige Nachricht unabhaengig von der Ausgangssprache,
-auch aus dem Tuerkischen, nach Deutsch und Englisch. Neue Branch-Aufgaben und
-Tagesaufgaben werden als erledigt angelegt; Commits werden erledigte Teilaufgaben.
-Fuer Tagesaufgaben nutzt der Titelvorschlag bis zu zwei verschiedene deutsche
+auch aus dem Tuerkischen, nach Deutsch und Englisch. Neue Aufgaben werden als
+erledigt angelegt; Commits werden erledigte Teilaufgaben.
+Der Titelvorschlag ohne Feature-Branch nutzt bis zu zwei verschiedene deutsche
 Commit-Titel und verweist gegebenenfalls auf weitere; jede Teilaufgabe muss die
 zugehoerige vollstaendige SHA enthalten. Planung, Aufwand, Labels und
 hochgeladene Dateien gelten fuer neu angelegte Aufgaben. Vor dem
@@ -309,7 +313,7 @@ Mitarbeiternamen und Benutzernamen gelten dabei nicht als Commit-Aliase.
 Commit-Autornamen sind frei waehlbar; Vorschlaege sollten daher geprueft werden.
 Fehlende oder mehrdeutige Zuordnungen muessen manuell ausgewaehlt werden.
 Im Mitarbeitermodus kann nur der angemeldete Mitarbeiter ausgewaehlt werden.
-Die Tagesaufgabe wird allen zugeordneten Autoren des Tages zugewiesen, jede
+Die gemeinsame Aufgabe wird allen zugeordneten Autoren zugewiesen, jede
 Commit-Teilaufgabe dem jeweils ausgewaehlten Mitarbeiter. Die Beschreibung
 enthaelt beide Uebersetzungen und das
 Original. Die ausgewaehlten SHAs werden erst beim Erstellen gespeichert.
@@ -339,17 +343,18 @@ unvollstaendig sein, besonders mit kleinen Modellen, und muessen geprueft werden
 Fehlende, leere oder nicht eindeutig anhand der SHA zuordenbare Uebersetzungen
 stoppen die Vorbereitung mit einer Fehlermeldung statt einer stillen Ersetzung.
 Erst nach Pruefung und Auswahl oeffnet sich der vorausgefuellte Dialog
-"Neue Aufgabe". Fuer jeden lokalen Commit-Tag wird eine eigene Projektaufgabe
-mit `status: done`, `progress: 100` und erledigten Teilaufgaben
-(`completed: true`) vorbereitet; Titel, Beschreibungen und Teilaufgaben sind
-vor dem Speichern bearbeitbar.
+"Neue Aufgabe". Die ausgewaehlten Commits werden fuer eine gemeinsame Aufgabe
+mit erledigten Teilaufgaben (`completed: true`) vorbereitet. Neue Aufgaben
+erhalten `status: done` und `progress: 100`; vorhandene behalten ihren Status.
+Titel, Beschreibung und Teilaufgaben sind vor dem Speichern bearbeitbar.
 Teilaufgaben enthalten beide Titel (`DE: ... · EN: ... [sha]`); die Beschreibung
 enthaelt beide uebersetzten Nachrichten, das Original, SHA, Autor, Zeitpunkt und
 GitHub-Link. Commits dokumentieren Aenderungen, nicht automatisch erfolgreiche
 Tests oder Abnahmen. Bereits gespeicherte Aufgaben werden nicht umuebersetzt.
 
-`task.githubCommitImport` speichert `repository`, `dailyTaskDate`, `shas` und
-strukturierte `commits`; AI Conf speichert ausserdem den Abrufzeitpunkt `until`.
+`task.githubCommitImport` speichert `repository`, `taskBranches`, `multiDayCommits`,
+`shas` und strukturierte `commits`; AI Conf speichert ausserdem den Abrufzeitpunkt
+`until`. Bei aelteren Importen bleiben `dailyTaskDate` und `taskBranch` lesbar.
 Beim Speichern entsteht pro ausgewaehltem Commit ein
 mit der Aufgabe verknuepfter Kalendereintrag fuer den Arbeitsfluss. Datum und
 Uhrzeit entsprechen dem GitHub-Committer-Zeitpunkt in der lokalen Zeitzone des
