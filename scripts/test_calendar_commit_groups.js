@@ -29,7 +29,7 @@ function harness(events, tasks) {
   }};
   const source=fs.readFileSync(path.join(__dirname,'../modules/calendar.js'),'utf8').replace(
     'window.CalendarModule = {',
-    'openEventDetailsModal=function(id){window.opened.push(id);}; window.testCalendar={groupCommitEvents,createCommitGroup,renderEventList,renderCalendar,eventMatchesEmployeeFilter,setEmployee:function(id){selectedEmployeeId=id;},hideTaskType:function(){disabledTypeSet.add("task");}}; window.CalendarModule = {'
+    'openEventDetailsModal=function(id){window.opened.push(id);}; window.testCalendar={groupCommitEvents,createCommitGroup,renderEventList,renderCalendar,eventMatchesEmployeeFilter,buildTaskActivityEntries,buildWorkflowDays,computeTaskSpans,setEmployee:function(id){selectedEmployeeId=id;},hideTaskType:function(){disabledTypeSet.add("task");}}; window.CalendarModule = {'
   );
   const URL={createObjectURL:blob=>{downloads.push(blob.content);return 'blob:test';},revokeObjectURL(){}};
   const Blob=class {constructor(parts){this.content=parts.join('');}};
@@ -50,6 +50,33 @@ function fixtures() {
   events.push({id:'meeting',type:'meeting',date:'2020-01-02',title:'Meeting'});
   return {events,tasks:[{id:'t1',githubCommitImport:{commits}}]};
 }
+
+test('branch task is visible on each commit day and spans the same task across days',()=>{
+  const commits=[
+    {sha:'a'.repeat(40),date:'2020-01-02T10:00:00Z',calendarDate:'2020-01-02',calendarTime:'10:00',employeeId:'alice'},
+    {sha:'b'.repeat(40),date:'2020-01-04T10:00:00Z',calendarDate:'2020-01-04',calendarTime:'10:00',employeeId:'bob'}
+  ];
+  const task={id:'t1',title:'feature/login',projectId:'p1',assigneeId:'alice',assigneeIds:['alice','bob'],
+    status:'todo',progress:40,history:[{type:'created',at:'2020-02-01T10:00:00Z'}],githubCommitImport:{taskBranch:'feature/login',commits}};
+  const events=commits.map((commit,i)=>({id:'c'+i,taskId:'t1',projectId:'p1',source:'github-commit',
+    date:commit.calendarDate,startTime:commit.calendarTime,commitEmployeeId:i?'bob':'alice'}));
+  const {api}=harness(events,[task]);
+  const activities=api.buildTaskActivityEntries();
+  assert.equal(activities.length,2);
+  assert(activities.every(activity=>activity.taskId==='t1'&&activity.status==='todo'&&activity.progress===40&&activity.dayProgressGain===0));
+  assert.equal(activities[0].assigneeIds.join(','),'alice');
+  assert.equal(activities[1].assigneeIds.join(','),'bob');
+  const days=api.buildWorkflowDays(activities,events,{});
+  assert(days['2020-01-02'].items.some(item=>item.taskId==='t1'));
+  assert(days['2020-01-04'].items.some(item=>item.taskId==='t1'));
+  const span=api.computeTaskSpans(days).t1;
+  assert.equal(span.first,'2020-01-02');
+  assert.equal(span.last,'2020-01-04');
+  api.setEmployee('bob');
+  const filtered=api.buildWorkflowDays(api.buildTaskActivityEntries(),events,{});
+  assert.equal(filtered['2020-01-02'],undefined);
+  assert(filtered['2020-01-04'].items.some(item=>item.taskId==='t1'));
+});
 
 test('project groups show the three latest commits and expand the rest without losing detail links',()=>{
   const {events,tasks}=fixtures();

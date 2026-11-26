@@ -588,16 +588,24 @@
     var commitImport = task.githubCommitImport;
     var dailyDate = commitImport && commitImport.dailyTaskDate;
     var commits = commitImport && Array.isArray(commitImport.commits) ? commitImport.commits : [];
-    if (dailyDate && commits.length) {
-      var lastCommit = commits.filter(function (commit) {
-        return commit && commit.calendarDate === dailyDate && isFinite(Date.parse(commit.date));
-      }).sort(function (a, b) { return Date.parse(b.date) - Date.parse(a.date); })[0];
-      if (lastCommit) {
+    if ((dailyDate || (commitImport && commitImport.taskBranch)) && commits.length) {
+      var lastByDay = Object.create(null), assigneesByDay = Object.create(null);
+      commits.forEach(function (commit) {
+        if (!commit || !commit.calendarDate || (dailyDate && commit.calendarDate !== dailyDate) || !isFinite(Date.parse(commit.date))) return;
+        var previous = lastByDay[commit.calendarDate];
+        if (!previous || Date.parse(commit.date) > Date.parse(previous.date)) lastByDay[commit.calendarDate] = commit;
+        if (!assigneesByDay[commit.calendarDate]) assigneesByDay[commit.calendarDate] = [];
+        if (commit.employeeId && assigneesByDay[commit.calendarDate].indexOf(commit.employeeId) === -1) assigneesByDay[commit.calendarDate].push(commit.employeeId);
+      });
+      if (Object.keys(lastByDay).length) {
         history = history.filter(function (entry) { return entry.type !== 'created'; });
-        history.push({
-          type: 'github-commit', at: lastCommit.date, calendarDate: dailyDate,
-          calendarTime: lastCommit.calendarTime, status: 'done', progress: 100,
-          assigneeId: task.assigneeId || ''
+        Object.keys(lastByDay).forEach(function (date) {
+          var lastCommit = lastByDay[date];
+          history.push({
+            type: 'github-commit', at: lastCommit.date, calendarDate: date,
+            calendarTime: lastCommit.calendarTime, status: dailyDate ? 'done' : task.status, progress: dailyDate ? 100 : task.progress,
+            assigneeId: task.assigneeId || '', assigneeIds: dailyDate ? null : assigneesByDay[date]
+          });
         });
       }
     }
@@ -612,7 +620,8 @@
           calendarTime: entry.calendarTime || '',
           status: entry.status || task.status || 'todo',
           progress: clampProgress(typeof entry.progress === 'number' ? entry.progress : task.progress),
-          assigneeId: entry.assigneeId || task.assigneeId || ''
+          assigneeId: entry.assigneeId || task.assigneeId || '',
+          assigneeIds: Array.isArray(entry.assigneeIds) ? entry.assigneeIds.slice() : null
         };
       })
       .filter(function (entry) {
@@ -656,8 +665,9 @@
           dayProgressGain: dayProgressGain,
           dayGainSharePercent: dayGainSharePercent,
           assigneeId: entry.assigneeId || task.assigneeId || '',
-          assigneeIds: entry.type === 'github-commit' && Array.isArray(task.assigneeIds) && task.assigneeIds.length
-            ? task.assigneeIds.slice() : (entry.assigneeId || task.assigneeId ? [entry.assigneeId || task.assigneeId] : []),
+          assigneeIds: entry.type === 'github-commit' && Array.isArray(entry.assigneeIds)
+            ? entry.assigneeIds.slice() : (entry.type === 'github-commit' && Array.isArray(task.assigneeIds) && task.assigneeIds.length
+              ? task.assigneeIds.slice() : (entry.assigneeId || task.assigneeId ? [entry.assigneeId || task.assigneeId] : [])),
           projectId: task.projectId || null,
           updatedAt: entry.at || '',
           calendarTime: entry.calendarTime || '',
@@ -1657,7 +1667,8 @@
       if (represented && !visibleTaskDays[taskKey]) return;
       var day = dayFor(activity.date);
       day.activities.push(activity);
-      if (!represented) day.items.push(activity);
+      var task = activity.taskId && getTasks().find(function (t) { return String(t.id) === String(activity.taskId); });
+      if (!represented || (task && task.githubCommitImport && task.githubCommitImport.taskBranch)) day.items.push(activity);
     });
 
     Object.keys(days).forEach(function (date) {

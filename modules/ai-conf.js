@@ -303,12 +303,11 @@ function getGitHubTokenCandidates(){
   candidates.push('');
   return candidates;
 }
-function fetchRecentCommits(project,since,until){
+function createGitHubReader(project){
   var github=project&&project.github||{};
-  if(!github.owner||!github.repo)return Promise.reject(new Error('Bitte das Projekt zuerst mit einem GitHub-Repository verknuepfen.'));
+  if(!github.owner||!github.repo)throw new Error('Bitte das Projekt zuerst mit einem GitHub-Repository verknuepfen.');
   var candidates=getGitHubTokenCandidates();
   var tokenIndex=0;
-  var seen={},commits=[];
   function request(path,params){
     var query=new URLSearchParams(Object.assign({owner:github.owner,repo:github.repo},params));
     var token=candidates[tokenIndex];
@@ -332,6 +331,21 @@ function fetchRecentCommits(project,since,until){
       return body===null?request(path,params):body;
     });
   }
+  return request;
+}
+function fetchGitHubDefaultBranch(project){
+  var request;
+  try{request=createGitHubReader(project);}catch(error){return Promise.reject(error);}
+  return request('/api/github/repo',{}).then(function(repo){
+    if(!repo||typeof repo.default_branch!=='string'||!repo.default_branch.trim())throw new Error('GitHub hat keinen gueltigen Standard-Branch geliefert.');
+    return repo.default_branch;
+  });
+}
+function fetchRecentCommits(project,since,until){
+  var request;
+  try{request=createGitHubReader(project);}catch(error){return Promise.reject(error);}
+  var github=project.github;
+  var seen={},commits=[];
   function fetchBranchNames(){
     var names=[];
     function branchPage(number){
@@ -641,7 +655,7 @@ function importCommitTask(root){
       assistantDraft={projectId:'',mode:'',items:[]};renderAssistantDraft(root);
       var tasks=Array.isArray(createdTasks)?createdTasks:[task];
       var completedCount=tasks.reduce(function(total,item){return total+(item&&Array.isArray(item.subtasks)?item.subtasks.filter(function(subtask){return subtask.completed;}).length:0);},0);
-      notify(String(tasks.length)+' erledigte Tagesaufgabe(n) mit '+completedCount+' erledigten Teilaufgaben gespeichert.',false);
+      notify(String(tasks.length)+' GitHub-Aufgabe(n) mit insgesamt '+completedCount+' erledigten Teilaufgaben gespeichert oder aktualisiert.',false);
     }
   });
 }
@@ -836,5 +850,6 @@ window.AIConfModule.translateCommitBatch=translateCommitBatch;
 window.AIConfModule.commitCalendarData=commitCalendarData;
 window.AIConfModule.renderCommitSelection=renderCommitSelection;
 window.AIConfModule.fetchRecentCommits=fetchRecentCommits;
+window.AIConfModule.fetchGitHubDefaultBranch=fetchGitHubDefaultBranch;
 window.addEventListener('localOllamaStatusChanged',function(event){syncActivityUI(event.detail);});
 })();

@@ -282,7 +282,17 @@ ausgewaehlte Commits bleiben fuer einen spaeteren Abruf verfuegbar. Vor der
 Uebersetzung zeigt eine Vorschau die Originalnachrichten, Autoren und Zeitpunkte.
 Standardmaessig sind die neuesten 20 ausgewaehlt. Mit lokalem Zeitraum und
 Anzahl kann die Auswahl neu gesetzt und danach einzeln angepasst werden; eine
-leere Anzahl bedeutet alle Treffer. Erst die bestaetigte Auswahl wird uebersetzt. Ollama
+leere Anzahl bedeutet alle Treffer. Erst die bestaetigte Auswahl wird uebersetzt.
+Ein einzelner zugehoeriger Feature-Branch wird als Aufgaben-Branch vorgeschlagen;
+bei mehreren Feature-Branches muss einer ausgewaehlt werden. Branch-Zugehoerigkeit
+belegt nicht, wo ein Commit urspruenglich erstellt wurde. Fuer jeden ausgewaehlten
+Feature-Branch wird pro Projekt und Repository eine Aufgabe mit dem Branch-Namen
+angelegt; spaetere Commits werden als Teilaufgaben hinzugefuegt. Bestehende
+Branch-Aufgaben behalten Titel und Status, alte Tagesaufgaben bleiben unveraendert.
+Commits ohne Feature-Branch bleiben Tagesaufgaben pro Mitarbeiter. Ist der
+Standard-Branch im Projekt nicht hinterlegt, wird er ueber GitHub ermittelt.
+Im Arbeitsfluss sind die zugeordneten Commits an ihren jeweiligen Tagen sichtbar;
+ein Commit belegt keine Arbeitsdauer. Ollama
 uebersetzt die vollstaendige Nachricht unabhaengig von der Ausgangssprache,
 auch aus dem Tuerkischen, nach Deutsch und Englisch. Fuer jeden lokalen
 Commit-Tag entsteht eine eigene erledigte Aufgabe mit den ausgewaehlten Commits

@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const {test} = require('node:test');
 
 function harness() {
-  const project={id:'p1',title:'Projekt',github:{owner:'acme',repo:'app'}};
+  const project={id:'p1',title:'Projekt',github:{owner:'acme',repo:'app',defaultBranch:'main'}};
   const tasks=[],requests=[];
   const window={
     DataLayer:{
@@ -196,6 +196,7 @@ function modalHarness() {
     getProjects:()=>[h.project],getEmployees:()=>[{id:'alice',name:'Alice',github:{username:'alice'}},{id:'bob',name:'Bob',github:{username:'bob'}}],getLabels:()=>[],
     generateId:()=>Math.random().toString(),createTask:task=>{created.push(task);h.tasks.push(task);task.id='task'+created.length;return task;},
     createTasks:tasks=>tasks.map(task=>h.window.DataLayer.createTask(task)),
+    updateTask:task=>{const index=h.tasks.findIndex(item=>item.id===task.id);if(index<0)return false;h.tasks[index]=task;return true;},
     waitForTaskAndCalendarSave:()=>Promise.resolve(true)
   });
   h.window.AuthManager.getMode=()=> 'admin';
@@ -210,6 +211,156 @@ function modalHarness() {
   };
   return {h,element,created};
 }
+
+test('feature branch commits across days and imports extend one task without changing its status or title',async()=>{
+  const {h,element,created}=modalHarness();
+  const entry=(id,date,employeeId)=>({
+    sha:String(id).repeat(40),date,author:employeeId,employeeId,message:'Original',title:'Titel '+id,titleEn:'Title',
+    descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['main','feature/login']
+  });
+  const first=entry(1,'2020-01-01T10:00:00Z','alice');
+  const second=entry(2,'2020-01-02T10:00:00Z','bob');
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[first,second]});
+  element('qtm-project').value='p1';
+  element('qtm-github-assignee-'+first.sha).value='alice';
+  element('qtm-github-assignee-'+second.sha).value='bob';
+  assert.equal(element('qtm-title').value,'feature/login');
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,1);
+  assert.equal(h.tasks[0].githubCommitImport.taskBranch,'feature/login');
+  assert.equal(h.tasks[0].githubCommitImport.commits.length,2);
+  assert.equal(h.tasks[0].status,'done');
+  assert.equal(h.tasks[0].assigneeIds.join(','),'alice,bob');
+  h.tasks[0].status='in-progress';
+  h.tasks[0].progress=40;
+  h.tasks[0].title='Manuell geaendert';
+  const third=entry(3,'2020-01-03T10:00:00Z','alice');
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[third]});
+  element('qtm-project').value='p1';
+  element('qtm-github-assignee-'+third.sha).value='alice';
+  assert.match(element('qtm-github-daily-drafts').innerHTML,/bestehende Aufgabe/);
+  assert.equal(element('qtm-title').value,'Manuell geaendert');
+  assert.equal(element('qtm-title').readOnly,true);
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,1);
+  assert.equal(h.tasks[0].title,'Manuell geaendert');
+  assert.equal(h.tasks[0].status,'in-progress');
+  assert.equal(h.tasks[0].progress,40);
+  assert.equal(h.tasks[0].githubCommitImport.commits.length,3);
+  assert.equal(h.tasks[0].subtasks.length,3);
+  assert.equal(h.tasks[0].subtasks[2].sourceCommitSha,third.sha);
+  assert.equal(h.api.getGitHubCommitDocumentationTaskId(third.sha,h.project),h.tasks[0].id);
+  const storage=new Map();
+  const dataWindow={localStorage:{
+    getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,String(value)),
+    removeItem:key=>storage.delete(key),clear:()=>storage.clear(),key:index=>Array.from(storage.keys())[index]??null
+  }};
+  const source=fs.readFileSync(path.join(__dirname,'../data.js'),'utf8')
+    .replace('window.DataLayer.ready = runStartupHydration();','window.DataLayer.rehydrate = hydrateCollections; window.DataLayer.ready = Promise.resolve();')
+    .replace(/runStartupHydration\(\)\.finally\(function \(\) \{\s*startRemoteSyncLoop\(\);\s*startRemoteKvStream\(\);\s*\}\);/,'')
+    .replace("return fetchRemoteKv('POST', { key: key, value: value }).then(function (result) {","return Promise.resolve({ok:true}).then(function (result) {");
+  vm.runInNewContext(source,{window:dataWindow,console,URL,Promise});
+  const data=dataWindow.DataLayer;
+  data.createTask(created[0]);
+  assert(data.updateTask(h.tasks[0]));
+  assert.equal(await data.waitForTaskAndCalendarSave(),true);
+  assert.equal(data.getCalendarEvents().length,3);
+  assert(data.getCalendarEvents().every(event=>event.taskId===h.tasks[0].id));
+  data.tasks.length=0;data.calendarEvents.length=0;data.rehydrate();
+  assert.equal(data.getTaskById(h.tasks[0].id).githubCommitImport.commits.length,3);
+  assert.equal(data.getCalendarEvents().length,3);
+});
+
+test('ambiguous feature branches require an explicit choice before saving',async()=>{
+  const {h,element,created}=modalHarness();
+  const item={sha:'a'.repeat(40),date:'2020-01-01T10:00:00Z',employeeId:'alice',author:'Alice',message:'Original',
+    title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['main','feature/a','feature/b']};
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[item]});
+  element('qtm-project').value='p1';
+  element('qtm-github-assignee-'+item.sha).value='alice';
+  element('qt-submit').click();
+  assert.equal(created.length,0);
+  assert.match(element('qtm-ai-status').textContent,/mehrdeutigen Commit/);
+  const select=element('qtm-github-branch-'+item.sha);
+  select.value='feature/b';
+  select.listeners.change();
+  element('qtm-github-assignee-'+item.sha).value='alice';
+  assert.equal(element('qtm-title').value,'feature/b');
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created[0].githubCommitImport.taskBranch,'feature/b');
+});
+
+test('regrouping requires confirmation before discarding edited task fields',()=>{
+  const {h,element}=modalHarness();
+  const item={sha:'a'.repeat(40),date:'2020-01-01T10:00:00Z',employeeId:'alice',author:'Alice',message:'Original',
+    title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['main','feature/a','feature/b']};
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[item]});
+  const title=element('qtm-title');
+  title.value='Eigener Titel';
+  title.listeners.input();
+  h.window.confirm=()=>false;
+  const select=element('qtm-github-branch-'+item.sha);
+  select.value='feature/b';
+  select.listeners.change();
+  assert.equal(title.value,'Eigener Titel');
+  assert.equal(select.value,'');
+});
+
+test('an existing branch task must be editable before it can be extended',async()=>{
+  const {h,element,created}=modalHarness();
+  h.tasks.push({id:'existing',projectId:'p1',title:'feature/a',githubCommitImport:{repository:'acme/app',taskBranch:'feature/a',shas:[],commits:[]}});
+  h.window.AuthManager.canEditTask=()=>false;
+  const item={sha:'a'.repeat(40),date:'2020-01-01T10:00:00Z',employeeId:'alice',author:'Alice',message:'Original',
+    title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['feature/a']};
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[item]});
+  element('qtm-project').value='p1';
+  element('qtm-github-assignee-'+item.sha).value='alice';
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,0);
+  assert.equal(h.tasks[0].githubCommitImport.commits.length,0);
+  assert.match(element('qtm-upload-status').textContent,/darf nicht bearbeitet/);
+});
+
+test('employees cannot add another employee’s commit when extending a branch task',async()=>{
+  const {h,element}=modalHarness();
+  h.tasks.push({id:'existing',projectId:'p1',title:'feature/a',assigneeId:'alice',assigneeIds:['alice'],
+    githubCommitImport:{repository:'acme/app',taskBranch:'feature/a',shas:[],commits:[]}});
+  h.window.AuthManager.getMode=()=> 'employee';
+  h.window.AuthManager.getCurrentUser=()=>({id:'alice'});
+  const item={sha:'a'.repeat(40),date:'2020-01-01T10:00:00Z',employeeId:'bob',author:'Bob',message:'Original',
+    title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['feature/a']};
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[item]});
+  element('qtm-project').value='p1';
+  element('qtm-github-assignee-'+item.sha).value='bob';
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(h.tasks[0].githubCommitImport.commits.length,0);
+  assert.match(element('qtm-upload-status').textContent,/nur sich selbst zuordnen/);
+});
+
+test('missing default branch is fetched and failures block the import',async()=>{
+  const {h,element,created}=modalHarness();
+  delete h.project.github.defaultBranch;
+  const item={sha:'a'.repeat(40),date:'2020-01-01T10:00:00Z',employeeId:'alice',author:'Alice',message:'Original',
+    title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description',branches:['trunk','feature/a']};
+  h.sandbox.fetch=async()=>({ok:true,json:async()=>({default_branch:'trunk'})});
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[item]});
+  element('qtm-project').value='p1';
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(element('qtm-title').value,'feature/a');
+  h.sandbox.fetch=async()=>({ok:false,status:403,json:async()=>({message:'Rate limit'})});
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommits:[item]});
+  element('qtm-project').value='p1';
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(element('qtm-ai-status').textContent,/Rate limit/);
+  element('qt-submit').click();
+  assert.equal(created.length,0);
+  assert.match(element('qtm-ai-status').textContent,/nicht bereit/);
+});
 
 test('only selected commits become task metadata after applying the preview',async()=>{
   const {h,element,created}=modalHarness();
