@@ -428,27 +428,86 @@ function requestCommitTranslations(project,commits){
     });
   });
 }
-function translateCommitBatch(project,commits){
-  return requestCommitTranslations(project,commits).then(function(results){
-    var missing=commits.filter(function(commit,index){return !results[index];});
-    if(!missing.length)return results;
-    // Unvollstaendige Batch-Antwort: fehlende Commits einzeln nachuebersetzen statt alles zu verwerfen
-    var retried={};
-    var chain=Promise.resolve();
-    missing.forEach(function(commit){
-      chain=chain.then(function(){
-        return requestCommitTranslations(project,[commit]).then(function(single){
-          retried[commit.sha]=single&&single[0]?single[0]:null;
-        });
+var commitTranslationMemory=Object.create(null);
+function translateCommitBatch(project,commits,progress){
+  var github=project&&project.github||{};
+  var user=window.AuthManager&&window.AuthManager.getCurrentUser?window.AuthManager.getCurrentUser():null;
+  var scope=project&&project.id&&github.owner&&github.repo?JSON.stringify([String(user&&user.id||''),String(project.id),String(github.owner).toLowerCase(),String(github.repo).toLowerCase()]):'';
+  var results=new Array(commits.length),failures={},pending=[],chain=Promise.resolve(),completed=0,storageWarning=false;
+  function report(message){if(progress)progress(message,completed,commits.length);}
+  function key(commit){return 'pd_commit_translation_v1:'+JSON.stringify([scope,commit.sha]);}
+  // DataLayer ersetzt die Storage-Methoden durch synchronisierten Speicher; Entwuerfe bleiben lokal.
+  function storageProblem(error){
+    if(!storageWarning){
+      storageWarning=true;
+      report('Zwischenspeicherung im Browser nicht verfuegbar: '+String(error&&error.message||error)+'. Ergebnisse bleiben nur bis zum Neuladen erhalten.');
+    }
+  }
+  function read(commit){
+    if(!scope)return null;
+    var cacheKey=key(commit),entry=commitTranslationMemory[cacheKey];
+    if(!entry){
+      try{
+        if(!window.localStorage)throw new Error('Browserspeicher fehlt');
+        var raw=window.localStorage[cacheKey];if(raw)entry=JSON.parse(raw);
+      }
+      catch(error){storageProblem(error);}
+    }
+    if(!entry||entry.message!==commit.message||['title','titleEn','descriptionDe','descriptionEn'].some(function(field){return typeof entry[field]!=='string'||!entry[field].trim();}))return null;
+    return Object.assign({},commit,{title:entry.title,titleEn:entry.titleEn,descriptionDe:entry.descriptionDe,descriptionEn:entry.descriptionEn});
+  }
+  function save(index,result){
+    results[index]=result;
+    completed++;
+    if(scope){
+      var cacheKey=key(commits[index]);
+      var entry={message:commits[index].message,title:result.title,titleEn:result.titleEn,descriptionDe:result.descriptionDe,descriptionEn:result.descriptionEn};
+      commitTranslationMemory[cacheKey]=entry;
+      try{
+        if(!window.localStorage)throw new Error('Browserspeicher fehlt');
+        window.localStorage[cacheKey]=JSON.stringify(entry);
+      }catch(error){storageProblem(error);}
+    }
+    report('Commit '+commits[index].sha.slice(0,7)+' uebersetzt: '+completed+' / '+commits.length+'.');
+  }
+  commits.forEach(function(commit,index){
+    var cached=read(commit);
+    if(cached){results[index]=cached;completed++;}
+    else pending.push(index);
+  });
+  report('Uebersetzung gestartet: '+completed+' / '+commits.length+' bereits vorhanden, '+pending.length+' offen.');
+  function attempt(indexes,label){
+    report(label+' ('+indexes.map(function(index){return commits[index].sha.slice(0,7);}).join(', ')+'). Fortschritt: '+completed+' / '+commits.length+'.');
+    return requestCommitTranslations(project,indexes.map(function(index){return commits[index];})).then(function(items){
+      indexes.forEach(function(index,position){
+        if(items[position]){delete failures[index];save(index,items[position]);}
+        else failures[index]='Die zweisprachige Uebersetzung fehlt oder ist nicht eindeutig.';
       });
+    },function(error){
+      if(error&&error.name==='AbortError')throw error;
+      indexes.forEach(function(index){if(!results[index])failures[index]=String(error&&error.message||error);});
+      report('KI-Anfrage fehlgeschlagen: '+String(error&&error.message||error));
     });
-    return chain.then(function(){
-      return commits.map(function(commit,index){
-        var result=results[index]||retried[commit.sha];
-        if(!result)throw new Error('Die zweisprachige Uebersetzung fuer Commit '+commit.sha.slice(0,7)+' fehlt oder ist nicht eindeutig. Bitte erneut versuchen.');
-        return result;
-      });
+  }
+  for(var offset=0;offset<pending.length;offset+=4){
+    (function(indexes){chain=chain.then(function(){return attempt(indexes,'KI uebersetzt Batch');});})(pending.slice(offset,offset+4));
+  }
+  pending.forEach(function(index){
+    for(var retry=1;retry<=2;retry++){
+      (function(number){chain=chain.then(function(){
+        if(results[index])return;
+        return attempt([index],'KI ueberarbeitet Commit '+commits[index].sha.slice(0,7)+' (Versuch '+number+' / 2)');
+      });})(retry);
+    }
+    chain=chain.then(function(){
+      if(!results[index])report('Commit '+commits[index].sha.slice(0,7)+' weiterhin offen: '+failures[index]);
     });
+  });
+  return chain.then(function(){
+    var missing=pending.filter(function(index){return !results[index];});
+    if(missing.length)throw new Error(missing.length+' Commit(s) nicht uebersetzt: '+missing.map(function(index){return commits[index].sha.slice(0,7)+' ('+failures[index]+')';}).join('; ')+'. '+completed+' / '+commits.length+' fertig. Bitte erneut versuchen; fertige Uebersetzungen bleiben erhalten.');
+    report('Uebersetzung abgeschlossen: '+completed+' / '+commits.length+'.');
+    return results;
   });
 }
 var BRANCH_COLORS=['var(--accent-blue)','var(--accent-green)','var(--accent-purple)','var(--accent-yellow)','var(--accent-cyan, #22b8cf)','var(--accent-red)'];
@@ -497,8 +556,9 @@ function renderCommitSelection(host,commits,onTranslate,meta){
     +'<small>Zeitraum in lokaler Zeitzone; leere Anzahl waehlt alle Treffer. Branch-Filter und Suche begrenzen die Anzeige und die Uebersetzung auf sichtbare ausgewaehlte Commits.</small>'
     +'<div class="commit-chip-row" role="group" aria-label="Nach Branch filtern">'+chips+'</div>'
     +'<div class="commit-selection-filters"><label>Suche <input type="search" placeholder="Nachricht, Autor, SHA" data-commit-search></label><label>Von <input type="date" data-commit-from></label><label>Bis <input type="date" data-commit-until></label><label>Neueste Anzahl <input type="number" min="1" step="1" value="20" data-commit-limit></label><button type="button" class="btn btn-secondary" data-commit-apply>Auswahl anwenden</button><button type="button" class="btn btn-secondary" data-commit-all>Alle sichtbaren</button><button type="button" class="btn btn-secondary" data-commit-none>Keine auswaehlen</button></div>'
-    +'<div data-commit-count aria-live="polite" class="commit-selection-count"></div><div class="commit-selection-list">'+rows+'</div><button type="button" class="btn btn-primary" data-commit-translate>Ausgewaehlte Commits uebersetzen</button></fieldset><div data-commit-status role="status" aria-live="polite"></div>';
+    +'<div data-commit-count aria-live="polite" class="commit-selection-count"></div><div class="commit-selection-list">'+rows+'</div><button type="button" class="btn btn-primary" data-commit-translate>Ausgewaehlte Commits uebersetzen</button></fieldset><div><progress data-commit-progress value="0" max="1" aria-label="Fortschritt der Commit-Uebersetzung"></progress><div data-commit-status role="status" aria-live="polite" style="white-space:pre-line"></div></div>';
   var fieldset=host.querySelector('.commit-selection'),status=host.querySelector('[data-commit-status]');
+  var meter=host.querySelector('[data-commit-progress]');
   var choices=host.querySelectorAll('[data-commit-choice]');
   function rowOf(index){return host.querySelector('[data-commit-row="'+index+'"]');}
   function searchTerm(){return String((host.querySelector('[data-commit-search]')||{}).value||'').trim().toLowerCase();}
@@ -558,9 +618,13 @@ function renderCommitSelection(host,commits,onTranslate,meta){
     var selected=ordered.filter(function(commit,index){return choices[index].checked&&isVisible(index);});
     if(!selected.length){status.textContent='Bitte mindestens einen Commit auswaehlen.';return;}
     fieldset.disabled=true;
-    status.textContent='Uebersetzung wird vorbereitet ...';
-    Promise.resolve().then(function(){return onTranslate(selected,function(message){status.textContent=message;});}).catch(function(error){
-      status.textContent=error&&error.name==='AbortError'?'KI-Arbeit wurde gestoppt.':String(error&&error.message||error);
+    status.textContent+=(status.textContent?'\n':'')+'Uebersetzung wird vorbereitet ...';
+    meter.max=selected.length;meter.value=0;
+    Promise.resolve().then(function(){return onTranslate(selected,function(message,done,total){
+      status.textContent+='\n'+message;
+      if(typeof done==='number'&&typeof total==='number'){meter.max=total||1;meter.value=done;}
+    });}).catch(function(error){
+      status.textContent+='\n'+(error&&error.name==='AbortError'?'KI-Arbeit wurde gestoppt.':String(error&&error.message||error));
     }).finally(function(){fieldset.disabled=false;});
   });
   updateCount();
@@ -605,14 +669,7 @@ function runCommitAssistant(root){
       if(selected.some(function(commit){return importedNow.has(commit.sha);}))throw new Error('Mindestens ein ausgewaehlter Commit wurde inzwischen uebernommen. Bitte erneut abrufen.');
       select.disabled=true;
       root.querySelectorAll('[data-assistant]').forEach(function(button){button.disabled=true;});
-      var translated=[],chain=Promise.resolve();
-      for(var offset=0;offset<selected.length;offset+=4){
-        (function(batch){chain=chain.then(function(){
-          progress('Deutsche und englische Uebersetzungen werden erstellt: '+translated.length+' / '+selected.length+' Commits ...');
-          return translateCommitBatch(project,batch).then(function(items){translated=translated.concat(items);});
-        });})(selected.slice(offset,offset+4));
-      }
-      return chain.then(function(){
+      return translateCommitBatch(project,selected,progress).then(function(translated){
         assistantDraft={projectId:project.id,mode:'githubCommits',repository:repository,since:since,until:until,items:[{title:'Erledigte Entwicklung / Completed development: '+projectTitle(project)+' ('+new Date(until).toLocaleDateString('de-DE')+')',commits:translated}]};
         renderAssistantDraft(root);
       }).finally(function(){select.disabled=false;root.querySelectorAll('[data-assistant]').forEach(function(button){button.disabled=false;});});

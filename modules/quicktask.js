@@ -83,19 +83,11 @@ function requestAiTaskDraft(payload){
   return window.LocalOllama.generate('/api/ai/meeting-task-draft',payload||{});
 }
 
-function translateGitHubCommits(commits,project){
+function translateGitHubCommits(commits,project,progress){
   if(!window.LocalOllama||typeof window.LocalOllama.generate!=='function'||!window.AIConfModule||typeof window.AIConfModule.translateCommitBatch!=='function'){
     return Promise.reject(new Error('Die KI-Uebersetzung ist nicht verfuegbar.'));
   }
-  var translated=[],chain=Promise.resolve();
-  for(var offset=0;offset<commits.length;offset+=4){
-    (function(batch){
-      chain=chain.then(function(){
-        return window.AIConfModule.translateCommitBatch(project,batch).then(function(items){translated=translated.concat(items);});
-      });
-    })(commits.slice(offset,offset+4));
-  }
-  return chain.then(function(){return translated;});
+  return window.AIConfModule.translateCommitBatch(project,commits,progress);
 }
 
 function formatGitHubCommitDraft(commits){
@@ -1038,7 +1030,10 @@ function openQuickTaskModal(prefill){
             githubProjectSelect.disabled=true;
             progress('Commit-Informationen werden auf Deutsch und Englisch vorbereitet ...');
             updateAiStatus('Commit-Informationen werden auf Deutsch und Englisch vorbereitet ...',false);
-            return translateGitHubCommits(newCommits,selection.project).then(function(translatedCommits){
+            return translateGitHubCommits(newCommits,selection.project,function(message,done,total){
+              progress(message,done,total);
+              updateAiStatus(message,false);
+            }).then(function(translatedCommits){
               review.innerHTML='<strong>Commit-Teilaufgaben pruefen</strong>'
                 +'<div>KI-Uebersetzungen koennen Fehler enthalten. Bitte vor dem Erstellen pruefen.</div>'
                 +translatedCommits.map(function(commit){

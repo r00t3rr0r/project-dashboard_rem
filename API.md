@@ -317,8 +317,11 @@ Die gemeinsame Aufgabe wird allen zugeordneten Autoren zugewiesen, jede
 Commit-Teilaufgabe dem jeweils ausgewaehlten Mitarbeiter. Die Beschreibung
 enthaelt beide Uebersetzungen und das
 Original. Die ausgewaehlten SHAs werden erst beim Erstellen gespeichert.
-Unvollstaendige oder nicht eindeutig zuordenbare Uebersetzungen fuehren zu
-einer Fehlermeldung. KI-Ausgaben bitte pruefen.
+Der Uebersetzungsverlauf zeigt Batch-Anfragen, einzelne Nachbearbeitungen und
+den Fortschritt. Fehlende oder nicht eindeutig zuordenbare Ergebnisse werden
+automatisch bis zu zweimal einzeln nachbearbeitet. Bleiben Fehler bestehen,
+kann die Auswahl erneut gestartet werden; erfolgreiche Uebersetzungen werden
+nicht erneut angefordert. KI-Ausgaben bitte pruefen.
 
 ### Erledigte Aufgaben aus GitHub (AI Conf)
 
@@ -340,8 +343,16 @@ ins Deutsche und Englische und formuliert jeweils einen kurzen Aufgabentitel.
 Die Vorschau zeigt beide Sprachen und das Original; alle Uebersetzungen koennen
 vor der Uebernahme korrigiert werden. KI-Ausgaben koennen inhaltlich falsch oder
 unvollstaendig sein, besonders mit kleinen Modellen, und muessen geprueft werden.
-Fehlende, leere oder nicht eindeutig anhand der SHA zuordenbare Uebersetzungen
-stoppen die Vorbereitung mit einer Fehlermeldung statt einer stillen Ersetzung.
+Wie in QuickTask zeigt ein Fortschrittsbalken den Verlauf einschliesslich
+automatischer Einzelversuche. Bleiben fehlende, leere oder nicht eindeutig
+zuordenbare Uebersetzungen bestehen, werden die betroffenen SHAs und Fehler
+angezeigt. Bei erneutem Versuch werden nur noch offene Commits angefordert.
+Erfolgreiche Ergebnisse werden pro Benutzer, Projekt, Repository und SHA lokal
+im Browser zwischengespeichert und auch nach Neuladen oder erneutem Oeffnen
+wiederverwendet, solange die Commit-Nachricht unveraendert ist. Beim Loeschen
+der Browserdaten geht dieser Zwischenspeicher verloren; Aufgaben werden erst
+beim Speichern angelegt. Ist der Browserspeicher nicht verfuegbar, erscheint
+eine Warnung und die Ergebnisse bleiben nur bis zum Neuladen im Arbeitsspeicher.
 Erst nach Pruefung und Auswahl oeffnet sich der vorausgefuellte Dialog
 "Neue Aufgabe". Die ausgewaehlten Commits werden fuer eine gemeinsame Aufgabe
 mit erledigten Teilaufgaben (`completed: true`) vorbereitet. Neue Aufgaben

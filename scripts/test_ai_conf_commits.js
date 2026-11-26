@@ -489,6 +489,54 @@ test('reports translation errors and respects cancellation',async()=>{
   await assert.rejects(api.translateCommitBatch({},commits),{name:'AbortError'});
 });
 
+test('preserves partial translations across retries and reloads, and retries only missing commits',async()=>{
+  const storage={getItem(){throw new Error('patched storage method');},setItem(){throw new Error('patched storage method');}};
+  const h=makeHarness(),calls=[],events=[];
+  h.window.localStorage=storage;
+  const commits=Array.from({length:6},(_,index)=>({sha:String(index+1).repeat(40),message:'Message '+index}));
+  h.window.LocalOllama.generate=async(_endpoint,payload)=>{
+    const entries=JSON.parse(payload.draftInput);
+    calls.push(entries.map(entry=>entry.sha));
+    return {draft:{taskSuggestions:entries.filter(entry=>entry.sha!==commits[1].sha).map(translatedSuggestion)}};
+  };
+  await assert.rejects(h.api.translateCommitBatch(h.project,commits,(message,done,total)=>events.push({message,done,total})),/1 Commit\(s\) nicht uebersetzt/);
+  assert.deepEqual(calls.map(batch=>batch.length),[4,2,1,1]);
+  assert.equal(Object.keys(storage).filter(key=>key.startsWith('pd_commit_translation_v1:')).length,5);
+  assert(events.some(event=>event.message.includes('ueberarbeitet')&&event.total===6));
+  assert(events.some(event=>event.done===5));
+
+  const restarted=makeHarness(),retried=[];
+  restarted.window.localStorage=storage;
+  restarted.window.LocalOllama.generate=async(_endpoint,payload)=>{
+    const entries=JSON.parse(payload.draftInput);
+    retried.push(...entries.map(entry=>entry.sha));
+    return {draft:{taskSuggestions:entries.map(translatedSuggestion)}};
+  };
+  const result=await restarted.api.translateCommitBatch(restarted.project,commits);
+  assert.deepEqual(retried,[commits[1].sha]);
+  assert.deepEqual(Array.from(result,item=>item.sha),commits.map(item=>item.sha));
+  await restarted.api.translateCommitBatch({...restarted.project,github:{owner:'other',repo:'app'}},[commits[0]]);
+  await restarted.api.translateCommitBatch(restarted.project,[{...commits[0],message:'Changed'}]);
+  assert.equal(retried.length,3);
+});
+
+test('retains completed translations after cancellation and reports unavailable browser storage',async()=>{
+  const h=makeHarness(),messages=[],calls=[];
+  Object.defineProperty(h.window,'localStorage',{get(){throw new Error('Zugriff verweigert');}});
+  const commits=Array.from({length:5},(_,index)=>({sha:String(index+1).repeat(40),message:'Message '+index}));
+  h.window.LocalOllama.generate=async(_endpoint,payload)=>{
+    const entries=JSON.parse(payload.draftInput);
+    calls.push(entries.length);
+    if(calls.length===2){const error=new Error('aborted');error.name='AbortError';throw error;}
+    return {draft:{taskSuggestions:entries.map(translatedSuggestion)}};
+  };
+  await assert.rejects(h.api.translateCommitBatch(h.project,commits,message=>messages.push(message)),{name:'AbortError'});
+  assert(messages.some(message=>message.includes('Zugriff verweigert')&&message.includes('Neuladen')));
+  const result=await h.api.translateCommitBatch(h.project,commits);
+  assert.equal(result.length,5);
+  assert.deepEqual(calls,[4,1,1]);
+});
+
 test('opens the editable task dialog with selected completed GitHub work prefilled',()=>{
   const harness = makeHarness();
   const commits = [{sha:'aaaaaaa',title:'Anmeldung korrigiert',titleEn:'Fixed login',descriptionDe:'Anmeldung korrigiert',descriptionEn:'Fixed login',url:'https://github.com/acme/app/commit/aaa',message:'Giriş hatasını düzelt',date:'2026-11-17T11:00:00Z',author:'Dev'}, {sha:'bbbbbbb',title:'Abmeldung korrigiert',message:'Fix logout',date:'2026-11-16T11:00:00Z'}];
@@ -596,9 +644,12 @@ test('invalid filters and empty selection do not start translation; errors retai
   assert.match(harness.controls['[data-commit-status]'].textContent,/mindestens einen/);
   harness.choices[0].checked=true;
   await translateSelection(harness);
-  assert.equal(calls,1);
+  assert.equal(calls,3);
   assert.equal(harness.choices[0].checked,true);
   assert.match(harness.controls['[data-commit-status]'].textContent,/Modell nicht erreichbar/);
+  assert.match(harness.controls['[data-commit-status]'].textContent,/ueberarbeitet/);
+  assert.equal(harness.controls['[data-commit-progress]'].value,0);
+  assert.equal(harness.controls['[data-commit-progress]'].max,1);
   assert.equal(harness.controls['.commit-selection'].disabled,false);
 });
 
@@ -632,6 +683,6 @@ test('empty results and AI cancellation never create tasks and release controls'
   await harness.api.runCommitAssistant(harness.root);
   await translateSelection(harness);
   assert.equal(harness.tasks.length,0);
-  assert.equal(harness.controls['[data-commit-status]'].textContent,'KI-Arbeit wurde gestoppt.');
+  assert.match(harness.controls['[data-commit-status]'].textContent,/KI-Arbeit wurde gestoppt\./);
   assert.equal(harness.button.disabled,false);
 });
