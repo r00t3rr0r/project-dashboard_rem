@@ -213,6 +213,53 @@ function modalHarness() {
   return {h,element,created};
 }
 
+test('AI Conf topics create separate completed tasks with their own summaries, commits and assignees',async()=>{
+  const {h,element,created}=modalHarness();
+  const entry=(id,employee)=>({
+    sha:String(id).repeat(40),date:'2020-01-01T10:00:00Z',author:employee,authorLogin:employee,
+    message:'Original '+id,title:'Titel '+id,titleEn:'Title '+id,descriptionDe:'Beschreibung',descriptionEn:'Description',
+    branches:['main','feature/shared'],url:'https://github.com/acme/app/commit/'+id
+  });
+  const a=entry(1,'alice'),b=entry(2,'bob'),c=entry(3,'alice');
+  h.tasks.push({id:'existing',projectId:'p1',title:'Bestehende Branch-Aufgabe',githubCommitImport:{repository:'acme/app',taskBranches:['feature/shared'],shas:[],commits:[]}});
+  h.window.QuickTaskModule.open({task:{projectId:'p1',status:'done'},taskMetadata:{githubCommitImport:{until:'2020-01-02T00:00:00Z'}},githubCommitGroups:[
+    {title:'Anmeldung',titleEn:'Login',descriptionDe:'Anmeldung verbessert',descriptionEn:'Improved login',commits:[a,c]},
+    {title:'Kalender',titleEn:'Calendar',descriptionDe:'Kalender verbessert',descriptionEn:'Improved calendar',commits:[b]}
+  ]});
+  element('qtm-project').value='p1';
+  element('qtm-topic-title-1').value='Kalender korrigiert';
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,2);
+  assert.equal(h.tasks[0].title,'Bestehende Branch-Aufgabe');
+  assert.equal(created[0].title,'Anmeldung');
+  assert.equal(created[1].title,'Kalender korrigiert');
+  assert.match(created[0].description,/Anmeldung verbessert/);
+  assert.match(created[1].description,/Kalender verbessert/);
+  assert.equal(created[0].subtasks.length,2);
+  assert.equal(created[1].subtasks.length,1);
+  assert(created.every(task=>task.status==='done'&&task.progress===100&&task.subtasks.every(subtask=>subtask.completed)));
+  assert.equal(created[0].githubCommitImport.shas.join(','),[a.sha,c.sha].join(','));
+  assert.equal(created[1].githubCommitImport.shas.join(','),b.sha);
+  assert.equal(created[1].subtasks[0].assigneeId,'bob');
+  assert.equal(created[1].attachments.length,1);
+  assert.equal(created[0].githubCommitImport.taskBranches.length,0);
+  assert.equal(created[1].githubCommitImport.until,'2020-01-02T00:00:00Z');
+});
+
+test('AI Conf rejects a missing commit subtask in any topic before creating tasks',async()=>{
+  const {h,element,created}=modalHarness();
+  const commit=id=>({sha:String(id).repeat(40),date:'2020-01-01T10:00:00Z',author:'Alice',authorLogin:'alice',message:'Original',title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description'});
+  const group=c=>({title:'Thema',titleEn:'Topic',descriptionDe:'Arbeit',descriptionEn:'Work',commits:[c]});
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommitGroups:[group(commit(1)),group(commit(2))]});
+  element('qtm-project').value='p1';
+  element('qtm-topic-subtasks-1').value='Manuell ohne SHA';
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,0);
+  assert.match(element('qtm-github-daily-status').textContent,/SHA genau einer eigenen Teilaufgabe/);
+});
+
 test('feature branch commits across days and imports extend one task without changing its status or title',async()=>{
   const {h,element,created}=modalHarness();
   const entry=(id,date,employeeId)=>({

@@ -354,18 +354,33 @@ der Browserdaten geht dieser Zwischenspeicher verloren; Aufgaben werden erst
 beim Speichern angelegt. Ist der Browserspeicher nicht verfuegbar, erscheint
 eine Warnung und die Ergebnisse bleiben nur bis zum Neuladen im Arbeitsspeicher.
 Erst nach Pruefung und Auswahl oeffnet sich der vorausgefuellte Dialog
-"Neue Aufgabe". Die ausgewaehlten Commits werden fuer eine gemeinsame Aufgabe
-mit erledigten Teilaufgaben (`completed: true`) vorbereitet. Neue Aufgaben
-erhalten `status: done` und `progress: 100`; vorhandene behalten ihren Status.
-Titel, Beschreibung und Teilaufgaben sind vor dem Speichern bearbeitbar.
-Teilaufgaben enthalten beide Titel (`DE: ... · EN: ... [sha]`); die Beschreibung
-enthaelt beide uebersetzten Nachrichten, das Original, SHA, Autor, Zeitpunkt und
-GitHub-Link. Commits dokumentieren Aenderungen, nicht automatisch erfolgreiche
-Tests oder Abnahmen. Bereits gespeicherte Aufgaben werden nicht umuebersetzt.
+"Neue Aufgabe". Die KI ordnet die ausgewaehlten Commits anhand ihrer Inhalte
+themenbezogen zu, auch ueber Autoren, Tage und Branches hinweg, und erstellt
+pro Thema einen zusammenfassenden Titel und eine Beschreibung auf Deutsch und
+Englisch. Die Vorschau zeigt die vorgeschlagene Zuordnung; Themen koennen
+abgewaehlt und Zusammenfassungen sowie Commit-Uebersetzungen bearbeitet werden.
+Eine falsche Zuordnung kann durch eine andere Commit-Auswahl und erneute
+Ausfuehrung korrigiert werden. Bei fehlenden oder widerspruechlichen
+KI-Zuordnungen wird kein Entwurf gespeichert und ein Fehler angezeigt.
+
+Pro ausgewaehltem Thema entsteht eine neue Aufgabe mit erledigten
+Commit-Teilaufgaben (`completed: true`), `status: done` und `progress: 100`.
+Auch bei gemeinsamen Branches werden bestehende Aufgaben nicht automatisch
+erweitert. Die thematische Zuordnung bezieht sich auf die aktuelle Auswahl;
+spaetere Importe erzeugen neue Aufgaben. Titel, Beschreibung und Teilaufgaben
+sind vor dem Speichern bearbeitbar. Pro Commit ist ein Mitarbeiter zuzuordnen;
+Vorschlaege funktionieren wie bei QuickTask. Jede Teilaufgabe enthaelt beide
+Commit-Titel und die vollstaendige SHA. Die Beschreibung enthaelt die
+Zusammenfassung, beide uebersetzten Nachrichten und das Original, SHA, Autor,
+Zeitpunkt und GitHub-Link. Commits dokumentieren Aenderungen, nicht automatisch
+erfolgreiche Tests oder Abnahmen. Bereits gespeicherte Aufgaben werden nicht
+umuebersetzt.
 
 `task.githubCommitImport` speichert `repository`, `taskBranches`, `multiDayCommits`,
 `shas` und strukturierte `commits`; AI Conf speichert ausserdem den Abrufzeitpunkt
-`until`. Bei aelteren Importen bleiben `dailyTaskDate` und `taskBranch` lesbar.
+`until`. Thematische AI-Conf-Aufgaben hinterlegen keine Branch-Zielzuordnung,
+die Branches einzelner Commits bleiben erhalten. Bei aelteren Importen bleiben
+`dailyTaskDate` und `taskBranch` lesbar.
 Beim Speichern entsteht pro ausgewaehltem Commit ein
 mit der Aufgabe verknuepfter Kalendereintrag fuer den Arbeitsfluss. Datum und
 Uhrzeit entsprechen dem GitHub-Committer-Zeitpunkt in der lokalen Zeitzone des

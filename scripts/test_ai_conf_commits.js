@@ -38,7 +38,7 @@ function makeHarness() {
     DataLayer:{getTasks:()=>tasks,getProjects:()=>[project],isTaskLinkedToProject:(task,id)=>task.projectId===id,createTask:task=>{tasks.push(task);return task;}},
     AuthManager:{getCurrentUser:()=>({github:{privateAccessToken:'test-token'}})},
     QuickTaskModule:{showToast:message=>notifications.push(message),open:draft=>openedDrafts.push(draft)},
-    LocalOllama:{generate:async(endpoint,payload)=>({draft:{taskSuggestions:JSON.parse(payload.draftInput).map(translatedSuggestion)}})}
+    LocalOllama:{generate:async(endpoint,payload)=>({draft:{taskSuggestions:aiSuggestions(payload)}})}
   };
   const sandbox = {
     window,URLSearchParams,Set,console,
@@ -48,7 +48,7 @@ function makeHarness() {
   };
   const source = fs.readFileSync(path.join(__dirname,'../modules/ai-conf.js'),'utf8').replace(
     'window.AIConfModule={render:render,getConfiguration:readConfig};',
-    'window.AIConfModule={fetchProjectKnowledge,fetchRecentCommits,translateCommitBatch,importCommitTask,importedCommitShas,runCommitAssistant,saveConfig,getConfiguration:readConfig,setDraft:function(value){assistantDraft=value;}};'
+    'window.AIConfModule={fetchProjectKnowledge,fetchRecentCommits,translateCommitBatch,groupCommitTopics,importCommitTask,importCommitTopicTasks,importedCommitShas,runCommitAssistant,saveConfig,getConfiguration:readConfig,setDraft:function(value){assistantDraft=value;}};'
   );
   vm.runInNewContext(source,sandbox);
   return {api:window.AIConfModule,window,sandbox,project,tasks,requests,notifications,openedDrafts,root,host,select,button,controls,choices};
@@ -62,6 +62,92 @@ const since = '2026-11-16T12:00:00.000Z', until = '2026-11-17T12:00:00.000Z';
 function translatedSuggestion(commit){
   return {note:commit.sha,titleDe:'Anmeldung verbessert',titleEn:'Improved login',descriptionDe:'Anmeldung verbessert',descriptionEn:'Improved login'};
 }
+function aiSuggestions(payload){
+  const input=JSON.parse(payload.draftInput);
+  if(input.commits)return input.commits.map(commit=>({note:commit.sha,titleDe:'Anmeldung',titleEn:input.existingTopics[0]?.id||'new:login'}));
+  if(payload.promptConfig.prompt.startsWith('Summarize'))return [{titleDe:'Anmeldung verbessert',titleEn:'Improved login',descriptionDe:'Anmeldung aktualisiert',descriptionEn:'Updated login'}];
+  return input.map(translatedSuggestion);
+}
+test('groups related commits across batches by content and summarizes each topic',async()=>{
+  const h=makeHarness();
+  const commits=Array.from({length:6},(_,i)=>({sha:String(i+1).repeat(40),message:i===4?'Login follow-up':i===1?'Calendar fix':'Login work',title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description'}));
+  h.window.LocalOllama.generate=async(_path,payload)=>{
+    const data=JSON.parse(payload.draftInput);
+    if(data.commits){
+      assert(!payload.promptConfig.prompt.includes('test-token'));
+      return {draft:{taskSuggestions:data.commits.map(c=>({note:c.sha,titleDe:c.message.includes('Calendar')?'Kalender':'Anmeldung',titleEn:c.message.includes('Calendar')?'new:calendar':data.existingTopics[0]?.id||'new:login'}))}};
+    }
+    return {draft:{taskSuggestions:[{titleDe:'Zusammenfassung '+data.length,titleEn:'Summary',descriptionDe:'Gemeinsame Aenderungen',descriptionEn:'Combined changes'}]}};
+  };
+  const groups=await h.api.groupCommitTopics(h.project,commits);
+  assert.equal(groups.length,2);
+  assert.equal(groups[0].commits.length,5);
+  assert.equal(groups[1].commits[0].sha,commits[1].sha);
+  assert.equal(groups[0].title,'Zusammenfassung 5');
+});
+
+test('rejects missing, duplicate and unknown thematic assignments and incomplete summaries',async()=>{
+  const h=makeHarness(),commits=[{sha:'a'.repeat(40),message:'A',title:'A'}];
+  for(const entries of [[],[{note:commits[0].sha,titleDe:'A',titleEn:'unknown'}],[{note:commits[0].sha,titleDe:'A',titleEn:'new:a'},{note:commits[0].sha,titleDe:'A',titleEn:'new:a'}]]){
+    h.window.LocalOllama.generate=async()=>({draft:{taskSuggestions:entries}});
+    await assert.rejects(h.api.groupCommitTopics(h.project,commits),/Zuordnung|Unbekanntes Thema/);
+  }
+  h.window.LocalOllama.generate=async(_path,payload)=>({draft:{taskSuggestions:JSON.parse(payload.draftInput).commits?[{note:commits[0].sha,titleDe:'A',titleEn:'new:a'}]:[{titleDe:'A'}]}});
+  await assert.rejects(h.api.groupCommitTopics(h.project,commits),/Zusammenfassung/);
+});
+
+test('supports more than eight distinct topics without dropping commits',async()=>{
+  const h=makeHarness();
+  const commits=Array.from({length:10},(_,i)=>({sha:i.toString(16).repeat(40),message:'Topic '+i,title:'Thema '+i}));
+  h.window.LocalOllama.generate=async(_path,payload)=>{
+    const data=JSON.parse(payload.draftInput);
+    return {draft:{taskSuggestions:data.commits
+      ?data.commits.map(c=>({note:c.sha,titleDe:c.title,titleEn:'new:'+c.sha}))
+      :[{titleDe:'Thema',titleEn:'Topic',descriptionDe:'Arbeit',descriptionEn:'Work'}]}};
+  };
+  const groups=await h.api.groupCommitTopics(h.project,commits);
+  assert.equal(groups.length,10);
+  assert.equal(groups.reduce((sum,group)=>sum+group.commits.length,0),10);
+});
+
+for(const hostname of ['127.0.0.1','dashboard.example']){
+  test(hostname+': topic grouping uses the real Ollama client and keeps assignment identifiers',async()=>{
+    const h=makeHarness();
+    h.window.location={hostname,origin:'http://'+hostname};
+    h.window.AIConfModule.getConfiguration=()=>({routing:'fixed',primaryModel:'text-model',temperature:0.1,maxTokens:4000});
+    Object.assign(h.sandbox,{AbortController,setInterval:()=>1,clearInterval(){}});
+    const sha='a'.repeat(40);
+    let calls=0;
+    h.sandbox.fetch=async()=>{
+      const suggestions=calls++===0
+        ?[{note:sha,titleDe:'Anmeldung',titleEn:'new:login'}]
+        :[{titleDe:'Anmeldung verbessert',titleEn:'Improved login',descriptionDe:'Anmeldung korrigiert',descriptionEn:'Fixed login'}];
+      return {ok:true,json:async()=>hostname==='127.0.0.1'?{response:JSON.stringify({taskSuggestions:suggestions})}:{draft:{taskSuggestions:suggestions}}};
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../modules/local-ollama.js'),'utf8'),h.sandbox);
+    const groups=await h.api.groupCommitTopics(h.project,[{sha,message:'Login fix',title:'Anmeldung',titleEn:'Login',descriptionDe:'Korrigiert',descriptionEn:'Fixed'}]);
+    assert.equal(groups[0].commits[0].sha,sha);
+    assert.equal(groups[0].title,'Anmeldung verbessert');
+    assert.equal(calls,2);
+  });
+}
+
+test('only selected topics open for import and stale commits abort the entire selection',()=>{
+  const h=makeHarness();
+  const commit=sha=>({sha,message:'Original',date:'2020-01-01T10:00:00Z',author:'Dev',title:'Titel',titleEn:'Title',descriptionDe:'Deutsch',descriptionEn:'English'});
+  const first=commit('a'.repeat(40)),second=commit('b'.repeat(40));
+  const group=c=>({title:'Thema',titleEn:'Topic',descriptionDe:'Arbeit',descriptionEn:'Work',commits:[c]});
+  h.api.setDraft({projectId:'p1',mode:'githubCommits',thematic:true,repository:'acme/app',items:[group(first),group(second)]});
+  h.root.querySelectorAll=()=>[{getAttribute:()=>1}];
+  h.api.importCommitTopicTasks(h.root);
+  assert.equal(h.openedDrafts[0].githubCommitGroups.length,1);
+  assert.equal(h.openedDrafts[0].githubCommitGroups[0].commits[0].sha,second.sha);
+  h.tasks.push({projectId:'p1',githubCommitImport:{repository:'acme/app',shas:[second.sha]}});
+  h.api.importCommitTopicTasks(h.root);
+  assert.equal(h.openedDrafts.length,1);
+  assert(h.notifications.some(message=>message.includes('inzwischen dokumentiert')));
+});
+
 test('model selection survives string-backed storage and reload',()=>{
   const harness=makeHarness();
   let stored='[object Object]';
@@ -606,15 +692,15 @@ test('batches AI requests and creates only a preview until confirmation',async()
   harness.window.LocalOllama.generate = async(endpoint,payload)=>{
     batchCount++;
     assert(harness.select.disabled);
-    return {draft:{taskSuggestions:JSON.parse(payload.draftInput).map(translatedSuggestion)}};
+    return {draft:{taskSuggestions:aiSuggestions(payload)}};
   };
   await harness.api.runCommitAssistant(harness.root);
   assert.equal(batchCount,0);
   await translateSelection(harness);
-  assert.equal(batchCount,4);
+  assert.equal(batchCount,9);
   assert.equal(harness.tasks.length,0);
   assert(harness.host.innerHTML.includes('Als erledigt uebernehmen'));
-  assert.equal((harness.host.innerHTML.match(/data-commit-sha=/g)||[]).length,13);
+  assert.equal((harness.host.innerHTML.match(/data-translation-sha=/g)||[]).length,52);
   assert.equal(harness.select.disabled,false);
   assert.equal(harness.button.disabled,false);
 });
@@ -682,15 +768,14 @@ test('translation corrections in the preview are used in the task and calendar m
   };
   harness.sandbox.fetch=async(url)=>githubResponse(url,[{sha,commit:{message:'Giriş hatasını düzelt',committer:{date:new Date(Date.now()-1000).toISOString()},author:{name:'Dev'}}}]);
   await harness.api.runCommitAssistant(harness.root);
-  harness.host.querySelectorAll=selector=>selector==='[data-commit-choice]'?harness.choices:[input];
+  harness.host.querySelectorAll=selector=>selector==='[data-commit-choice]'?harness.choices:selector==='[data-translation-sha]'?[input]:[];
   await translateSelection(harness);
   input.onInput.call(input);
-  harness.root.querySelectorAll=selector=>selector==='[data-commit-sha]:checked'?[{getAttribute:()=>sha}]:[];
-  harness.api.importCommitTask(harness.root);
+  harness.root.querySelectorAll=selector=>selector==='[data-topic-choice]:checked'?[{getAttribute:()=>0}]:[];
+  harness.api.importCommitTopicTasks(harness.root);
   const prefill=harness.openedDrafts[0];
-  assert(prefill.subtasks[0].includes('DE: Korrigierter deutscher Titel'));
-  assert.equal(prefill.taskMetadata.githubCommitImport.commits[0].title,'Korrigierter deutscher Titel');
-  assert(prefill.task.description.includes('Original: Giriş hatasını düzelt'));
+  assert.equal(prefill.githubCommitGroups[0].commits[0].title,'Korrigierter deutscher Titel');
+  assert.equal(prefill.githubCommitGroups[0].commits[0].message,'Giriş hatasını düzelt');
 });
 
 test('empty results and AI cancellation never create tasks and release controls',async()=>{
