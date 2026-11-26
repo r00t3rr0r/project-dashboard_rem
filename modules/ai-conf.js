@@ -440,19 +440,74 @@ function translateCommitBatch(project,commits){
     });
   });
 }
-function renderCommitSelection(host,commits,onTranslate){
+var BRANCH_COLORS=['var(--accent-blue)','var(--accent-green)','var(--accent-purple)','var(--accent-yellow)','var(--accent-cyan, #22b8cf)','var(--accent-red)'];
+function branchColor(name,allBranches){
+  var index=allBranches.indexOf(name);
+  return BRANCH_COLORS[(index<0?0:index)%BRANCH_COLORS.length];
+}
+function localDayKey(date){
+  return date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0');
+}
+function commitBranchList(commit){
+  return Array.isArray(commit.branches)&&commit.branches.length?commit.branches:(commit.branch?[commit.branch]:[]);
+}
+function renderCommitSelection(host,commits,onTranslate,meta){
   var ordered=commits.slice().sort(function(a,b){return Date.parse(b.date)-Date.parse(a.date);});
+  var repository=meta&&meta.repository?meta.repository:'';
+  var branches=[];
+  ordered.forEach(function(commit){commitBranchList(commit).forEach(function(name){if(branches.indexOf(name)===-1)branches.push(name);});});
+  var branchCounts={};
+  ordered.forEach(function(commit){commitBranchList(commit).forEach(function(name){branchCounts[name]=(branchCounts[name]||0)+1;});});
+  var days=[];
+  ordered.forEach(function(commit){var key=localDayKey(new Date(commit.date));if(days.indexOf(key)===-1)days.push(key);});
+  var activeBranch='';
+  var chips='<button type="button" class="commit-chip is-active" data-commit-branch-chip="" style="--chip-color:var(--text-muted)"><span class="material-symbols-rounded" aria-hidden="true">account_tree</span>Alle Branches<b>'+ordered.length+'</b></button>'
+    +branches.map(function(name){return '<button type="button" class="commit-chip" data-commit-branch-chip="'+escapeAttr(name)+'" style="--chip-color:'+branchColor(name,branches)+'"><span class="material-symbols-rounded" aria-hidden="true">call_split</span>'+escapeHtml(name)+'<b>'+branchCounts[name]+'</b></button>';}).join('');
+  var rows='',lastDay='';
+  ordered.forEach(function(commit,index){
+    var date=new Date(commit.date),day=localDayKey(date);
+    if(day!==lastDay){
+      var count=ordered.filter(function(item){return localDayKey(new Date(item.date))===day;}).length;
+      rows+='<div class="commit-day-head" data-commit-day-head="'+day+'"><span class="material-symbols-rounded" aria-hidden="true">calendar_today</span><strong>'+escapeHtml(date.toLocaleDateString('de-DE',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'}))+'</strong><span class="commit-day-count">'+count+' Commit'+(count===1?'':'s')+'</span><button type="button" class="btn btn-secondary" data-commit-day="'+day+'">Tag wählen</button></div>';
+      lastDay=day;
+    }
+    var badges=commitBranchList(commit).map(function(name){return '<span class="commit-branch-badge" style="--chip-color:'+branchColor(name,branches)+'"><span class="material-symbols-rounded" aria-hidden="true">call_split</span>'+escapeHtml(name)+'</span>';}).join('');
+    rows+='<label class="commit-selection-item" data-commit-row="'+index+'" data-commit-day-of="'+day+'"><input type="checkbox" data-commit-choice="'+escapeAttr(commit.sha)+'"'+(index<20?' checked':'')+'><span><strong>'+escapeHtml(commit.message.split('\n')[0]||'(Ohne Nachricht)')+'</strong><span class="commit-item-meta"><time>'+escapeHtml(date.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}))+'</time><span>'+escapeHtml(commit.author)+'</span><code>'+escapeHtml(commit.sha.slice(0,7))+'</code>'+badges+'</span><small class="commit-selection-message">'+escapeHtml(commit.message)+'</small></span></label>';
+  });
   host.innerHTML='<fieldset class="commit-selection"><legend>Commits vor der Uebersetzung auswaehlen</legend>'
-    +'<small>'+ordered.length+' neue Commits in allen Branches. Zeitraum in lokaler Zeitzone; leere Anzahl waehlt alle Treffer. Die Vorauswahl kann einzeln geaendert werden.</small>'
-    +'<div class="commit-selection-filters"><label>Von <input type="date" data-commit-from></label><label>Bis <input type="date" data-commit-until></label><label>Neueste Anzahl <input type="number" min="1" step="1" value="20" data-commit-limit></label><button type="button" class="btn btn-secondary" data-commit-apply>Auswahl anwenden</button><button type="button" class="btn btn-secondary" data-commit-none>Keine auswaehlen</button></div>'
-    +'<div data-commit-count aria-live="polite"></div><div class="commit-selection-list">'+ordered.map(function(commit,index){
-      return '<label class="commit-selection-item"><input type="checkbox" data-commit-choice="'+escapeAttr(commit.sha)+'"'+(index<20?' checked':'')+'><span><strong>'+escapeHtml(commit.message.split('\n')[0]||'(Ohne Nachricht)')+'</strong><small>'+escapeHtml(commit.author)+' · '+escapeHtml(new Date(commit.date).toLocaleString('de-DE'))+' · '+escapeHtml(commit.sha.slice(0,7))+(commit.branches&&commit.branches.length?' · Branch: '+escapeHtml(commit.branches.join(', ')):'')+'</small><small class="commit-selection-message">'+escapeHtml(commit.message)+'</small></span></label>';
-    }).join('')+'</div><button type="button" class="btn btn-primary" data-commit-translate>Ausgewaehlte Commits uebersetzen</button></fieldset><div data-commit-status role="status" aria-live="polite"></div>';
+    +'<div class="commit-overview"><div class="commit-overview-stat"><span class="material-symbols-rounded" aria-hidden="true">inventory_2</span><div><small>Repository</small><strong>'+escapeHtml(repository||'-')+'</strong></div></div>'
+    +'<div class="commit-overview-stat"><span class="material-symbols-rounded" aria-hidden="true">commit</span><div><small>Neue Commits</small><strong>'+ordered.length+'</strong></div></div>'
+    +'<div class="commit-overview-stat"><span class="material-symbols-rounded" aria-hidden="true">call_split</span><div><small>Branches</small><strong>'+(branches.length||1)+'</strong></div></div>'
+    +'<div class="commit-overview-stat"><span class="material-symbols-rounded" aria-hidden="true">date_range</span><div><small>Zeitraum</small><strong>'+escapeHtml(new Date(ordered[ordered.length-1].date).toLocaleDateString('de-DE'))+' – '+escapeHtml(new Date(ordered[0].date).toLocaleDateString('de-DE'))+'</strong></div></div></div>'
+    +'<small>Zeitraum in lokaler Zeitzone; leere Anzahl waehlt alle Treffer. Branch-Filter und Suche begrenzen Anzeige und Auswahl. Die Vorauswahl kann einzeln geaendert werden.</small>'
+    +'<div class="commit-chip-row" role="group" aria-label="Nach Branch filtern">'+chips+'</div>'
+    +'<div class="commit-selection-filters"><label>Suche <input type="search" placeholder="Nachricht, Autor, SHA" data-commit-search></label><label>Von <input type="date" data-commit-from></label><label>Bis <input type="date" data-commit-until></label><label>Neueste Anzahl <input type="number" min="1" step="1" value="20" data-commit-limit></label><button type="button" class="btn btn-secondary" data-commit-apply>Auswahl anwenden</button><button type="button" class="btn btn-secondary" data-commit-all>Alle sichtbaren</button><button type="button" class="btn btn-secondary" data-commit-none>Keine auswaehlen</button></div>'
+    +'<div data-commit-count aria-live="polite" class="commit-selection-count"></div><div class="commit-selection-list">'+rows+'</div><button type="button" class="btn btn-primary" data-commit-translate>Ausgewaehlte Commits uebersetzen</button></fieldset><div data-commit-status role="status" aria-live="polite"></div>';
   var fieldset=host.querySelector('.commit-selection'),status=host.querySelector('[data-commit-status]');
   var choices=host.querySelectorAll('[data-commit-choice]');
+  function rowOf(index){return host.querySelector('[data-commit-row="'+index+'"]');}
+  function searchTerm(){return String((host.querySelector('[data-commit-search]')||{}).value||'').trim().toLowerCase();}
+  function isVisible(index){
+    var commit=ordered[index];
+    if(activeBranch&&commitBranchList(commit).indexOf(activeBranch)===-1)return false;
+    var term=searchTerm();
+    return !term||(commit.message+' '+commit.author+' '+commit.sha).toLowerCase().indexOf(term)!==-1;
+  }
   function updateCount(){
     var count=Array.prototype.filter.call(choices,function(input){return input.checked;}).length;
-    host.querySelector('[data-commit-count]').textContent=count+' von '+ordered.length+' Commits ausgewaehlt';
+    var visible=ordered.filter(function(_c,index){return isVisible(index);}).length;
+    host.querySelector('[data-commit-count]').textContent=count+' von '+ordered.length+' Commits ausgewaehlt · '+visible+' sichtbar';
+  }
+  function applyView(){
+    var dayVisible={};
+    ordered.forEach(function(commit,index){
+      var visible=isVisible(index),row=rowOf(index);
+      if(row)row.hidden=!visible;
+      if(visible)dayVisible[localDayKey(new Date(commit.date))]=true;
+    });
+    host.querySelectorAll('[data-commit-day-head]').forEach(function(head){head.hidden=!dayVisible[head.getAttribute('data-commit-day-head')];});
+    host.querySelectorAll('[data-commit-branch-chip]').forEach(function(chip){chip.classList.toggle('is-active',chip.getAttribute('data-commit-branch-chip')===activeBranch);});
+    updateCount();
   }
   function selectByFilters(){
     var from=host.querySelector('[data-commit-from]').value,until=host.querySelector('[data-commit-until]').value;
@@ -464,15 +519,25 @@ function renderCommitSelection(host,commits,onTranslate){
     status.textContent='';
     var count=0;
     Array.prototype.forEach.call(choices,function(input,index){
-      var date=new Date(ordered[index].date);
-      var day=date.getFullYear()+'-'+String(date.getMonth()+1).padStart(2,'0')+'-'+String(date.getDate()).padStart(2,'0');
-      input.checked=(!from||day>=from)&&(!until||day<=until)&&count<limit;
+      var day=localDayKey(new Date(ordered[index].date));
+      input.checked=isVisible(index)&&(!from||day>=from)&&(!until||day<=until)&&count<limit;
       if(input.checked)count++;
     });
     updateCount();
   }
   Array.prototype.forEach.call(choices,function(input){input.addEventListener('change',updateCount);});
+  host.querySelectorAll('[data-commit-branch-chip]').forEach(function(chip){chip.addEventListener('click',function(){activeBranch=chip.getAttribute('data-commit-branch-chip');applyView();});});
+  host.querySelectorAll('[data-commit-day]').forEach(function(button){button.addEventListener('click',function(){
+    var day=button.getAttribute('data-commit-day'),indexes=[];
+    ordered.forEach(function(commit,index){if(localDayKey(new Date(commit.date))===day&&isVisible(index))indexes.push(index);});
+    var allSelected=indexes.every(function(index){return choices[index].checked;});
+    indexes.forEach(function(index){choices[index].checked=!allSelected;});
+    updateCount();
+  });});
+  var searchInput=host.querySelector('[data-commit-search]');
+  if(searchInput)searchInput.addEventListener('input',applyView);
   host.querySelector('[data-commit-apply]').addEventListener('click',selectByFilters);
+  host.querySelector('[data-commit-all]').addEventListener('click',function(){Array.prototype.forEach.call(choices,function(input,index){if(isVisible(index))input.checked=true;});updateCount();});
   host.querySelector('[data-commit-none]').addEventListener('click',function(){Array.prototype.forEach.call(choices,function(input){input.checked=false;});updateCount();});
   host.querySelector('[data-commit-translate]').addEventListener('click',function(){
     var selected=ordered.filter(function(commit,index){return choices[index].checked;});
@@ -536,7 +601,7 @@ function runCommitAssistant(root){
         assistantDraft={projectId:project.id,mode:'githubCommits',repository:repository,since:since,until:until,items:[{title:'Erledigte Entwicklung / Completed development: '+projectTitle(project)+' ('+new Date(until).toLocaleDateString('de-DE')+')',commits:translated}]};
         renderAssistantDraft(root);
       }).finally(function(){select.disabled=false;root.querySelectorAll('[data-assistant]').forEach(function(button){button.disabled=false;});});
-    });
+    },{repository:repository});
   }).catch(function(error){
     result.textContent=error&&error.name==='AbortError'?'KI-Arbeit wurde gestoppt.':String(error&&error.message||error);
     notify('Commit-Aufgaben konnten nicht vorbereitet werden.',true);

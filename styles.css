@@ -6912,6 +6912,27 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
 .commit-selection-item > span { display: grid; gap: .2rem; min-width: 0; }
 .commit-selection-item small { color: var(--text-muted); overflow-wrap: anywhere; }
 .commit-selection-message { white-space: pre-wrap; }
+.commit-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .5rem; }
+.commit-overview-stat { display: flex; align-items: center; gap: .55rem; padding: .55rem .7rem; border: 1px solid var(--border-color); border-radius: .5rem; background: var(--bg-secondary, transparent); min-width: 0; }
+.commit-overview-stat > .material-symbols-rounded { color: var(--accent-blue); }
+.commit-overview-stat > div { display: grid; min-width: 0; }
+.commit-overview-stat strong { overflow-wrap: anywhere; }
+.commit-chip-row { display: flex; flex-wrap: wrap; gap: .4rem; }
+.commit-chip { display: inline-flex; align-items: center; gap: .3rem; padding: .25rem .6rem; border-radius: 999px; border: 1px solid var(--chip-color); color: var(--chip-color); background: transparent; cursor: pointer; font: inherit; font-size: .8rem; }
+.commit-chip b { padding: 0 .35rem; border-radius: 999px; background: color-mix(in srgb, var(--chip-color) 18%, transparent); font-size: .72rem; }
+.commit-chip .material-symbols-rounded { font-size: 1rem; }
+.commit-chip.is-active { background: color-mix(in srgb, var(--chip-color) 18%, transparent); font-weight: 600; }
+.commit-chip:hover { background: color-mix(in srgb, var(--chip-color) 12%, transparent); }
+.commit-selection-count { font-weight: 600; }
+.commit-day-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: .5rem; padding: .35rem .5rem; background: var(--bg-card, var(--bg-secondary, #1e293b)); border-bottom: 2px solid var(--accent-blue); }
+.commit-day-head[hidden], .commit-selection-item[hidden] { display: none; }
+.commit-day-head .material-symbols-rounded { color: var(--accent-blue); font-size: 1.1rem; }
+.commit-day-count { margin-left: auto; color: var(--text-muted); font-size: .8rem; }
+.commit-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; color: var(--text-muted); font-size: .78rem; }
+.commit-item-meta code { color: var(--accent-blue); }
+.commit-branch-badge { display: inline-flex; align-items: center; gap: .15rem; padding: 0 .4rem; border-radius: .25rem; border: 1px solid var(--chip-color); color: var(--chip-color); font-size: .72rem; }
+.commit-branch-badge .material-symbols-rounded { font-size: .85rem; }
+.commit-selection-item { border-left: 3px solid var(--accent-blue); }
 
 .dashboard-project-row > .project-card .project-card-head .project-card-head-rail {
   flex: 0 1 22rem;
