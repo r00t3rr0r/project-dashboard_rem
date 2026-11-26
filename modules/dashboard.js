@@ -717,7 +717,8 @@
 
     function pushRowFromHistory(targetType, entity, historyEntry) {
       if (!entity) return;
-      var blockerTask = historyEntry && historyEntry.blockerTaskId ? blockerTasksById[String(historyEntry.blockerTaskId)] : null;
+      var blockerTaskId = (historyEntry && historyEntry.blockerTaskId) || entity.blockerTaskId || '';
+      var blockerTask = blockerTaskId ? blockerTasksById[String(blockerTaskId)] : null;
       var projectRef = targetType === 'project'
         ? entity
         : (entity.projectId ? projectById[String(entity.projectId)] : null);
@@ -731,8 +732,8 @@
         until: (historyEntry && historyEntry.until) || '',
         resolution: (historyEntry && historyEntry.resolution) || '',
         active: !historyEntry || !historyEntry.until,
-        blockerTaskId: (historyEntry && historyEntry.blockerTaskId) || entity.blockerTaskId || '',
-        blockerTaskTitle: blockerTask ? blockerTask.title : '',
+        blockerTaskId: blockerTaskId,
+        blockerTaskTitle: (blockerTask && blockerTask.title) || (historyEntry && historyEntry.blockerTitle) || '',
         projectId: projectRef ? String(projectRef.id || '') : '',
         projectTitle: projectRef ? (projectRef.title || projectRef.name || 'Projekt') : ''
       });
