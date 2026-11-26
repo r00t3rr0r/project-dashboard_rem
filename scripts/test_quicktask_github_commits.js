@@ -8,6 +8,7 @@ function harness() {
   const project={id:'p1',title:'Projekt',github:{owner:'acme',repo:'app',defaultBranch:'main'}};
   const tasks=[],requests=[];
   const window={
+    localStorage:{},
     DataLayer:{
       getTasks:()=>tasks,
       isTaskLinkedToProject:(task,projectId)=>

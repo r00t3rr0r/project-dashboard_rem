@@ -435,12 +435,14 @@ function translateCommitBatch(project,commits,progress){
   var scope=project&&project.id&&github.owner&&github.repo?JSON.stringify([String(user&&user.id||''),String(project.id),String(github.owner).toLowerCase(),String(github.repo).toLowerCase()]):'';
   var results=new Array(commits.length),failures={},pending=[],chain=Promise.resolve(),completed=0,storageWarning=false;
   function report(message){if(progress)progress(message,completed,commits.length);}
-  function key(commit){return 'pd_commit_translation_v1:'+JSON.stringify([scope,commit.sha]);}
+  function key(commit){return 'commitTranslationCache.v1:'+JSON.stringify([scope,commit.sha]);}
   // DataLayer ersetzt die Storage-Methoden durch synchronisierten Speicher; Entwuerfe bleiben lokal.
   function storageProblem(error){
     if(!storageWarning){
       storageWarning=true;
-      report('Zwischenspeicherung im Browser nicht verfuegbar: '+String(error&&error.message||error)+'. Ergebnisse bleiben nur bis zum Neuladen erhalten.');
+      var message='Zwischenspeicherung im Browser nicht verfuegbar: '+String(error&&error.message||error)+'. Ergebnisse bleiben nur bis zum Neuladen erhalten.';
+      report(message);
+      notify(message,true);
     }
   }
   function read(commit){

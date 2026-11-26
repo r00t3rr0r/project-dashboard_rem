@@ -489,6 +489,25 @@ test('reports translation errors and respects cancellation',async()=>{
   await assert.rejects(api.translateCommitBatch({},commits),{name:'AbortError'});
 });
 
+test('automatically reworks only incomplete translations and reports the completed progress',async()=>{
+  const h=makeHarness(),calls=[],events=[];
+  h.window.localStorage={};
+  const commits=[{sha:'a'.repeat(40),message:'First'},{sha:'b'.repeat(40),message:'Second'}];
+  h.window.LocalOllama.generate=async(_endpoint,payload)=>{
+    const entries=JSON.parse(payload.draftInput);
+    calls.push(entries.map(entry=>entry.sha));
+    if(calls.length===1)return {draft:{taskSuggestions:[translatedSuggestion(entries[0])]}};
+    if(calls.length===2)return {draft:{taskSuggestions:[]}};
+    return {draft:{taskSuggestions:entries.map(translatedSuggestion)}};
+  };
+  const result=await h.api.translateCommitBatch(h.project,commits,(message,done,total)=>events.push({message,done,total}));
+  assert.deepEqual(calls,[[commits[0].sha,commits[1].sha],[commits[1].sha],[commits[1].sha]]);
+  assert.equal(result.length,2);
+  assert(events.some(event=>event.message.includes('Versuch 2 / 2')));
+  assert.equal(events.at(-1).done,2);
+  assert.equal(events.at(-1).total,2);
+});
+
 test('preserves partial translations across retries and reloads, and retries only missing commits',async()=>{
   const storage={getItem(){throw new Error('patched storage method');},setItem(){throw new Error('patched storage method');}};
   const h=makeHarness(),calls=[],events=[];
@@ -501,7 +520,7 @@ test('preserves partial translations across retries and reloads, and retries onl
   };
   await assert.rejects(h.api.translateCommitBatch(h.project,commits,(message,done,total)=>events.push({message,done,total})),/1 Commit\(s\) nicht uebersetzt/);
   assert.deepEqual(calls.map(batch=>batch.length),[4,2,1,1]);
-  assert.equal(Object.keys(storage).filter(key=>key.startsWith('pd_commit_translation_v1:')).length,5);
+  assert.equal(Object.keys(storage).filter(key=>key.startsWith('commitTranslationCache.v1:')).length,5);
   assert(events.some(event=>event.message.includes('ueberarbeitet')&&event.total===6));
   assert(events.some(event=>event.done===5));
 
