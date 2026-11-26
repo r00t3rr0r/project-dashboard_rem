@@ -4343,6 +4343,26 @@ body.projects-modal-open {
   text-decoration: none;
 }
 
+.team-load-done-step-branch {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  max-width: 7rem;
+  padding: 0 0.22rem;
+  border-radius: 0.2rem;
+  background: rgba(168, 85, 247, 0.14);
+  color: #a855f7;
+  font-size: 0.58rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.team-load-done-step-branch .material-symbols-rounded {
+  font-size: 0.7rem;
+}
+
 a.team-load-done-step-sha:hover {
   text-decoration: underline;
 }

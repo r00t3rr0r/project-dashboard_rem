@@ -307,15 +307,13 @@ function fetchRecentCommits(project,since,until){
   if(!github.owner||!github.repo)return Promise.reject(new Error('Bitte das Projekt zuerst mit einem GitHub-Repository verknuepfen.'));
   var candidates=getGitHubTokenCandidates();
   var tokenIndex=0;
-  var seen=new Set(),commits=[];
-  function page(number){
-    var query=new URLSearchParams({owner:github.owner,repo:github.repo,per_page:'100',page:String(number)});
-    if(since)query.set('since',since);
-    if(until)query.set('until',until);
+  var seen={},commits=[];
+  function request(path,params){
+    var query=new URLSearchParams(Object.assign({owner:github.owner,repo:github.repo},params));
     var token=candidates[tokenIndex];
     var headers={'Accept':'application/json'};
     if(token)headers['X-GitHub-Token']=token;
-    return fetch('/api/github/commits?'+query.toString(),{headers:headers}).then(function(response){
+    return fetch(path+'?'+query.toString(),{headers:headers}).then(function(response){
       return response.json().then(function(body){
         if(!response.ok){
           if(response.status===409)return [];
@@ -327,23 +325,56 @@ function fetchRecentCommits(project,since,until){
           }
           throw new Error('GitHub-Abruf fehlgeschlagen ('+response.status+'). '+(response.status===404||response.status===401||response.status===403?'Repository und GitHub-Token (Mitarbeiterprofil oder zentraler Token in der Repository-Verwaltung) pruefen.':String(body.error||body.message||'')));
         }
-        if(!Array.isArray(body))throw new Error('GitHub hat keine gueltige Commit-Liste geliefert.');
         return body;
       });
-    }).then(function(items){
-      if(items===null)return page(number);
+    }).then(function(body){
+      return body===null?request(path,params):body;
+    });
+  }
+  function fetchBranchNames(){
+    var names=[];
+    function branchPage(number){
+      return request('/api/github/branches',{per_page:'100',page:String(number)}).then(function(items){
+        if(!Array.isArray(items))return names;
+        items.forEach(function(item){if(item&&item.name&&names.indexOf(item.name)===-1)names.push(String(item.name));});
+        return items.length===100?branchPage(number+1):names;
+      });
+    }
+    return branchPage(1).catch(function(){return [];}).then(function(list){
+      if(list.length<2)return list;
+      return request('/api/github/repo',{}).then(function(meta){
+        var main=meta&&meta.default_branch;
+        return main&&list.indexOf(main)!==-1?[main].concat(list.filter(function(name){return name!==main;})):list;
+      }).catch(function(){return list;});
+    });
+  }
+  function page(branch,number){
+    var params={per_page:'100',page:String(number)};
+    if(since)params.since=since;
+    if(until)params.until=until;
+    if(branch)params.sha=branch;
+    return request('/api/github/commits',params).then(function(items){
+      if(!Array.isArray(items))throw new Error('GitHub hat keine gueltige Commit-Liste geliefert.');
       items.forEach(function(item){
         var source=item.commit||{},date=String((source.committer||{}).date||(source.author||{}).date||'');
         var timestamp=Date.parse(date);
-        if(!item.sha||seen.has(item.sha)||!isFinite(timestamp)||(since&&timestamp<Date.parse(since))||(until&&timestamp>Date.parse(until)))return;
-        seen.add(item.sha);
-        commits.push({sha:item.sha,message:String(source.message||''),date:date,author:String((source.author||{}).name||(item.author||{}).login||''),authorLogin:String((item.author||{}).login||''),url:'https://github.com/'+encodeURIComponent(github.owner)+'/'+encodeURIComponent(github.repo)+'/commit/'+encodeURIComponent(item.sha)});
+        if(!item.sha||!isFinite(timestamp)||(since&&timestamp<Date.parse(since))||(until&&timestamp>Date.parse(until)))return;
+        if(seen[item.sha]){
+          if(branch&&seen[item.sha].branches.indexOf(branch)===-1)seen[item.sha].branches.push(branch);
+          return;
+        }
+        var commit={sha:item.sha,message:String(source.message||''),date:date,author:String((source.author||{}).name||(item.author||{}).login||''),authorLogin:String((item.author||{}).login||''),url:'https://github.com/'+encodeURIComponent(github.owner)+'/'+encodeURIComponent(github.repo)+'/commit/'+encodeURIComponent(item.sha),branch:branch||'',branches:branch?[branch]:[]};
+        seen[item.sha]=commit;
+        commits.push(commit);
       });
-      if(items.length===100)return page(number+1);
-      return commits;
+      if(items.length===100)return page(branch,number+1);
     });
   }
-  return page(1);
+  return fetchBranchNames().then(function(names){
+    // Ohne Branch-Liste (z. B. Fehler/leeres Repository) wie bisher nur den Standardbranch lesen
+    var targets=names.length?names:[''];
+    return targets.reduce(function(chain,name){return chain.then(function(){return page(name,1);});},Promise.resolve());
+  }).then(function(){return commits;});
 }
 function commitCalendarData(commit){
   var date=new Date(commit.date);
@@ -360,7 +391,9 @@ function commitCalendarData(commit){
     message:commit.message,
     author:commit.author,
     authorLogin:commit.authorLogin||'',
-    url:commit.url
+    url:commit.url,
+    branch:commit.branch||'',
+    branches:Array.isArray(commit.branches)?commit.branches.slice():(commit.branch?[commit.branch]:[])
   };
 }
 function requestCommitTranslations(project,commits){
@@ -410,10 +443,10 @@ function translateCommitBatch(project,commits){
 function renderCommitSelection(host,commits,onTranslate){
   var ordered=commits.slice().sort(function(a,b){return Date.parse(b.date)-Date.parse(a.date);});
   host.innerHTML='<fieldset class="commit-selection"><legend>Commits vor der Uebersetzung auswaehlen</legend>'
-    +'<small>'+ordered.length+' neue Commits im Standardbranch. Zeitraum in lokaler Zeitzone; leere Anzahl waehlt alle Treffer. Die Vorauswahl kann einzeln geaendert werden.</small>'
+    +'<small>'+ordered.length+' neue Commits in allen Branches. Zeitraum in lokaler Zeitzone; leere Anzahl waehlt alle Treffer. Die Vorauswahl kann einzeln geaendert werden.</small>'
     +'<div class="commit-selection-filters"><label>Von <input type="date" data-commit-from></label><label>Bis <input type="date" data-commit-until></label><label>Neueste Anzahl <input type="number" min="1" step="1" value="20" data-commit-limit></label><button type="button" class="btn btn-secondary" data-commit-apply>Auswahl anwenden</button><button type="button" class="btn btn-secondary" data-commit-none>Keine auswaehlen</button></div>'
     +'<div data-commit-count aria-live="polite"></div><div class="commit-selection-list">'+ordered.map(function(commit,index){
-      return '<label class="commit-selection-item"><input type="checkbox" data-commit-choice="'+escapeAttr(commit.sha)+'"'+(index<20?' checked':'')+'><span><strong>'+escapeHtml(commit.message.split('\n')[0]||'(Ohne Nachricht)')+'</strong><small>'+escapeHtml(commit.author)+' · '+escapeHtml(new Date(commit.date).toLocaleString('de-DE'))+' · '+escapeHtml(commit.sha.slice(0,7))+'</small><small class="commit-selection-message">'+escapeHtml(commit.message)+'</small></span></label>';
+      return '<label class="commit-selection-item"><input type="checkbox" data-commit-choice="'+escapeAttr(commit.sha)+'"'+(index<20?' checked':'')+'><span><strong>'+escapeHtml(commit.message.split('\n')[0]||'(Ohne Nachricht)')+'</strong><small>'+escapeHtml(commit.author)+' · '+escapeHtml(new Date(commit.date).toLocaleString('de-DE'))+' · '+escapeHtml(commit.sha.slice(0,7))+(commit.branches&&commit.branches.length?' · Branch: '+escapeHtml(commit.branches.join(', ')):'')+'</small><small class="commit-selection-message">'+escapeHtml(commit.message)+'</small></span></label>';
     }).join('')+'</div><button type="button" class="btn btn-primary" data-commit-translate>Ausgewaehlte Commits uebersetzen</button></fieldset><div data-commit-status role="status" aria-live="polite"></div>';
   var fieldset=host.querySelector('.commit-selection'),status=host.querySelector('[data-commit-status]');
   var choices=host.querySelectorAll('[data-commit-choice]');
@@ -458,7 +491,7 @@ function renderCommitDraft(root){
   host.innerHTML='<div class="ai-assistant-result-head"><div><strong>'+escapeHtml(item.title)+'</strong><small>'+escapeHtml(assistantDraft.repository)+' · '+escapeHtml(assistantDraft.since?new Date(assistantDraft.since).toLocaleString('de-DE'):'gesamte Historie')+' bis '+escapeHtml(new Date(assistantDraft.until).toLocaleString('de-DE'))+'</small><small>KI-Uebersetzungen koennen Fehler enthalten: Bitte pruefen und bei Bedarf korrigieren. Ausgewaehlte Commits erscheinen nach dem Speichern im Kalender.</small></div><button class="btn btn-primary" type="button" id="ai-assistant-import"><span class="material-symbols-rounded" aria-hidden="true">playlist_add_check</span><span>Als erledigt uebernehmen</span></button></div><div class="ai-assistant-task-list">'+item.commits.map(function(commit){
     var sha=escapeAttr(commit.sha);
     function field(name,label,value,rows){return '<label class="ai-commit-translation"><span>'+label+'</span><textarea rows="'+rows+'" data-translation-sha="'+sha+'" data-translation-field="'+name+'">'+escapeHtml(value)+'</textarea></label>';}
-    return '<div class="ai-assistant-task ai-commit-task"><input type="checkbox" data-commit-sha="'+sha+'" aria-label="Commit '+sha+' auswaehlen" checked><span><small>'+escapeHtml(commit.author)+' · '+escapeHtml(new Date(commit.date).toLocaleString('de-DE'))+'</small><small>Original: '+escapeHtml(commit.message)+'</small><a href="'+escapeAttr(commit.url)+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(commit.sha.slice(0,7))+'</a>'+field('title','Titel DE',commit.title,1)+field('titleEn','Titel EN',commit.titleEn,1)+field('descriptionDe','Nachricht DE',commit.descriptionDe,3)+field('descriptionEn','Nachricht EN',commit.descriptionEn,3)+'</span></div>';
+    return '<div class="ai-assistant-task ai-commit-task"><input type="checkbox" data-commit-sha="'+sha+'" aria-label="Commit '+sha+' auswaehlen" checked><span><small>'+escapeHtml(commit.author)+' · '+escapeHtml(new Date(commit.date).toLocaleString('de-DE'))+'</small><small>Original: '+escapeHtml(commit.message)+'</small><a href="'+escapeAttr(commit.url)+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(commit.sha.slice(0,7))+'</a>'+(commit.branches&&commit.branches.length?'<small>Branch: '+escapeHtml(commit.branches.join(', '))+'</small>':'')+field('title','Titel DE',commit.title,1)+field('titleEn','Titel EN',commit.titleEn,1)+field('descriptionDe','Nachricht DE',commit.descriptionDe,3)+field('descriptionEn','Nachricht EN',commit.descriptionEn,3)+'</span></div>';
   }).join('')+'</div>';
   host.querySelectorAll('[data-translation-sha]').forEach(function(input){
     input.addEventListener('input',function(){
@@ -485,7 +518,7 @@ function runCommitAssistant(root){
   return fetchRecentCommits(project,since,until).then(function(commits){
     var imported=importedCommitShas(project.id,repository);
     commits=commits.filter(function(commit){return !imported.has(commit.sha);});
-    if(!commits.length){result.textContent='Keine neuen Commits gefunden (Standardbranch).';return null;}
+    if(!commits.length){result.textContent='Keine neuen Commits gefunden (alle Branches).';return null;}
     renderCommitSelection(result,commits,function(selected,progress){
       if(!window.LocalOllama||typeof window.LocalOllama.generate!=='function')throw new Error('Lokaler Ollama-Client ist nicht verfuegbar.');
       var importedNow=importedCommitShas(project.id,repository);
@@ -528,12 +561,12 @@ function importCommitTask(root){
     task:{
       title:assistantDraft.items[0].title,
       projectId:project.id,
-      description:'DE: Aus GitHub-Commits dokumentierte Arbeit; keine separate Test- oder Abnahmebestaetigung.\nEN: Work documented from GitHub commits; no separate confirmation of testing or acceptance.\nRepository: '+assistantDraft.repository+' (Standardbranch / default branch)\nZeitraum / Period: '+(assistantDraft.since||'gesamte Historie / entire history')+' - '+assistantDraft.until+'\n\n'+commits.map(function(commit){return 'DE: '+commit.title+'\n'+commit.descriptionDe+'\nEN: '+commit.titleEn+'\n'+commit.descriptionEn+'\nCommit: '+commit.sha+'\n'+commit.url+'\n'+commit.date+' · '+commit.author+'\nOriginal: '+commit.message;}).join('\n\n'),
+      description:'DE: Aus GitHub-Commits dokumentierte Arbeit; keine separate Test- oder Abnahmebestaetigung.\nEN: Work documented from GitHub commits; no separate confirmation of testing or acceptance.\nRepository: '+assistantDraft.repository+' (alle Branches / all branches)\nZeitraum / Period: '+(assistantDraft.since||'gesamte Historie / entire history')+' - '+assistantDraft.until+'\n\n'+commits.map(function(commit){return 'DE: '+commit.title+'\n'+commit.descriptionDe+'\nEN: '+commit.titleEn+'\n'+commit.descriptionEn+'\nCommit: '+commit.sha+(commit.branches&&commit.branches.length?'\nBranch: '+commit.branches.join(', '):'')+'\n'+commit.url+'\n'+commit.date+' · '+commit.author+'\nOriginal: '+commit.message;}).join('\n\n'),
       priority:'medium',
       effortHours:0,
       status:'done'
     },
-    subtasks:commits.map(function(commit){return 'DE: '+commit.title+' · EN: '+commit.titleEn+' ['+commit.sha.slice(0,7)+']';}),
+    subtasks:commits.map(function(commit){return 'DE: '+commit.title+' · EN: '+commit.titleEn+' ['+commit.sha.slice(0,7)+']'+(commit.branches&&commit.branches.length?' (Branch: '+commit.branches.join(', ')+')':'');}),
     completedSubtasks:true,
     taskMetadata:{
       progress:100,

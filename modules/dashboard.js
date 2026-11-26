@@ -2000,7 +2000,8 @@
       title: getCommitStepTitle(commit),
       at: parseCompletionTimestamp(commit && commit.date),
       sha: String(commit && commit.sha || ''),
-      url: String(commit && commit.url || '')
+      url: String(commit && commit.url || ''),
+      branches: Array.isArray(commit && commit.branches) ? commit.branches.filter(Boolean).map(String) : (commit && commit.branch ? [String(commit.branch)] : [])
     };
   }
 
@@ -2327,6 +2328,10 @@
         html += '<a class="team-load-done-step-sha" href="' + escapeHtml(step.url) + '" target="_blank" rel="noopener noreferrer" title="Commit ' + escapeHtml(step.sha) + ' auf GitHub öffnen">' + escapeHtml(shortSha) + '</a>';
       } else {
         html += '<span class="team-load-done-step-sha">' + escapeHtml(shortSha) + '</span>';
+      }
+      if (step.branches && step.branches.length) {
+        var branchLabel = step.branches.join(', ');
+        html += '<span class="team-load-done-step-branch" title="Branch: ' + escapeHtml(branchLabel) + '"><span class="material-symbols-rounded" aria-hidden="true">call_split</span>' + escapeHtml(step.branches[0]) + (step.branches.length > 1 ? ' +' + (step.branches.length - 1) : '') + '</span>';
       }
     } else {
       html += '<span class="team-load-done-step-badge">Teilaufgabe</span>';

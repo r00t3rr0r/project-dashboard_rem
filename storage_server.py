@@ -621,6 +621,9 @@ class StorageHandler(BaseHTTPRequestHandler):
         if parsed.path == '/api/github/commits':
             self._handle_github_commits_get(parsed)
             return
+        if parsed.path == '/api/github/branches':
+            self._handle_github_branches_get(parsed)
+            return
         if parsed.path == '/api/system/version':
             if self._require_admin():
                 self._send_json(get_version_info())
@@ -2466,11 +2469,26 @@ class StorageHandler(BaseHTTPRequestHandler):
 
         token = self._read_github_token_header()
         query = {'per_page': per_page, 'page': page}
-        for field in ('since', 'until'):
+        for field in ('since', 'until', 'sha'):
             value = str((params.get(field) or [''])[0]).strip()
             if value:
                 query[field] = value
         endpoint = GITHUB_API_BASE + '/repos/' + owner + '/' + repo + '/commits?' + urlencode(query)
+        self._proxy_github_json(endpoint, token)
+
+    def _handle_github_branches_get(self, parsed):
+        params = parse_qs(parsed.query or '')
+        owner = str((params.get('owner') or [''])[0]).strip()
+        repo = str((params.get('repo') or [''])[0]).strip()
+        if not owner or not repo:
+            self._send_json({'error': 'owner and repo are required.'}, status=400)
+            return
+        try:
+            page = max(1, int(str((params.get('page') or ['1'])[0]).strip()))
+        except Exception:
+            page = 1
+        token = self._read_github_token_header()
+        endpoint = GITHUB_API_BASE + '/repos/' + owner + '/' + repo + '/branches?' + urlencode({'per_page': 100, 'page': page})
         self._proxy_github_json(endpoint, token)
 
     def _read_github_token_header(self):

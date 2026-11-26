@@ -229,6 +229,7 @@ test('invalid selected commit data stops the import with a notification',()=>{
 test('paginates, forwards fixed time filters/token and filters dates and repeated SHAs',async()=>{
   const harness = makeHarness();
   harness.sandbox.fetch = async(url,options)=>{
+    if(url.startsWith('/api/github/branches'))return {ok:true,json:async()=>[]};
     harness.requests.push({url,options});
     const page = new URL(url,'http://localhost').searchParams.get('page');
     return {ok:true,json:async()=>page==='1'?Array.from({length:100},(_,index)=>githubCommit(index)):[githubCommit(100),githubCommit(0),githubCommit(101,'2026-11-15T00:00:00Z'),githubCommit(102,'2026-11-18T00:00:00Z')]};
@@ -247,6 +248,7 @@ test('paginates, forwards fixed time filters/token and filters dates and repeate
 test('omits missing time filters and keeps commits outside a 24h window',async()=>{
   const harness = makeHarness();
   harness.sandbox.fetch = async(url,options)=>{
+    if(url.startsWith('/api/github/branches'))return {ok:true,json:async()=>[]};
     harness.requests.push({url,options});
     return {ok:true,json:async()=>[githubCommit(0,'2020-01-01T00:00:00Z'),githubCommit(1,'2026-11-17T11:00:00Z')]};
   };
@@ -255,6 +257,22 @@ test('omits missing time filters and keeps commits outside a 24h window',async()
   const query = new URL(harness.requests[0].url,'http://localhost').searchParams;
   assert.equal(query.has('since'),false);
   assert.equal(query.get('until'),until);
+});
+
+test('collects commits from every branch and records branch names per commit',async()=>{
+  const harness = makeHarness();
+  const shared=githubCommit(1),onlyFeature=githubCommit(2);
+  harness.sandbox.fetch = async(url)=>{
+    const parsed=new URL(url,'http://localhost');
+    if(parsed.pathname==='/api/github/branches')return {ok:true,json:async()=>[{name:'feature/x'},{name:'main'}]};
+    if(parsed.pathname==='/api/github/repo')return {ok:true,json:async()=>({default_branch:'main'})};
+    return {ok:true,json:async()=>parsed.searchParams.get('sha')==='main'?[shared]:[shared,onlyFeature]};
+  };
+  const commits = await harness.api.fetchRecentCommits(harness.project,'',until);
+  assert.equal(commits.length,2);
+  assert.equal(commits.find(c=>c.sha===shared.sha).branches.join(','),'main,feature/x');
+  assert.equal(commits.find(c=>c.sha===shared.sha).branch,'main');
+  assert.equal(commits.find(c=>c.sha===onlyFeature.sha).branches.join(','),'feature/x');
 });
 
 test('preserves the GitHub author login through fetching and calendar prefill',async()=>{
@@ -277,6 +295,7 @@ test('queries the entire history even after an import so unselected commits rema
   const already=githubCommit(2,'2020-01-02T10:00:00Z');
   harness.tasks.push({projectId:'p1',githubCommitImport:{repository:'acme/app',until:'2026-11-14T09:30:00.000Z',shas:[already.sha]}});
   harness.sandbox.fetch=async(url,options)=>{
+    if(url.startsWith('/api/github/branches'))return {ok:true,json:async()=>[]};
     harness.requests.push({url,options});
     return {ok:true,json:async()=>[old,already]};
   };

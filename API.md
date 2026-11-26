@@ -263,6 +263,11 @@ Parameter:
 - `per_page` (optional, 1..100)
 - `page` (optional, ab 1)
 - `since`, `until` (optional, ISO-8601-Zeitstempel; werden an GitHub weitergegeben)
+- `sha` (optional, Branchname oder SHA, ab dem Commits gelistet werden)
+
+### `GET /api/github/branches?owner=<owner>&repo=<repo>&page=1`
+
+Liefert die Branch-Liste (100 pro Seite) analog GitHub REST API v3.
 
 ### GitHub-Commits in QuickTask
 
