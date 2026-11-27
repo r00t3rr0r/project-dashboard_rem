@@ -466,6 +466,11 @@
     return pending || Promise.resolve(!dirtyRemoteSyncKeys[KEYS.employees]);
   }
 
+  function waitForLabelSave() {
+    var pending = pendingStorageWrites[KEYS.labels];
+    return pending || Promise.resolve(!dirtyRemoteSyncKeys[KEYS.labels]);
+  }
+
   function waitForTaskAndCalendarSave() {
     return Promise.all([KEYS.tasks, KEYS.calendarEvents].map(function (key) {
       return pendingStorageWrites[key] || Promise.resolve(!dirtyRemoteSyncKeys[key]);
@@ -3327,6 +3332,7 @@
 
     // Labels CRUD
     getLabels:      getLabels,
+    waitForLabelSave: waitForLabelSave,
     createLabel:    createLabel,
     getLabelById:   getLabelById,
     updateLabel:    updateLabel,

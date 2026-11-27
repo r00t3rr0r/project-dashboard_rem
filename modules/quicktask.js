@@ -399,6 +399,20 @@ function buildLabelOptions(labels){
     return '<option value="'+escapeAttr(label.id)+'" style="background:'+escapeAttr(label.color||'transparent')+'">'+escapeHtml(label.name||'')+'</option>';
   }).join('');
 }
+function buildGitHubLabelOptions(labels,selectedNames){
+  var names=['Frontend','Backend','UX','Datastructure'];
+  var options=labels.map(function(label){return {name:String(label.name||''),value:String(label.id)};});
+  names.forEach(function(name){
+    if(!options.some(function(option){return option.name.trim().toLowerCase()===name.toLowerCase();}))options.push({name:name,value:'new-label:'+name});
+  });
+  return options.map(function(option){
+    var selected=selectedNames.some(function(name){return String(name).trim().toLowerCase()===option.name.trim().toLowerCase();});
+    return '<option value="'+escapeAttr(option.value)+'"'+(selected?' selected':'')+'>'+escapeHtml(option.name)+(option.value.indexOf('new-label:')===0?' (wird neu angelegt)':'')+'</option>';
+  }).join('');
+}
+function selectedLabelValues(select){
+  return Array.prototype.map.call(select.selectedOptions||[],function(option){return option.value;});
+}
 
 /* ---------- Modal-Popup (Bestandteil) ---------- */
 function openQuickTaskModal(prefill){
@@ -973,6 +987,7 @@ function openQuickTaskModal(prefill){
           var group=groupGitHubCommitDrafts(commits,String(thematicProject.github.defaultBranch||''))[0];
           group.draft.title=topic.title;
           group.draft.description='DE: '+topic.descriptionDe+'\nEN: '+topic.descriptionEn+'\nEN Titel: '+topic.titleEn+'\n\n'+group.draft.description;
+          group.labelNames=Array.isArray(topic.labelNames)?topic.labelNames:[];
           return group;
         });
         var first=githubDraftGroups[0];
@@ -980,12 +995,13 @@ function openQuickTaskModal(prefill){
         document.getElementById('qtm-desc').value=first.draft.description;
         document.getElementById('qtm-subtasks').value=first.draft.subtasks.join('\n');
         document.getElementById('qtm-attachments').value=first.commits.filter(function(commit){return commit.url;}).map(function(commit){return 'GitHub Commit '+commit.sha+'|'+commit.url;}).join('\n');
+        document.getElementById('qtm-labels').innerHTML=buildGitHubLabelOptions(labels,first.labelNames);
         document.getElementById('qtm-assignee-picker').classList.add('hidden');
         document.getElementById('qtm-assignee-help').textContent='Mitarbeiter werden unten pro Commit zugeordnet.';
         var topicHost=document.getElementById('qtm-github-daily-drafts');
         topicHost.innerHTML='<h3>Thematische GitHub-Aufgaben</h3><p>Die erste Aufgabe steht oben. Weitere Aufgaben und alle Mitarbeiterzuordnungen bitte hier pruefen.</p>'
           +githubDraftGroups.map(function(group,index){
-            var fields=index?'<h3>Aufgabe '+(index+1)+'</h3><label for="qtm-topic-title-'+index+'">Titel</label><input id="qtm-topic-title-'+index+'" value="'+escapeAttr(group.draft.title)+'"><label for="qtm-topic-desc-'+index+'">Beschreibung</label><textarea id="qtm-topic-desc-'+index+'" rows="6">'+escapeHtml(group.draft.description)+'</textarea><label for="qtm-topic-subtasks-'+index+'">Teilaufgaben (eine pro Zeile)</label><textarea id="qtm-topic-subtasks-'+index+'" rows="4">'+escapeHtml(group.draft.subtasks.join('\n'))+'</textarea>':'<h3>Aufgabe 1: Commit-Zuordnung</h3>';
+            var fields=index?'<h3>Aufgabe '+(index+1)+'</h3><label for="qtm-topic-title-'+index+'">Titel</label><input id="qtm-topic-title-'+index+'" value="'+escapeAttr(group.draft.title)+'"><label for="qtm-topic-desc-'+index+'">Beschreibung</label><textarea id="qtm-topic-desc-'+index+'" rows="6">'+escapeHtml(group.draft.description)+'</textarea><label for="qtm-topic-subtasks-'+index+'">Teilaufgaben (eine pro Zeile)</label><textarea id="qtm-topic-subtasks-'+index+'" rows="4">'+escapeHtml(group.draft.subtasks.join('\n'))+'</textarea><label for="qtm-topic-labels-'+index+'">Labels</label><select multiple id="qtm-topic-labels-'+index+'">'+buildGitHubLabelOptions(labels,group.labelNames)+'</select>':'<h3>Aufgabe 1: Commit-Zuordnung</h3>';
             return '<section class="qtm-new-section">'+fields+group.commits.map(function(commit){
               var id='qtm-github-assignee-'+commit.sha;
               return '<div class="form-group"><label for="'+escapeAttr(id)+'">'+escapeHtml(commit.title)+' · '+escapeHtml(commit.author)+' ['+escapeHtml(commit.sha.slice(0,7))+']</label><select id="'+escapeAttr(id)+'" required><option value="">-- Mitarbeiter auswaehlen --</option>'
@@ -1234,6 +1250,7 @@ function openQuickTaskModal(prefill){
             dayPayload.description=document.getElementById('qtm-topic-desc-'+index).value;
             dayPayload.subtasks=parseSubtasksFromText(document.getElementById('qtm-topic-subtasks-'+index).value);
             dayPayload.attachments=parseAttachmentsFromText(group.commits.filter(function(commit){return commit.url;}).map(function(commit){return 'GitHub Commit '+commit.sha+'|'+commit.url;}).join('\n'));
+            dayPayload.labels=selectedLabelValues(document.getElementById('qtm-topic-labels-'+index));
           }
           dayPayload.subtasks.forEach(function(subtask){subtask.completed=true;});
           dayPayload.status='done';
@@ -1305,6 +1322,41 @@ function openQuickTaskModal(prefill){
               if(!currentUser||payloads.some(function(item){return item.githubCommitImport.commits.some(function(commit){return String(commit.employeeId)!==String(currentUser.id);});}))throw new Error('Mitarbeiter duerfen Commits nur sich selbst zuordnen.');
               if(targets.some(function(task){return task&&task.assigneeId&&String(task.assigneeId)!==String(currentUser.id);}))throw new Error('Die bestehende Branch-Aufgabe kann nur vom verantwortlichen Mitarbeiter erweitert werden.');
             }
+            if(githubThematicDraft){
+              var allowedNewLabels=['Frontend','Backend','UX','Datastructure'];
+              var labelList=window.DataLayer.getLabels();
+              var requestedNames=[];
+              payloads.forEach(function(item){item.labels.forEach(function(value){
+                if(value.indexOf('new-label:')!==0)return;
+                var name=value.slice('new-label:'.length);
+                if(allowedNewLabels.indexOf(name)===-1)throw new Error('Unbekanntes Label: '+name);
+                if(requestedNames.indexOf(name)===-1)requestedNames.push(name);
+              });});
+              return window.DataLayer.waitForLabelSave().then(function(saved){
+                if(!saved)throw new Error('Labels konnten nicht dauerhaft gespeichert werden. Bitte erneut versuchen.');
+                return requestedNames.reduce(function(chain,name){return chain.then(function(){
+                  var label=labelList.find(function(entry){return String(entry.name||'').trim().toLowerCase()===name.toLowerCase();});
+                  if(label)return;
+                  label=window.DataLayer.createLabel({name:name});
+                  if(!label||!label.id)throw new Error('Label '+name+' konnte nicht erstellt werden.');
+                  return window.DataLayer.waitForLabelSave().then(function(persisted){
+                    if(!persisted)throw new Error('Label '+name+' konnte nicht dauerhaft gespeichert werden. Bitte erneut versuchen.');
+                  });
+                });},Promise.resolve());
+              }).then(function(){
+                payloads.forEach(function(item){item.labels=item.labels.map(function(value){
+                  if(value.indexOf('new-label:')!==0)return value;
+                  var name=value.slice('new-label:'.length);
+                  var label=labelList.find(function(entry){return String(entry.name||'').trim().toLowerCase()===name.toLowerCase();});
+                  if(!label||!label.id)throw new Error('Label '+name+' ist nicht verfuegbar.');
+                  return String(label.id);
+                });});
+                return createGitHubTasks();
+              });
+            }
+            return createGitHubTasks();
+            function createGitHubTasks(){
+            if(githubDraftGroups.some(function(group){return group.commits.some(function(commit){return !!getGitHubCommitDocumentationTaskId(commit.sha,selectedProject);});}))throw new Error('Mindestens ein Commit wurde inzwischen dokumentiert. Bitte Commits erneut abrufen.');
             var newPayloads=payloads.filter(function(_item,index){return !targets[index];});
             createdTasks=newPayloads.length?window.DataLayer.createTasks(newPayloads):[];
             if(!Array.isArray(createdTasks)||createdTasks.length!==newPayloads.length||createdTasks.some(function(task){return !task||!task.id;}))throw new Error('Aufgaben konnten nicht angelegt werden.');
@@ -1318,6 +1370,10 @@ function openQuickTaskModal(prefill){
               if(!window.DataLayer.updateTask(updated))throw new Error('Branch-Aufgabe '+task.title+' konnte nicht aktualisiert werden.');
               changedTasks.push(updated);
             });
+            return window.DataLayer.waitForTaskAndCalendarSave().then(function(saved){
+              if(!saved)throw new Error('Aufgaben oder Kalendereintraege konnten nicht dauerhaft gespeichert werden.');
+            });
+            }
           }else{
             createdTasks=[window.DataLayer.createTask(payloads[0])];
             changedTasks=createdTasks.slice();

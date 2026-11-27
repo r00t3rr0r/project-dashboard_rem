@@ -177,7 +177,7 @@ test('surfaces GitHub errors and malformed responses',async()=>{
 });
 
 function modalHarness() {
-  const h=harness(),elements={},created=[];
+  const h=harness(),elements={},created=[],labels=[];
   function element(id) {
     if(!elements[id])elements[id]={
       value:'',selectedOptions:[],options:[],disabled:false,checked:true,style:{},
@@ -194,7 +194,9 @@ function modalHarness() {
   h.sandbox.setTimeout=()=>{};
   h.sandbox.alert=message=>{throw new Error(message);};
   Object.assign(h.window.DataLayer,{
-    getProjects:()=>[h.project],getEmployees:()=>[{id:'alice',name:'Alice',github:{username:'alice'}},{id:'bob',name:'Bob',github:{username:'bob'}}],getLabels:()=>[],
+    getProjects:()=>[h.project],getEmployees:()=>[{id:'alice',name:'Alice',github:{username:'alice'}},{id:'bob',name:'Bob',github:{username:'bob'}}],getLabels:()=>labels,
+    createLabel:label=>{label.id='label-'+label.name;labels.push(label);return label;},
+    waitForLabelSave:()=>Promise.resolve(true),
     generateId:()=>Math.random().toString(),createTask:task=>{created.push(task);h.tasks.push(task);task.id='task'+created.length;return task;},
     createTasks:tasks=>tasks.map(task=>h.window.DataLayer.createTask(task)),
     updateTask:task=>{const index=h.tasks.findIndex(item=>item.id===task.id);if(index<0)return false;h.tasks[index]=task;return true;},
@@ -210,7 +212,7 @@ function modalHarness() {
     host.innerHTML='Commits vor der Uebersetzung auswaehlen';
     host.selectCommits=selected=>translate(selected||commits,()=>{});
   };
-  return {h,element,created};
+  return {h,element,created,labels};
 }
 
 test('AI Conf topics create separate completed tasks with their own summaries, commits and assignees',async()=>{
@@ -245,6 +247,57 @@ test('AI Conf topics create separate completed tasks with their own summaries, c
   assert.equal(created[1].attachments.length,1);
   assert.equal(created[0].githubCommitImport.taskBranches.length,0);
   assert.equal(created[1].githubCommitImport.until,'2020-01-02T00:00:00Z');
+});
+
+test('AI Conf saves editable labels separately per topic, reuses names and creates missing labels once',async()=>{
+  const {h,element,created,labels}=modalHarness();
+  labels.push({id:'existing-ux',name:'ux',color:'#abcdef'});
+  const commit=id=>({sha:String(id).repeat(40),date:'2020-01-01T10:00:00Z',author:'Alice',authorLogin:'alice',message:'Original',title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description'});
+  const group=(c,labelNames)=>({title:'Thema',titleEn:'Topic',descriptionDe:'Arbeit',descriptionEn:'Work',labelNames,commits:[c]});
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommitGroups:[group(commit(1),['Frontend','UX']),group(commit(2),['Backend','Frontend'])]});
+  element('qtm-project').value='p1';
+  assert.match(element('qtm-labels').innerHTML,/new-label:Frontend" selected/);
+  assert.match(element('qtm-labels').innerHTML,/existing-ux" selected/);
+  assert.match(element('qtm-github-daily-drafts').innerHTML,/new-label:Backend" selected/);
+  element('qtm-labels').selectedOptions=[{value:'new-label:Frontend'},{value:'existing-ux'}];
+  element('qtm-topic-labels-1').selectedOptions=[{value:'new-label:Backend'},{value:'new-label:Frontend'}];
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,2);
+  assert.equal(created[0].labels.join(','),'label-Frontend,existing-ux');
+  assert.equal(created[1].labels.join(','),'label-Backend,label-Frontend');
+  assert.equal(labels.filter(label=>label.name==='Frontend').length,1);
+  const storage=new Map();
+  const dataWindow={localStorage:{
+    getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,String(value)),
+    removeItem:key=>storage.delete(key),clear:()=>storage.clear(),key:index=>Array.from(storage.keys())[index]??null
+  }};
+  const source=fs.readFileSync(path.join(__dirname,'../data.js'),'utf8')
+    .replace('window.DataLayer.ready = runStartupHydration();','window.DataLayer.rehydrate = hydrateCollections; window.DataLayer.ready = Promise.resolve();')
+    .replace(/runStartupHydration\(\)\.finally\(function \(\) \{\s*startRemoteSyncLoop\(\);\s*startRemoteKvStream\(\);\s*\}\);/,'')
+    .replace("return fetchRemoteKv('POST', { key: key, value: value }).then(function (result) {","return Promise.resolve({ok:true}).then(function (result) {");
+  vm.runInNewContext(source,{window:dataWindow,console,URL,Promise});
+  const data=dataWindow.DataLayer;
+  for(const label of labels){data.createLabel({...label});assert.equal(await data.waitForLabelSave(),true);}
+  data.createTasks(created);
+  assert.equal(await data.waitForTaskAndCalendarSave(),true);
+  data.tasks.length=0;data.labels.length=0;data.calendarEvents.length=0;data.rehydrate();
+  assert.equal(data.getTaskById(created[0].id).labels.join(','),'label-Frontend,existing-ux');
+  assert.equal(data.getLabelById('label-Backend').name,'Backend');
+  assert.equal(data.getCalendarEvents().length,2);
+});
+
+test('AI Conf does not create tasks when label persistence fails',async()=>{
+  const {h,element,created}=modalHarness();
+  h.window.DataLayer.waitForLabelSave=()=>Promise.resolve(false);
+  const commit={sha:'a'.repeat(40),date:'2020-01-01T10:00:00Z',author:'Alice',authorLogin:'alice',message:'Original',title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description'};
+  h.window.QuickTaskModule.open({task:{projectId:'p1'},githubCommitGroups:[{title:'Thema',titleEn:'Topic',descriptionDe:'Arbeit',descriptionEn:'Work',labelNames:['Frontend'],commits:[commit]}]});
+  element('qtm-project').value='p1';
+  element('qtm-labels').selectedOptions=[{value:'new-label:Frontend'}];
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,0);
+  assert.match(element('qtm-upload-status').textContent,/Labels konnten nicht dauerhaft gespeichert/);
 });
 
 test('AI Conf rejects a missing commit subtask in any topic before creating tasks',async()=>{

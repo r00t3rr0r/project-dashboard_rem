@@ -355,7 +355,9 @@ beim Speichern angelegt. Ist der Browserspeicher nicht verfuegbar, erscheint
 eine Warnung und die Ergebnisse bleiben nur bis zum Neuladen im Arbeitsspeicher.
 Erst nach Pruefung und Auswahl oeffnet sich der vorausgefuellte Dialog
 "Neue Aufgabe". Die KI ordnet die ausgewaehlten Commits anhand ihrer Inhalte
-themenbezogen zu, auch ueber Autoren, Tage und Branches hinweg, und erstellt
+themenbezogen zu, auch ueber Autoren, Tage und Branches hinweg. Ein zweiter
+Abgleich kann zusammengehoerige Themen und Einzelcommits aus verschiedenen
+Batches zusammenfuehren; unsichere Vorschlaege bleiben getrennt. Die KI erstellt
 pro Thema einen zusammenfassenden Titel und eine Beschreibung auf Deutsch und
 Englisch. Die Vorschau zeigt die vorgeschlagene Zuordnung; Themen koennen
 abgewaehlt und Zusammenfassungen sowie Commit-Uebersetzungen bearbeitet werden.
@@ -367,6 +369,14 @@ und -Nachrichten. Der Commit wird deren erledigte Teilaufgabe. Zusaetzliche
 Zuordnungen ohne passenden Commit werden gemeldet und ignoriert. Anfragefehler
 oder unvollstaendige Zusammenfassungen werden weiterhin angezeigt; erfolgreiche
 Commit-Uebersetzungen bleiben fuer einen erneuten Versuch zwischengespeichert.
+
+Die KI schlaegt pro Aufgabe anhand der Commit-Inhalte Labels vor, darunter
+Frontend, Backend, UX und Datastructure sowie vorhandene Labels. Vorschlaege
+koennen in der Vorschau und fuer jede Aufgabe im Speicherdialog angepasst
+werden. Vorhandene Labels werden unabhaengig von Gross-/Kleinschreibung
+wiederverwendet; ausgewaehlte fehlende Standardlabels werden beim Speichern
+angelegt. Aufgaben speichern die Label-IDs. Wenn die Label-Speicherung
+fehlschlaegt, werden keine Aufgaben angelegt und der Fehler wird angezeigt.
 
 Pro ausgewaehltem Thema entsteht eine neue Aufgabe mit erledigten
 Commit-Teilaufgaben (`completed: true`), `status: done` und `progress: 100`.

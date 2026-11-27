@@ -65,6 +65,8 @@ function translatedSuggestion(commit){
 }
 function aiSuggestions(payload){
   const input=JSON.parse(payload.draftInput);
+  if(input.reconcileTopics)return input.reconcileTopics.map(topic=>({note:topic.id,titleDe:topic.topic,titleEn:'none'}));
+  if(input.labelTopics)return input.labelTopics.map(topic=>({note:topic.id,titleDe:topic.topic,labels:[]}));
   if(input.commits)return input.commits.map(commit=>({note:commit.sha,titleDe:'Anmeldung',titleEn:input.existingTopics[0]?.id||'new:login'}));
   if(payload.promptConfig.prompt.startsWith('Summarize'))return [{titleDe:'Anmeldung verbessert',titleEn:'Improved login',descriptionDe:'Anmeldung aktualisiert',descriptionEn:'Updated login'}];
   return input.map(translatedSuggestion);
@@ -74,6 +76,7 @@ test('groups related commits across batches by content and summarizes each topic
   const commits=Array.from({length:6},(_,i)=>({sha:String(i+1).repeat(40),message:i===4?'Login follow-up':i===1?'Calendar fix':'Login work',title:'Titel',titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description'}));
   h.window.LocalOllama.generate=async(_path,payload)=>{
     const data=JSON.parse(payload.draftInput);
+    if(data.reconcileTopics||data.labelTopics)return {draft:{taskSuggestions:aiSuggestions(payload)}};
     if(data.commits){
       assert(!payload.promptConfig.prompt.includes('test-token'));
       return {draft:{taskSuggestions:data.commits.map(c=>({note:c.sha,titleDe:c.message.includes('Calendar')?'Kalender':'Anmeldung',titleEn:c.message.includes('Calendar')?'new:calendar':data.existingTopics[0]?.id||'new:login'}))}};
@@ -87,12 +90,61 @@ test('groups related commits across batches by content and summarizes each topic
   assert.equal(groups[0].title,'Zusammenfassung 5');
 });
 
+test('reconciles early single commits with later related topics and labels the resulting tasks',async()=>{
+  const h=makeHarness();
+  h.window.DataLayer.getLabels=()=>[{id:'ux',name:'UX'}, {id:'db',name:'Database'}];
+  const commits=Array.from({length:6},(_,i)=>({sha:String(i+1).repeat(40),message:['Login validation','Calendar fix','Docs','Build','Login session','Login UI'][i],title:'Titel '+i,titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description'}));
+  h.window.LocalOllama.generate=async(_path,payload)=>{
+    const data=JSON.parse(payload.draftInput);
+    if(data.commits)return {draft:{taskSuggestions:data.commits.map(c=>({note:c.sha,titleDe:c.title,titleEn:c.sha===commits[0].sha?'none':c.sha===commits[4].sha||c.sha===commits[5].sha?'new:login':'none'}))}};
+    if(data.reconcileTopics){
+      const single=data.candidates.find(topic=>topic.commits.some(c=>c.sha===commits[0].sha));
+      const later=data.candidates.find(topic=>topic.commits.some(c=>c.sha===commits[4].sha));
+      return {draft:{taskSuggestions:data.reconcileTopics.map(topic=>({note:topic.id,titleDe:topic.topic,titleEn:topic.id===later.id?single.id:'none'}))}};
+    }
+    if(data.labelTopics){
+      assert(data.availableLabels.includes('Database'));
+      return {draft:{taskSuggestions:data.labelTopics.map(topic=>({note:topic.id,titleDe:topic.topic,labels:topic.commits.length===3?['frontend','UX','unknown']:['Database']}))}};
+    }
+    return {draft:{taskSuggestions:[{titleDe:'Anmeldung verbessert',titleEn:'Improved login',descriptionDe:'Anmeldung verbessert',descriptionEn:'Improved login'}]}};
+  };
+  const groups=await h.api.groupCommitTopics(h.project,commits);
+  const login=groups.find(group=>group.commits.some(commit=>commit.sha===commits[0].sha));
+  assert.equal(login.commits.length,3);
+  assert.equal(login.standalone,false);
+  assert.equal(login.title,'Anmeldung verbessert');
+  assert.equal(login.labelNames.join(','),'Frontend,UX');
+  assert(groups.filter(group=>group!==login).every(group=>group.labelNames.join(',')==='Database'));
+  assert.equal(new Set(groups.flatMap(group=>Array.from(group.commits,c=>c.sha))).size,6);
+});
+
+test('ignores ambiguous, forward and unknown reconciliation targets without losing commits',async()=>{
+  const h=makeHarness();
+  const commits=Array.from({length:4},(_,i)=>({sha:String(i+1).repeat(40),message:'Commit '+i,title:'Titel '+i,titleEn:'Title',descriptionDe:'Beschreibung',descriptionEn:'Description'}));
+  h.window.LocalOllama.generate=async(_path,payload)=>{
+    const data=JSON.parse(payload.draftInput);
+    if(data.commits)return {draft:{taskSuggestions:data.commits.map(c=>({note:c.sha,titleDe:c.title,titleEn:'none'}))}};
+    if(data.reconcileTopics)return {draft:{taskSuggestions:[
+      {note:data.candidates[0].id,titleDe:'A',titleEn:data.candidates[1].id},
+      {note:data.candidates[1].id,titleDe:'B',titleEn:'unbekannt'},
+      {note:data.candidates[2].id,titleDe:'C',titleEn:data.candidates[0].id},
+      {note:data.candidates[2].id,titleDe:'C',titleEn:data.candidates[1].id}
+    ]}};
+    return {draft:{taskSuggestions:aiSuggestions(payload)}};
+  };
+  const groups=await h.api.groupCommitTopics(h.project,commits);
+  assert.equal(groups.length,4);
+  assert(groups.every(group=>group.standalone&&group.commits.length===1));
+  assert.equal(new Set(groups.map(group=>group.commits[0].sha)).size,4);
+});
+
 test('unassigned or ambiguous commits become separate tasks using their existing translations',async()=>{
   const h=makeHarness(),messages=[];
   const commits=Array.from({length:6},(_,i)=>({sha:String(i+1).repeat(40),message:'Original '+i,title:'Titel '+i,titleEn:'Title '+i,descriptionDe:'Beschreibung '+i,descriptionEn:'Description '+i}));
   let summaryCalls=0,assignCalls=0;
   h.window.LocalOllama.generate=async(_path,payload)=>{
     const data=JSON.parse(payload.draftInput);
+    if(data.reconcileTopics||data.labelTopics)return {draft:{taskSuggestions:aiSuggestions(payload)}};
     if(!data.commits){
       summaryCalls++;
       return {draft:{taskSuggestions:[{titleDe:'Gemeinsames Thema',titleEn:'Shared topic',descriptionDe:'Gemeinsame Arbeit',descriptionEn:'Shared work'}]}};
@@ -146,6 +198,7 @@ test('cached translations survive a failed grouping and an unknown topic imports
   let translationCalls=0,groupCalls=0;
   h.window.LocalOllama.generate=async(_path,payload)=>{
     const data=JSON.parse(payload.draftInput);
+    if(data.labelTopics)return {draft:{taskSuggestions:aiSuggestions(payload)}};
     if(Array.isArray(data)){
       translationCalls++;
       return {draft:{taskSuggestions:data.map(translatedSuggestion)}};
@@ -176,6 +229,7 @@ test('supports more than eight distinct topics without dropping commits',async()
   const commits=Array.from({length:10},(_,i)=>({sha:i.toString(16).repeat(40),message:'Topic '+i,title:'Thema '+i}));
   h.window.LocalOllama.generate=async(_path,payload)=>{
     const data=JSON.parse(payload.draftInput);
+    if(data.reconcileTopics||data.labelTopics)return {draft:{taskSuggestions:aiSuggestions(payload)}};
     return {draft:{taskSuggestions:data.commits
       ?data.commits.map(c=>({note:c.sha,titleDe:c.title,titleEn:'new:'+c.sha}))
       :[{titleDe:'Thema',titleEn:'Topic',descriptionDe:'Arbeit',descriptionEn:'Work'}]}};
@@ -203,7 +257,7 @@ for(const hostname of ['127.0.0.1','dashboard.example']){
     const groups=await h.api.groupCommitTopics(h.project,[{sha,message:'Login fix',title:'Anmeldung',titleEn:'Login',descriptionDe:'Korrigiert',descriptionEn:'Fixed'}]);
     assert.equal(groups[0].commits[0].sha,sha);
     assert.equal(groups[0].title,'Anmeldung verbessert');
-    assert.equal(calls,2);
+    assert.equal(calls,3);
   });
 }
 
@@ -211,12 +265,13 @@ test('only selected topics open for import and stale commits abort the entire se
   const h=makeHarness();
   const commit=sha=>({sha,message:'Original',date:'2020-01-01T10:00:00Z',author:'Dev',title:'Titel',titleEn:'Title',descriptionDe:'Deutsch',descriptionEn:'English'});
   const first=commit('a'.repeat(40)),second=commit('b'.repeat(40));
-  const group=c=>({title:'Thema',titleEn:'Topic',descriptionDe:'Arbeit',descriptionEn:'Work',commits:[c]});
+  const group=c=>({title:'Thema',titleEn:'Topic',descriptionDe:'Arbeit',descriptionEn:'Work',labelNames:['Frontend','UX'],commits:[c]});
   h.api.setDraft({projectId:'p1',mode:'githubCommits',thematic:true,repository:'acme/app',items:[group(first),group(second)]});
   h.root.querySelectorAll=()=>[{getAttribute:()=>1}];
   h.api.importCommitTopicTasks(h.root);
   assert.equal(h.openedDrafts[0].githubCommitGroups.length,1);
   assert.equal(h.openedDrafts[0].githubCommitGroups[0].commits[0].sha,second.sha);
+  assert.equal(h.openedDrafts[0].githubCommitGroups[0].labelNames.join(','),'Frontend,UX');
   h.tasks.push({projectId:'p1',githubCommitImport:{repository:'acme/app',shas:[second.sha]}});
   h.api.importCommitTopicTasks(h.root);
   assert.equal(h.openedDrafts.length,1);
@@ -825,7 +880,7 @@ test('batches AI requests and creates only a preview until confirmation',async()
   await harness.api.runCommitAssistant(harness.root);
   assert.equal(batchCount,0);
   await translateSelection(harness);
-  assert.equal(batchCount,9);
+  assert.equal(batchCount,10);
   assert.equal(harness.tasks.length,0);
   assert(harness.host.innerHTML.includes('Als erledigt uebernehmen'));
   assert.equal((harness.host.innerHTML.match(/data-translation-sha=/g)||[]).length,52);
