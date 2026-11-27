@@ -160,6 +160,14 @@ test('AI project knowledge is hidden from non-admin project cards', () => {
   assert.match(html, /Hosting &amp; Live-Status/);
 });
 
+test('legacy knowledge paths with a leading slash remain accessible to admins', () => {
+  const api = harness();
+  const html = api.renderProjectHeadResources({
+    id:'p1', aiKnowledge:{filePath:'/data/project-knowledge/p1.md'}, hosting:{}
+  }, {attachmentCount:0,secretCount:0,noteCount:0,linkCount:0}, true);
+  assert.match(html, /\/api\/ai\/project-knowledge\?projectId=p1/);
+});
+
 test('automatic DNS and verified TLS details are shown separately from manual information', () => {
   const api = harness();
   const project = {id:'p1', hosting:{url:'https://example.com/'}};

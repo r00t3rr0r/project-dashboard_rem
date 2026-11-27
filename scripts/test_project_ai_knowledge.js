@@ -178,13 +178,25 @@ test('manuelle Bearbeitung im automatischen Bereich bleibt bei der Aktualisierun
 test('Lese- und zwischenzeitliche Bearbeitungsfehler verhindern das Ueberschreiben',async()=>{
   const h=harness('ollama',{tree:[]});
   h.project.aiKnowledge={filePath:'data/project-knowledge/p1.md'};
-  h.window.testOverrides.readKnowledge=async()=>({ok:false,status:500});
+  h.window.testOverrides.readKnowledge=async()=>({ok:false,status:500,json:async()=>({error:'Lesefehler'})});
   await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/konnte nicht geladen werden/);
   assert.equal(h.saved.length,0);
   let reads=0;
   h.window.testOverrides.readKnowledge=async()=>({ok:true,text:async()=>++reads===1?'Original':'Zwischenzeitlich bearbeitet'});
   await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/zwischenzeitlich geaendert/);
   assert.equal(h.saved.length,0);
+});
+
+test('fehlende Wissensdatei meldet die Ursache und wird nicht ueberschrieben',async()=>{
+  const h=harness('ollama',{tree:[]});
+  h.project.aiKnowledge={filePath:'/data/project-knowledge/missing.md'};
+  h.window.testOverrides.readKnowledge=async()=>({ok:false,status:404,json:async()=>({
+    error:'Die hinterlegte Wissensdatei wurde auf dem Server nicht gefunden. Bitte aus einer Sicherung wiederherstellen.'
+  })});
+  await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/Sicherung wiederherstellen/);
+  assert.equal(h.saved.length,0);
+  assert.equal(h.project.aiKnowledge.filePath,'/data/project-knowledge/missing.md');
+  assert.doesNotMatch(h.dialogs[0].querySelector('[data-run-log]').textContent,/Der Fortschritt ist auf dem Server gespeichert/);
 });
 
 test('beschaedigte Markierungen verhindern das Ueberschreiben',async()=>{

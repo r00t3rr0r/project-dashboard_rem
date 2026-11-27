@@ -3852,7 +3852,7 @@ function renderProjectHeadResources(project,flow,canEdit){
   var ai=ensureProjectAiKnowledge(project);
   var showAiKnowledge=isProjectKnowledgeAdmin();
   var hosting=project.hosting||{};
-  var knowledgePath=/^data\/project-knowledge\/[A-Za-z0-9._-]+\.md$/.test(ai.filePath)?ai.filePath:'';
+  var knowledgePath=/^\/?data\/project-knowledge\/[A-Za-z0-9._-]+\.md$/.test(ai.filePath)?ai.filePath:'';
   var liveUrl=safeHostingUrl(hosting.url);
   var adminUrl=safeHostingUrl(hosting.adminUrl);
   var html='<section class="project-head-resources" aria-label="Projektwissen und Hosting">'
@@ -5681,7 +5681,11 @@ function mergeKnowledgeDocument(existing,generated){
 function readKnowledgeForUpdate(projectId,hasFile){
   if(!hasFile)return Promise.resolve('');
   return fetch('/api/ai/project-knowledge?projectId='+encodeURIComponent(projectId),{method:'GET',cache:'no-store'}).then(function(response){
-    if(!response.ok)throw new Error('Vorhandenes Projektwissen konnte nicht geladen werden (HTTP '+response.status+').');
+    if(!response.ok){
+      return response.json().catch(function(){return {};}).then(function(body){
+        throw new Error('Vorhandenes Projektwissen konnte nicht geladen werden (HTTP '+response.status+'). '+String(body&&body.error||'Bitte Serververbindung und Projektverknuepfung pruefen.'));
+      });
+    }
     return response.text();
   });
 }
@@ -6023,7 +6027,7 @@ function generateAiKnowledgeForProject(projectId){
     return body;
   }).catch(function(err){
     run.finished=true;
-    updateKnowledgeProgress(projectId,(err.name==='AbortError'?'Pausiert: ':'Fehler: ')+(err.message||String(err))+' · Der Fortschritt ist auf dem Server gespeichert; ein erneuter Start setzt fort.');
+    updateKnowledgeProgress(projectId,(err.name==='AbortError'?'Pausiert: ':'Fehler: ')+(err.message||String(err))+' · Bereits gespeicherte Abschnitte koennen bei einem erneuten Start wiederverwendet werden.');
     clearInterval(timer);
     delete KNOWLEDGE_RUNS[projectId];
     var failedProject=window.DataLayer.getProjectById(projectId);

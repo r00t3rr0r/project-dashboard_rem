@@ -891,8 +891,8 @@ class StorageHandler(BaseHTTPRequestHandler):
                 conn.close()
             knowledge = project.get('aiKnowledge') if project else None
             path = knowledge.get('filePath', '') if isinstance(knowledge, dict) else ''
-            if not isinstance(path, str) or not re.fullmatch(r'data/project-knowledge/[A-Za-z0-9._-]+\.md', path):
-                self._send_json({'error': 'Keine Wissensdatei vorhanden.'}, status=404)
+            if not isinstance(path, str) or not re.fullmatch(r'/?data/project-knowledge/[A-Za-z0-9._-]+\.md', path):
+                self._send_json({'error': 'Keine gueltige Wissensdatei im Projekt hinterlegt.'}, status=404)
                 return
             root = os.path.realpath(KNOWLEDGE_DIR)
             filename = os.path.realpath(os.path.join(root, os.path.basename(path)))
@@ -902,7 +902,7 @@ class StorageHandler(BaseHTTPRequestHandler):
             with open(filename, 'rb') as handle:
                 content = handle.read()
         except FileNotFoundError:
-            self._send_json({'error': 'Wissensdatei nicht gefunden.'}, status=404)
+            self._send_json({'error': 'Die hinterlegte Wissensdatei wurde auf dem Server nicht gefunden. Bitte aus einer Sicherung wiederherstellen.'}, status=404)
             return
         except (OSError, sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
             self._send_json({'error': 'Wissensdatei konnte nicht geladen werden: ' + str(exc)}, status=500)

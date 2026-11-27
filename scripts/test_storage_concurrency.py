@@ -174,6 +174,13 @@ class StorageConcurrencyTest(unittest.TestCase):
                 with urllib.request.urlopen(request) as response:
                     self.assertEqual(response.read().decode('utf-8'), '# Projektwissen')
                     self.assertEqual(response.headers.get_content_type(), 'text/plain')
+                project['aiKnowledge']['filePath'] = '/data/project-knowledge/test.md'
+                conn = storage.open_db_connection()
+                conn.execute('UPDATE kv_store SET value = ? WHERE key = ?', (json.dumps([project]), 'pd_projects'))
+                conn.commit()
+                conn.close()
+                with urllib.request.urlopen(request) as response:
+                    self.assertEqual(response.read().decode('utf-8'), '# Projektwissen')
                 project['aiKnowledge']['filePath'] = 'data/project-knowledge/../test.md'
                 conn = storage.open_db_connection()
                 conn.execute('UPDATE kv_store SET value = ? WHERE key = ?', (json.dumps([project]), 'pd_projects'))
@@ -182,6 +189,15 @@ class StorageConcurrencyTest(unittest.TestCase):
                 with self.assertRaises(urllib.error.HTTPError) as caught:
                     urllib.request.urlopen(request)
                 self.assertEqual(caught.exception.code, 404)
+                project['aiKnowledge']['filePath'] = '/data/project-knowledge/missing.md'
+                conn = storage.open_db_connection()
+                conn.execute('UPDATE kv_store SET value = ? WHERE key = ?', (json.dumps([project]), 'pd_projects'))
+                conn.commit()
+                conn.close()
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(request)
+                self.assertEqual(caught.exception.code, 404)
+                self.assertIn('Sicherung', json.loads(caught.exception.read())['error'])
         finally:
             conn = storage.open_db_connection()
             if old:
