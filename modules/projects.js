@@ -5571,6 +5571,13 @@ function openAiKnowledgeTaskDialog(projectId,options){
   }
 }
 
+function updateKnowledgePreview(element,preview){
+  if(!element||element.textContent===preview)return false;
+  element.textContent=preview;
+  element.scrollTop=element.scrollHeight;
+  return true;
+}
+
 function updateKnowledgeProgress(projectId,message,preview){
   var run=KNOWLEDGE_RUNS[projectId];
   if(!run)return;
@@ -5579,7 +5586,7 @@ function updateKnowledgeProgress(projectId,message,preview){
   var progress=byId('knowledge-progress-'+projectId);
   var output=byId('knowledge-preview-'+projectId);
   if(progress)progress.textContent=run.message+' · '+Math.floor((Date.now()-run.startedAt)/1000)+' Sekunden';
-  if(output)output.textContent=run.preview;
+  updateKnowledgePreview(output,run.preview);
   if(message){
     run.logs.push(new Date().toLocaleTimeString('de-DE')+' '+message);
     if(run.logs.length>500)run.logs.shift();
@@ -5590,7 +5597,7 @@ function updateKnowledgeProgress(projectId,message,preview){
     run.ui.progress.value=run.completed;
     run.ui.log.textContent=run.logs.join('\n');
     run.ui.log.scrollTop=run.ui.log.scrollHeight;
-    if(typeof preview==='string')run.ui.preview.textContent=run.preview;
+    if(updateKnowledgePreview(run.ui.preview,run.preview))run.ui.body.scrollTop=run.ui.body.scrollHeight;
     run.ui.stop.disabled=run.finished||run.saving;
     run.ui.close.disabled=!run.finished;
     run.ui.tasks.hidden=!run.saved;
@@ -5610,14 +5617,14 @@ function openKnowledgeProgressDialog(project,run){
     +'<div class="knowledge-generation-body"><p data-run-status role="status" aria-live="polite"></p>'
     +'<progress data-run-progress aria-label="Abgeschlossene Wissensabschnitte" max="1" value="0"></progress>'
     +'<h3>Debug / Aktionslog</h3><pre data-run-log role="log" aria-live="polite"></pre>'
-    +'<h3>Erzeugtes Wissen (Markdown)</h3><pre data-run-preview></pre></div>'
+    +'<h3>Erzeugtes Wissen (Markdown)</h3><pre data-run-preview tabindex="0" aria-label="Erzeugtes Wissen als Markdown"></pre></div>'
     +'<footer class="project-knowledge-header"><button type="button" class="btn btn-danger" data-run-stop>Pausieren</button>'
     +'<button type="button" class="btn btn-secondary" data-run-tasks hidden>Aufgaben ableiten</button>'
     +'<button type="button" class="btn btn-secondary" data-run-close disabled>Schliessen</button></footer>';
   run.dialog=dialog;
   run.ui={
     status:dialog.querySelector('[data-run-status]'),progress:dialog.querySelector('[data-run-progress]'),
-    log:dialog.querySelector('[data-run-log]'),preview:dialog.querySelector('[data-run-preview]'),
+    body:dialog.querySelector('.knowledge-generation-body'),log:dialog.querySelector('[data-run-log]'),preview:dialog.querySelector('[data-run-preview]'),
     stop:dialog.querySelector('[data-run-stop]'),close:dialog.querySelector('[data-run-close]'),tasks:dialog.querySelector('[data-run-tasks]')
   };
   run.ui.stop.addEventListener('click',function(){

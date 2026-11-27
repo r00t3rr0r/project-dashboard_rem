@@ -281,14 +281,36 @@ test('Fortschritt und vorhandene Abschnitte bleiben waehrend langer KI-Anfragen 
   h.window.LocalOllama.generate=()=>new Promise(resolve=>{finish=resolve;});
   const pending=h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
   await new Promise(resolve=>setImmediate(resolve));
+  const preview=h.dialogs[0].querySelector('[data-run-preview]');
+  const body=h.dialogs[0].querySelector('.knowledge-generation-body');
+  body.scrollHeight=600;
+  preview.scrollHeight=400;
+  h.elements['knowledge-preview-p1'].scrollHeight=200;
   h.window.testRuns.p1.startedAt=Date.now()-31000;
   h.tick();
   assert.match(h.elements['knowledge-progress-p1'].textContent,/Abschnitt 1 von 2.*31 Sekunden/);
-  finish({markdown:'Erster Abschnitt',model:'test'});
+  finish({markdown:'Erster Abschnitt <code>',model:'test'});
   await new Promise(resolve=>setImmediate(resolve));
   assert.match(h.elements['knowledge-preview-p1'].textContent,/Erster Abschnitt/);
+  assert.match(preview.textContent,/Erster Abschnitt <code>/);
+  assert.equal(preview.scrollTop,400);
+  assert.equal(body.scrollTop,600);
+  assert.equal(h.elements['knowledge-preview-p1'].scrollTop,200);
+  preview.scrollTop=10;
+  body.scrollTop=20;
+  h.elements['knowledge-preview-p1'].scrollTop=5;
+  h.tick();
+  assert.equal(preview.scrollTop,10);
+  assert.equal(body.scrollTop,20);
+  assert.equal(h.elements['knowledge-preview-p1'].scrollTop,5);
+  preview.scrollHeight=800;
+  body.scrollHeight=900;
   finish({markdown:'Zweiter Abschnitt',model:'test'});
   await pending;
+  assert.equal(preview.textContent,h.saved[0].payload.markdown);
+  assert.match(preview.textContent,/Erster Abschnitt <code>[\s\S]*Zweiter Abschnitt/);
+  assert.equal(preview.scrollTop,800);
+  assert.equal(body.scrollTop,900);
 });
 
 test('grosser Kontext mit Unicode wird ohne Datenverlust innerhalb des Kontextbudgets zerlegt',async()=>{
