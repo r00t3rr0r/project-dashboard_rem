@@ -7,6 +7,7 @@ const {test} = require('node:test');
 function harness(provider, tree) {
   const project = {id:'p1', name:'Demo', github:{url:'https://github.com/acme/demo'}};
   const saved = [];
+  const drafts = [];
   const requests = [];
   const dialogs = [];
   const notifications = [];
@@ -31,7 +32,9 @@ function harness(provider, tree) {
       buildProjectKnowledgeSnapshot:()=>({project:{title:'Demo'}}),
       fetchRepoMeta:async()=>({default_branch:'main'}),
       fetchGitHubJson:async(url)=>url.includes('/commits/')?{sha:'commit-123',commit:{tree:{sha:'tree-123'}}}:tree,
-      postBackendJson:async(url,payload)=>{saved.push({url,payload}); return {filePath:'data/project-knowledge/p1.md',bytes:123};}
+      postBackendJson:async(url,payload)=>{
+        if(url==='/api/project-knowledge/draft'){drafts.push(payload); return {ok:true};}
+        saved.push({url,payload}); return {filePath:'data/project-knowledge/p1.md',bytes:123};}
     }
   };
   function element(){
@@ -61,7 +64,7 @@ function harness(provider, tree) {
   );
   vm.runInNewContext(source,{window,document,URL,Date,console,TextEncoder,AbortController,
     setInterval:fn=>{interval=fn;return 1;},clearInterval(){}});
-  return {window,project,saved,requests,elements,dialogs,notifications,tick:()=>interval()};
+  return {window,project,saved,drafts,requests,elements,dialogs,notifications,tick:()=>interval()};
 }
 
 for (const provider of ['ollama','claude','openai']) {
@@ -188,6 +191,22 @@ test('ein Fehler beim Speichern laesst die bisherige Wissensdatei bestehen',asyn
   h.window.testOverrides.postBackendJson=async()=>{throw new Error('Speicherfehler');};
   await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/Speicherfehler/);
   assert.equal(h.project.aiKnowledge.filePath,'data/project-knowledge/old.md');
+  assert.equal(h.project.aiKnowledge.lastStatus,'error');
+});
+
+test('fertige Abschnitte werden bei KI-Ausfall auf dem Server zwischengespeichert',async()=>{
+  const tree={tree:Array.from({length:101},(_,i)=>({path:'src/file'+i+'.js',type:'blob'})),truncated:false};
+  const h=harness('ollama',tree);
+  const generate=h.window.LocalOllama.generate;
+  let calls=0;
+  h.window.LocalOllama.generate=async(...args)=>{
+    if(++calls===3)throw new Error('KI nicht erreichbar');
+    return generate(...args);
+  };
+  await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/KI nicht erreichbar/);
+  assert.equal(h.drafts.length,2);
+  assert.equal(h.drafts[0].scope,'ollama|'+h.project.aiKnowledge.preferredModel+'|commit-123');
+  assert.equal(h.saved.length,0);
   assert.equal(h.project.aiKnowledge.lastStatus,'error');
 });
 

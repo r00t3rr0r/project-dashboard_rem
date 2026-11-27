@@ -34,6 +34,7 @@ BACKUP_STAMP_PATH = os.path.join(ROOT, 'data', 'projekt-dashboard.backup.stamp')
 KV_SNAPSHOT_PATH = os.path.join(ROOT, 'data', '.projekt-dashboard.snapshot.json')
 KV_SNAPSHOT_GZIP_PATH = KV_SNAPSHOT_PATH + '.gz'
 KNOWLEDGE_DIR = os.path.join(ROOT, 'data', 'project-knowledge')
+KNOWLEDGE_DRAFT_DIR = os.path.join(ROOT, 'data', 'project-knowledge-drafts')
 MEETINGS_DIR = os.path.join(ROOT, 'data', 'meetings')
 TASK_ATTACHMENT_DIR = os.path.join(ROOT, 'data', 'task-attachments')
 HOST = os.environ.get('PROJECT_DASHBOARD_STORAGE_HOST', '0.0.0.0')
@@ -325,6 +326,7 @@ def _ensure_daily_backup_locked(force):
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     os.makedirs(KNOWLEDGE_DIR, exist_ok=True)
+    os.makedirs(KNOWLEDGE_DRAFT_DIR, exist_ok=True)
     os.makedirs(MEETINGS_DIR, exist_ok=True)
     with STORAGE_LOCK:
         conn = open_db_connection(DB_PATH)
@@ -648,6 +650,9 @@ class StorageHandler(BaseHTTPRequestHandler):
         if parsed.path == '/api/ai/project-knowledge':
             self._handle_project_knowledge_get(parsed)
             return
+        if parsed.path == '/api/project-knowledge/draft':
+            self._handle_project_knowledge_draft_get(parsed)
+            return
         if parsed.path == '/api/hosting/checks':
             try:
                 conn = open_db_connection()
@@ -716,6 +721,9 @@ class StorageHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == '/api/project-knowledge':
             self._handle_project_knowledge_save()
+            return
+        if parsed.path == '/api/project-knowledge/draft':
+            self._handle_project_knowledge_draft_post()
             return
         if parsed.path == '/api/ai/project-context':
             self._handle_project_context_post()
@@ -1164,6 +1172,75 @@ class StorageHandler(BaseHTTPRequestHandler):
             'filePath': '/' + relative_path,
             'bytes': len(document.encode('utf-8'))
         })
+
+    def _knowledge_draft_path(self, project_id):
+        name = hashlib.sha256(project_id.encode('utf-8')).hexdigest()[:32] + '.json'
+        return os.path.join(KNOWLEDGE_DRAFT_DIR, name)
+
+    def _handle_project_knowledge_draft_get(self, parsed):
+        if not self._require_admin():
+            return
+        project_id = ((parse_qs(parsed.query).get('projectId') or [''])[0]).strip()
+        scope = (parse_qs(parsed.query).get('scope') or [''])[0]
+        if not project_id:
+            self._send_json({'error': 'projectId is required.'}, status=400)
+            return
+        draft = {'scope': scope, 'items': {}}
+        try:
+            with open(self._knowledge_draft_path(project_id), 'r', encoding='utf-8') as handle:
+                stored = json.load(handle)
+            if isinstance(stored, dict) and stored.get('scope') == scope and isinstance(stored.get('items'), dict):
+                draft = stored
+        except (OSError, ValueError):
+            pass
+        self._send_json({'ok': True, 'scope': draft['scope'], 'items': draft['items']})
+
+    def _handle_project_knowledge_draft_post(self):
+        if not self._require_admin():
+            return
+        payload, error = self._read_json_payload()
+        if error:
+            self._send_json({'error': error}, status=400)
+            return
+        project_id = str(payload.get('projectId') or '').strip()
+        if not project_id:
+            self._send_json({'error': 'projectId is required.'}, status=400)
+            return
+        path = self._knowledge_draft_path(project_id)
+        try:
+            with STORAGE_LOCK:
+                if payload.get('clear'):
+                    try:
+                        os.remove(path)
+                    except FileNotFoundError:
+                        pass
+                    self._send_json({'ok': True, 'count': 0})
+                    return
+                scope = str(payload.get('scope') or '')
+                items = payload.get('items')
+                if not scope or not isinstance(items, dict):
+                    self._send_json({'error': 'scope and items are required.'}, status=400)
+                    return
+                merged = {}
+                try:
+                    with open(path, 'r', encoding='utf-8') as handle:
+                        stored = json.load(handle)
+                    if isinstance(stored, dict) and stored.get('scope') == scope and isinstance(stored.get('items'), dict):
+                        merged = stored['items']
+                except (OSError, ValueError):
+                    pass
+                for key, item in items.items():
+                    if isinstance(key, str) and isinstance(item, dict) and isinstance(item.get('text'), str) and item['text'].strip():
+                        merged[key] = {'text': item['text'], 'model': str(item.get('model') or '')}
+                document = json.dumps({'scope': scope, 'updatedAt': utc_now_iso_z(), 'items': merged}, ensure_ascii=False)
+                if len(document.encode('utf-8')) > 20 * 1024 * 1024:
+                    self._send_json({'error': 'Zwischenstand ist groesser als 20 MB.'}, status=400)
+                    return
+                _atomic_write_text(path, document)
+        except OSError as exc:
+            self._send_json({'error': 'Zwischenstand konnte nicht gespeichert werden: ' + str(exc)}, status=500)
+            return
+        self._send_json({'ok': True, 'count': len(merged)})
 
     def _handle_project_knowledge_save(self):
         if not self._require_admin():
