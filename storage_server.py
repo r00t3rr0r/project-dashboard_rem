@@ -1134,6 +1134,32 @@ class StorageHandler(BaseHTTPRequestHandler):
                 self._send_json({'error': 'Projektwissen-Chunk ueberschreitet das Kontextbudget.',
                                  'code': 'AI_CONTEXT_LIMIT'}, status=400)
                 return
+        if payload.get('analysisOnly') is True and payload.get('stream') is True:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/x-ndjson; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.send_header('Connection', 'close')
+            self._apply_security_headers()
+            self.end_headers()
+            self.close_connection = True
+
+            def send_chunk(item):
+                self.wfile.write((json.dumps(item, ensure_ascii=False) + '\n').encode('utf-8'))
+                self.wfile.flush()
+
+            try:
+                self._call_ollama(model, prompt, max_tokens=knowledge_tokens, require_complete=True,
+                                  on_chunk=lambda text: send_chunk({'type': 'delta', 'text': text}))
+                send_chunk({'type': 'done', 'model': model})
+            except RuntimeError as exc:
+                message = str(exc)
+                code = ('AI_OUTPUT_TRUNCATED' if 'abgeschnitten' in message else
+                        'AI_CONTEXT_LIMIT' if re.search(r'context.{0,30}(?:length|window|limit)|maximum context|prompt.{0,20}too long', message, re.I) else '')
+                send_chunk({'type': 'error', 'error': message, 'code': code})
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         try:
             ai_text, _ai_chunks = self._call_ollama(model, prompt, max_tokens=knowledge_tokens, require_complete=True) if payload.get('analysisOnly') is True else self._call_ollama(model, prompt)
         except RuntimeError as exc:
@@ -2740,7 +2766,7 @@ class StorageHandler(BaseHTTPRequestHandler):
             text = str(text or '')
         return '\\n'.join(header) + '\\n' + text.strip() + '\\n'
 
-    def _call_ollama(self, model, prompt, temperature=0.2, max_tokens=1400, response_format=None, require_complete=False):
+    def _call_ollama(self, model, prompt, temperature=0.2, max_tokens=1400, response_format=None, require_complete=False, on_chunk=None):
         payload = {
             'model': model,
             'prompt': prompt,
@@ -2755,9 +2781,12 @@ class StorageHandler(BaseHTTPRequestHandler):
         if require_complete:
             payload['truncate'] = False
             payload['options']['num_ctx'] = 8192
+            if on_chunk:
+                payload['think'] = False
         data = json.dumps(payload).encode('utf-8')
         errors = []
         for base_url in OLLAMA_BASE_URLS:
+            emitted = False
             endpoint = base_url + '/api/generate'
             request = urllib.request.Request(
                 endpoint,
@@ -2782,6 +2811,9 @@ class StorageHandler(BaseHTTPRequestHandler):
                         if text:
                             chunks.append(text)
                             collected.append(text)
+                            if on_chunk:
+                                on_chunk(text)
+                                emitted = True
                         if piece.get('done'):
                             if require_complete and piece.get('done_reason') == 'length':
                                 raise RuntimeError('Die Ollama-Antwort wurde abgeschnitten.')
@@ -2796,7 +2828,11 @@ class StorageHandler(BaseHTTPRequestHandler):
             except urllib.error.HTTPError as exc:
                 details = exc.read().decode('utf-8', errors='ignore')
                 errors.append(base_url + ': HTTP ' + str(exc.code) + ' ' + details)
+            except (BrokenPipeError, ConnectionResetError):
+                raise
             except Exception as exc:
+                if emitted:
+                    raise RuntimeError(str(exc)) from exc
                 errors.append(base_url + ': ' + str(exc))
         raise RuntimeError('Ollama nicht erreichbar. Gepruefte Instanzen: ' + '; '.join(errors))
 

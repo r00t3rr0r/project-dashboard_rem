@@ -277,8 +277,8 @@ test('Projektwissen nutzt beim Commit-Abruf den Token-Fallback von AI Conf',asyn
 
 test('Fortschritt und vorhandene Abschnitte bleiben waehrend langer KI-Anfragen sichtbar',async()=>{
   const h=harness('ollama',{tree:[{path:'app.js',type:'blob'}]});
-  let finish;
-  h.window.LocalOllama.generate=()=>new Promise(resolve=>{finish=resolve;});
+  let finish,progress;
+  h.window.LocalOllama.generate=(path,payload,options)=>new Promise(resolve=>{finish=resolve;progress=options.onProgress;});
   const pending=h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
   await new Promise(resolve=>setImmediate(resolve));
   const preview=h.dialogs[0].querySelector('[data-run-preview]');
@@ -289,6 +289,10 @@ test('Fortschritt und vorhandene Abschnitte bleiben waehrend langer KI-Anfragen 
   h.window.testRuns.p1.startedAt=Date.now()-31000;
   h.tick();
   assert.match(h.elements['knowledge-progress-p1'].textContent,/Abschnitt 1 von 2.*31 Sekunden/);
+  progress('Live <code>');
+  assert.match(preview.textContent,/Live <code>/);
+  assert.equal(preview.scrollTop,400);
+  assert.equal(h.saved.length,0);
   finish({markdown:'Erster Abschnitt <code>',model:'test'});
   await new Promise(resolve=>setImmediate(resolve));
   assert.match(h.elements['knowledge-preview-p1'].textContent,/Erster Abschnitt/);
@@ -311,6 +315,23 @@ test('Fortschritt und vorhandene Abschnitte bleiben waehrend langer KI-Anfragen 
   assert.match(preview.textContent,/Erster Abschnitt <code>[\s\S]*Zweiter Abschnitt/);
   assert.equal(preview.scrollTop,800);
   assert.equal(body.scrollTop,900);
+});
+
+test('abgeschnittene Live-Ausgabe wird vor der Wiederholung entfernt und nicht gespeichert',async()=>{
+  const h=harness('ollama',{tree:[]});
+  h.window.testOverrides.buildProjectKnowledgeSnapshot=()=>({github:{},description:'x'.repeat(500)});
+  let calls=0;
+  h.window.LocalOllama.generate=async(path,payload,options)=>{
+    if(++calls===1){
+      options.onProgress('Unvollstaendige Ausgabe');
+      assert.match(h.dialogs[0].querySelector('[data-run-preview]').textContent,/Unvollstaendige Ausgabe/);
+      throw Object.assign(new Error('abgeschnitten'),{code:'AI_OUTPUT_TRUNCATED'});
+    }
+    assert.doesNotMatch(h.dialogs[0].querySelector('[data-run-preview]').textContent,/Unvollstaendige Ausgabe/);
+    return {markdown:'Vollstaendig',model:'test'};
+  };
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  assert.doesNotMatch(h.saved[0].payload.markdown,/Unvollstaendige Ausgabe/);
 });
 
 test('grosser Kontext mit Unicode wird ohne Datenverlust innerhalb des Kontextbudgets zerlegt',async()=>{

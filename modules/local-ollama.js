@@ -307,6 +307,109 @@ function remoteFetch(path,method,payload,options){
   });
 }
 
+function readStreamLines(response,onLine){
+  if(!response.body||typeof response.body.getReader!=='function')return Promise.reject(new Error('Der KI-Anbieter hat keinen lesbaren Antwortstream geliefert.'));
+  var reader=response.body.getReader(),decoder=new TextDecoder(),buffer='';
+  function consume(final){
+    var lines=buffer.split('\n');
+    buffer=final?'':lines.pop();
+    lines.forEach(function(line){onLine(line.replace(/\r$/,''));});
+  }
+  function read(){
+    return reader.read().then(function(result){
+      buffer+=decoder.decode(result.value||new Uint8Array(),{stream:!result.done});
+      if(result.done){consume(true);return;}
+      consume(false);
+      return read();
+    });
+  }
+  return read().catch(function(error){
+    return Promise.resolve(reader.cancel()).catch(function(){}).then(function(){throw error;});
+  });
+}
+
+function knowledgeStream(response,kind,onProgress){
+  var text='',done=false,finished=false,stopReason='';
+  function emit(value){
+    if(typeof value==='string'&&value){text+=value;onProgress(text);}
+  }
+  return readStreamLines(response,function(line){
+    if(!line||line.charAt(0)===':'||line.indexOf('event:')===0)return;
+    if(kind==='claude'||kind==='openai'){
+      if(line.indexOf('data:')!==0)return;
+      line=line.slice(5).trim();
+      if(line==='[DONE]'){done=true;return;}
+    }
+    var item;
+    try{item=JSON.parse(line);}catch(_err){throw new Error('Ungueltige KI-Streamantwort.');}
+    if(item.error){
+      var error=new Error(String(item.error.message||item.error));
+      error.code=item.error.code||item.code;
+      throw error;
+    }
+    if(kind==='ollama'){
+      emit(item.response);
+      if(item.done){done=true;stopReason=item.done_reason||'';}
+    }else if(kind==='remote'){
+      if(item.type==='delta')emit(item.text);
+      if(item.type==='done'){done=true;finished=true;stopReason=item.model||'';}
+      if(item.type==='error'){
+        var remoteError=new Error(item.error||'KI-Stream fehlgeschlagen.');
+        remoteError.code=item.code;
+        throw remoteError;
+      }
+    }else if(kind==='openai'){
+      var choice=Array.isArray(item.choices)?item.choices[0]:null;
+      if(choice){
+        emit(choice.delta&&choice.delta.content);
+        if(choice.finish_reason){finished=true;stopReason=choice.finish_reason;}
+      }
+    }else{
+      if(item.type==='content_block_start'&&item.content_block&&item.content_block.type==='text')emit(item.content_block.text);
+      if(item.type==='content_block_delta'&&item.delta&&item.delta.type==='text_delta')emit(item.delta.text);
+      if(item.type==='message_delta'&&item.delta&&item.delta.stop_reason){finished=true;stopReason=item.delta.stop_reason;}
+      if(item.type==='message_stop')done=true;
+    }
+  }).then(function(){
+    if(stopReason==='length'||stopReason==='max_tokens'){
+      var error=new Error('Die KI-Antwort wurde abgeschnitten.');
+      error.code='AI_OUTPUT_TRUNCATED';
+      throw error;
+    }
+    if(!done||((kind==='openai'||kind==='claude'||kind==='remote')&&!finished))throw new Error('Die KI-Antwort wurde vorzeitig beendet.');
+    return {text:text,model:kind==='remote'?stopReason:''};
+  });
+}
+
+function localKnowledgeStream(requestBody,options){
+  function tryBase(index,lastError){
+    if(index>=OLLAMA_BASES.length)throw lastError||new Error('Lokales Ollama ist nicht erreichbar.');
+    var emitted=false;
+    return fetch(OLLAMA_BASES[index]+'/api/generate',{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(requestBody),signal:options.signal
+    }).then(function(response){
+      if(!response.ok)return response.json().then(function(body){throw new Error(body.error||'HTTP '+response.status);});
+      return knowledgeStream(response,'ollama',function(text){emitted=true;options.onProgress(text);});
+    }).catch(function(error){
+      if(error.name==='AbortError'||emitted||error.code==='AI_OUTPUT_TRUNCATED')throw error;
+      return tryBase(index+1,error);
+    });
+  }
+  return tryBase(0,null);
+}
+
+function remoteKnowledgeStream(payload,options){
+  var url=window.location.origin+'/api/ai/project-knowledge';
+  return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({},payload,{stream:true})),signal:options.signal}).then(function(response){
+    if(!response.ok)return response.json().then(function(body){
+      var error=new Error(body.error||'HTTP '+response.status);
+      error.code=body.code;
+      throw error;
+    });
+    return knowledgeStream(response,'remote',options.onProgress);
+  });
+}
+
 function requestGeneration(requestBody,options){
   return localFetch('/api/generate',{
     method:'POST',
@@ -426,7 +529,9 @@ function cloudComplete(provider,requestBody,options){
     if(!/^(?:o[1-9]|gpt-5)(?:[-.]|$)/i.test(requestBody.model))body.temperature=requestBody.temperature;
     if(requestBody.json)body.response_format={type:'json_object'};
   }
+  if(options&&typeof options.onProgress==='function')body.stream=true;
   return fetch(url,{method:'POST',headers:headers,body:JSON.stringify(body),signal:options&&options.signal?options.signal:undefined}).then(function(response){
+    if(response.ok&&body.stream)return knowledgeStream(response,provider,options.onProgress).then(function(result){return result.text;});
     return response.json().catch(function(){return {};}).then(function(data){
       if(!response.ok){
         var message=data&&data.error&&(data.error.message||data.error)||'HTTP '+response.status;
@@ -512,6 +617,12 @@ function generateCore(path,payload,options){
     var selectedModel=models[0];
     applyModel(payload,selectedModel);
     if(isRemoteProxyMode()){
+      if(path==='/api/ai/project-knowledge'&&options&&typeof options.onProgress==='function'){
+        return remoteKnowledgeStream(payload,options).then(function(result){
+          if(result.model)applyModel(payload,result.model);
+          return wrapResult(path,payload,result.text);
+        });
+      }
       return remoteFetch(path,'POST',payload||{},options||{}).then(function(result){
         return result.body||{};
       }).catch(function(error){
@@ -529,6 +640,11 @@ function generateCore(path,payload,options){
     if(path==='/api/ai/project-knowledge'){
       requestBody.truncate=false;
       requestBody.options.num_ctx=8192;
+      if(options&&typeof options.onProgress==='function'){
+        requestBody.stream=true;
+        requestBody.think=false;
+        return localKnowledgeStream(requestBody,options).then(function(result){return wrapResult(path,payload,result.text);});
+      }
     }
     if(isJsonPath(path))requestBody.format='json';
     function generateWithModel(model){
@@ -565,12 +681,35 @@ function generateCore(path,payload,options){
   });
 }
 
+function visibleKnowledgeText(text){
+  var input=String(text||''),lower=input.toLowerCase(),output='',position=0,opening='<think>',closing='</think>';
+  while(position<input.length){
+    var start=lower.indexOf(opening,position);
+    if(start===-1){
+      var rest=input.slice(position),lowerRest=rest.toLowerCase();
+      for(var length=Math.min(opening.length-1,rest.length);length>0;length--){
+        if(lowerRest.slice(-length)===opening.slice(0,length)){rest=rest.slice(0,-length);break;}
+      }
+      return output+rest;
+    }
+    output+=input.slice(position,start);
+    var end=lower.indexOf(closing,start+opening.length);
+    if(end===-1)return output;
+    position=end+closing.length;
+  }
+  return output;
+}
+
 function generate(path,payload,options){
   var suppliedOptions=options||{};
   var operation=beginOperation(path,suppliedOptions.signal);
   var trackedOptions=Object.assign({},suppliedOptions);
   if(operation.controller)trackedOptions.signal=operation.controller.signal;
+  if(path==='/api/ai/project-knowledge'&&typeof suppliedOptions.onProgress==='function'){
+    trackedOptions.onProgress=function(text){suppliedOptions.onProgress(visibleKnowledgeText(text));};
+  }
   return generateCore(path,payload,trackedOptions).then(function(result){
+    if(path==='/api/ai/project-knowledge'&&typeof suppliedOptions.onProgress==='function')result.markdown=visibleKnowledgeText(result.markdown);
     finishOperation(operation,null);
     return result;
   }).catch(function(error){

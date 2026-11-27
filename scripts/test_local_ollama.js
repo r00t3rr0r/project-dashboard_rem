@@ -9,7 +9,7 @@ function makeClient(hostname,config={}){
   const models=[{name:'qwen3-embedding:0.6b',capabilities:['embedding']},{name:'text-a',capabilities:['completion']},{name:'text-b'}];
   const window={location:{hostname,origin:'http://'+hostname},AIConfModule:{getConfiguration:()=>config},dispatchEvent(){}};
   const sandbox={
-    window,console,AbortController,TextEncoder,CustomEvent:function(){},setInterval:()=>1,clearInterval(){},
+    window,console,AbortController,TextEncoder,TextDecoder,CustomEvent:function(){},setInterval:()=>1,clearInterval(){},
     fetch:async(url,init)=>{
       if(init.method==='GET')return {ok:true,json:async()=>({models})};
       const body=JSON.parse(init.body);
@@ -21,6 +21,100 @@ function makeClient(hostname,config={}){
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../modules/local-ollama.js'),'utf8'),sandbox);
   return {api:window.LocalOllama,window,sandbox,calls,models};
+}
+
+function stagedStream(first,rest){
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const encoder=new TextEncoder();
+  const bytes=encoder.encode(first);
+  const unicodeStart=bytes.indexOf(0xc3);
+  const split=unicodeStart===-1?bytes.length-1:unicodeStart+1;
+  let index=0;
+  return {
+    release,
+    body:{getReader:()=>({
+      read:async()=>{
+        if(index++===0)return {value:bytes.slice(0,split),done:false};
+        if(index===2)return {value:bytes.slice(split),done:false};
+        await gate;
+        if(index===3)return {value:encoder.encode(rest),done:false};
+        return {done:true};
+      },
+      cancel:async()=>{}
+    })}
+  };
+}
+
+for(const provider of ['ollama','remote','openai','claude']){
+  test(provider+': streamed truncation reports the retryable limit error',async()=>{
+    const client=makeClient(provider==='remote'?'dashboard.example':'127.0.0.1',
+      {providerModels:{openai:{primaryModel:'gpt-test'},claude:{primaryModel:'claude-test'}}});
+    if(provider==='openai'||provider==='claude')client.window.AuthManager={getCurrentUser:()=>({aiKeys:{[provider]:'key'}})};
+    const data=provider==='ollama'?{response:'Teil',done:true,done_reason:'length'}:
+      provider==='remote'?{type:'error',error:'abgeschnitten',code:'AI_OUTPUT_TRUNCATED'}:
+      provider==='openai'?{choices:[{delta:{content:'Teil'},finish_reason:'length'}]}:
+      {type:'message_delta',delta:{stop_reason:'max_tokens'}};
+    const stream=stagedStream((provider==='openai'||provider==='claude'?'data: ':'')+JSON.stringify(data)+'\n','');
+    client.sandbox.fetch=async()=>({ok:true,body:stream.body});
+    const pending=client.api.generate('/api/ai/project-knowledge',{model:'test',analysisOnly:true,knowledgePrompt:'Abschnitt'},
+      {provider:provider==='remote'?'ollama':provider,onProgress(){}});
+    stream.release();
+    await assert.rejects(pending,{code:'AI_OUTPUT_TRUNCATED'});
+  });
+}
+
+for(const provider of ['ollama','remote','openai','claude']){
+  test(provider+': knowledge streams output before completion and hides reasoning',async()=>{
+    const client=makeClient(provider==='remote'?'dashboard.example':'127.0.0.1',
+      {providerModels:{openai:{primaryModel:'gpt-test'},claude:{primaryModel:'claude-test'}}});
+    if(provider==='openai'||provider==='claude'){
+      client.window.localStorage={getItem:()=>provider};
+      client.window.AuthManager={getCurrentUser:()=>({aiKeys:{[provider]:'test-key'}})};
+    }
+    const actual=provider==='remote'?'ollama':provider;
+    const record=value=>JSON.stringify(value)+'\n';
+    const event=value=>'data: '+JSON.stringify(value)+'\n\n';
+    const first=provider==='ollama'?record({response:'Hallo ä <thi'}):
+      provider==='remote'?record({type:'delta',text:'Hallo ä <thi'}):
+      provider==='openai'?event({choices:[{delta:{content:'Hallo ä <thi'}}]}):
+      event({type:'content_block_delta',delta:{type:'text_delta',text:'Hallo ä <thi'}});
+    const rest=provider==='ollama'?record({response:'nk>geheim</think> Welt'})+record({done:true,done_reason:'stop'}):
+      provider==='remote'?record({type:'delta',text:'nk>geheim</think> Welt'})+record({type:'done',model:'test'}):
+      provider==='openai'?event({choices:[{delta:{content:'nk>geheim</think> Welt'},finish_reason:'stop'}]})+'data: [DONE]\n\n':
+      event({type:'content_block_delta',delta:{type:'text_delta',text:'nk>geheim</think> Welt'}})+event({type:'message_delta',delta:{stop_reason:'end_turn'}})+event({type:'message_stop'});
+    const stream=stagedStream(first,rest);
+    let request;
+    client.sandbox.fetch=async(url,init)=>{request=JSON.parse(init.body);return {ok:true,body:stream.body};};
+    const updates=[];
+    const pending=client.api.generate('/api/ai/project-knowledge',{model:'test',analysisOnly:true,knowledgePrompt:'Abschnitt'},
+      {provider:actual,onProgress:text=>updates.push(text)});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(updates.at(-1),'Hallo ä ');
+    assert.equal(request.stream,true);
+    stream.release();
+    const result=await pending;
+    assert.equal(result.markdown,'Hallo ä  Welt');
+    assert(updates.every(text=>!text.includes('geheim')));
+  });
+}
+
+for(const provider of ['ollama','remote','openai','claude']){
+  test(provider+': incomplete streamed knowledge is rejected',async()=>{
+    const client=makeClient(provider==='remote'?'dashboard.example':'127.0.0.1',
+      {providerModels:{openai:{primaryModel:'gpt-test'},claude:{primaryModel:'claude-test'}}});
+    if(provider==='openai'||provider==='claude')client.window.AuthManager={getCurrentUser:()=>({aiKeys:{[provider]:'key'}})};
+    const item=provider==='ollama'?{response:'Teil'}:
+      provider==='remote'?{type:'delta',text:'Teil'}:
+      provider==='openai'?{choices:[{delta:{content:'Teil'}}]}:
+      {type:'content_block_delta',delta:{type:'text_delta',text:'Teil'}};
+    const stream=stagedStream((provider==='openai'||provider==='claude'?'data: ':'')+JSON.stringify(item)+'\n','');
+    client.sandbox.fetch=async()=>({ok:true,body:stream.body});
+    const pending=client.api.generate('/api/ai/project-knowledge',{model:'test',analysisOnly:true,knowledgePrompt:'Abschnitt'},
+      {provider:provider==='remote'?'ollama':provider,onProgress(){}});
+    stream.release();
+    await assert.rejects(pending,/vorzeitig beendet/);
+  });
 }
 
 for(const hostname of ['127.0.0.1','178.105.213.50']){

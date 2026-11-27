@@ -56,6 +56,19 @@ class GitHubCommitQueryTest(unittest.TestCase):
                 self.assertFalse(json.loads(urlopen.call_args.args[0].data)['truncate'])
                 self.assertEqual(json.loads(urlopen.call_args.args[0].data)['options']['num_ctx'], 8192)
 
+    def test_project_knowledge_stream_does_not_retry_after_partial_output(self):
+        handler = object.__new__(storage.StorageHandler)
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.__iter__.return_value = iter([b'{"response":"Teil"}\n'])
+        chunks = []
+        with mock.patch.object(storage, 'OLLAMA_BASE_URLS', ['http://first', 'http://second']), \
+                mock.patch.object(storage.urllib.request, 'urlopen', return_value=response) as urlopen:
+            with self.assertRaisesRegex(RuntimeError, 'vorzeitig'):
+                handler._call_ollama('model', 'prompt', require_complete=True, on_chunk=chunks.append)
+        self.assertEqual(chunks, ['Teil'])
+        self.assertEqual(urlopen.call_count, 1)
+
 
 class StorageConcurrencyTest(unittest.TestCase):
     @classmethod
@@ -222,6 +235,48 @@ class StorageConcurrencyTest(unittest.TestCase):
         self.assertEqual(call.call_args.args, ('test-model', 'Analysiere diesen Abschnitt'))
         self.assertTrue(call.call_args.kwargs['require_complete'])
         self.assertEqual(call.call_args.kwargs['max_tokens'], 4096)
+
+    def test_project_knowledge_stream_sends_partial_text_before_completion(self):
+        released = threading.Event()
+
+        def fake_ollama(handler, model, prompt, **kwargs):
+            kwargs['on_chunk']('Teil ä')
+            if not released.wait(3):
+                raise RuntimeError('Testzeitlimit')
+            kwargs['on_chunk'](' fertig')
+            return 'Teil ä fertig', ['Teil ä', ' fertig']
+
+        payload = {'projectId': 'p1', 'projectTitle': 'Demo', 'model': 'test-model',
+                   'analysisOnly': True, 'knowledgePrompt': 'Abschnitt', 'stream': True}
+        request = urllib.request.Request(self.base_url + '/api/ai/project-knowledge', data=json.dumps(payload).encode(),
+                                         headers={'Content-Type': 'application/json', 'Cookie': self.cookie.split(';')[0]})
+        with mock.patch.object(storage.StorageHandler, '_call_ollama', fake_ollama):
+            try:
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    self.assertEqual(response.headers.get_content_type(), 'application/x-ndjson')
+                    self.assertEqual(json.loads(response.readline()), {'type': 'delta', 'text': 'Teil ä'})
+                    released.set()
+                    self.assertEqual(json.loads(response.readline()), {'type': 'delta', 'text': ' fertig'})
+                    self.assertEqual(json.loads(response.readline()), {'type': 'done', 'model': 'test-model'})
+            finally:
+                released.set()
+
+    def test_project_knowledge_stream_reports_truncation_after_partial_text(self):
+        def fake_ollama(handler, model, prompt, **kwargs):
+            kwargs['on_chunk']('Teil')
+            raise RuntimeError('Antwort abgeschnitten')
+
+        payload = {'projectId': 'p1', 'projectTitle': 'Demo', 'analysisOnly': True,
+                   'knowledgePrompt': 'Abschnitt', 'stream': True}
+        request = urllib.request.Request(self.base_url + '/api/ai/project-knowledge', data=json.dumps(payload).encode(),
+                                         headers={'Content-Type': 'application/json', 'Cookie': self.cookie.split(';')[0]})
+        with mock.patch.object(storage.StorageHandler, '_call_ollama', fake_ollama):
+            with urllib.request.urlopen(request, timeout=5) as response:
+                self.assertEqual(json.loads(response.readline()), {'type': 'delta', 'text': 'Teil'})
+                error = json.loads(response.readline())
+                self.assertEqual(error['type'], 'error')
+                self.assertEqual(error['code'], 'AI_OUTPUT_TRUNCATED')
+                self.assertEqual(response.readline(), b'')
 
     def test_project_knowledge_endpoints_are_admin_only(self):
         conn = storage.open_db_connection()

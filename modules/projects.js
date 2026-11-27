@@ -5887,9 +5887,9 @@ function generateAiKnowledgeForProject(projectId){
     var parts=[];
     var cache;
     var usedCache={};
-    function formattedParts(){
+    function formattedParts(pending){
       var label='';
-      return parts.map(function(part){
+      return (pending?parts.concat([pending]):parts).map(function(part){
         var heading=part.label===label?'':'## '+part.label+'\n\n';
         label=part.label;
         return heading+part.text;
@@ -5915,7 +5915,9 @@ function generateAiKnowledgeForProject(projectId){
           projectId:project.id,projectTitle:getProjectTitle(project),github:project.github,
           model:model,analysisOnly:true,knowledgePrompt:prompt,
           promptConfig:{temperature:0.2,maxTokens:4096,contextTokens:8192}
-        },{provider:provider,signal:run.controller.signal}).then(function(result){
+        },{provider:provider,signal:run.controller.signal,onProgress:function(text){
+          if(!run.controller.signal.aborted)updateKnowledgeProgress(projectId,null,formattedParts(text?{label:section.label,text:text}:null));
+        }}).then(function(result){
           checkKnowledgeAbort(run);
           var text=String(result.markdown||'').trim();
           if(!text)throw new Error('Die KI hat einen leeren Abschnitt geliefert: '+section.label);
@@ -5926,6 +5928,7 @@ function generateAiKnowledgeForProject(projectId){
           updateKnowledgeProgress(projectId,'Abschnitt '+run.completed+' von '+run.total+' fertig · Modell: '+actualModel,formattedParts());
           return saveKnowledgeCacheItem(projectId,cache,prompt,usedCache[prompt]);
         }).catch(function(error){
+          updateKnowledgeProgress(projectId,null,formattedParts());
           checkKnowledgeAbort(run);
           var canSplit=error.code==='AI_OUTPUT_TRUNCATED'||error.code==='AI_CONTEXT_LIMIT'
             ||/abgeschnitten|context.{0,30}(?:length|window|limit)|maximum context|prompt.{0,20}too long/i.test(error.message||'');
