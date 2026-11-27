@@ -68,7 +68,7 @@ function aiSuggestions(payload){
   if(input.reconcileTopics)return input.reconcileTopics.map(topic=>({note:topic.id,titleDe:topic.topic,titleEn:'none'}));
   if(input.labelTopics)return input.labelTopics.map(topic=>({note:topic.id,titleDe:topic.topic,labels:[]}));
   if(input.commits)return input.commits.map(commit=>({note:commit.id,titleDe:'Anmeldung',titleEn:input.existingTopics[0]?.id||'new:login'}));
-  if(payload.promptConfig.prompt.startsWith('Summarize'))return [{titleDe:'Anmeldung verbessert',titleEn:'Improved login',descriptionDe:'Anmeldung aktualisiert',descriptionEn:'Updated login'}];
+  if(payload.promptConfig.prompt.startsWith('Summarize'))return [{titleDe:'Anmeldung mit verbesserter Sitzungsprüfung',titleEn:'Improved login and session handling',descriptionDe:'Anmeldung aktualisiert',descriptionEn:'Updated login'}];
   return input.map(translatedSuggestion);
 }
 test('groups related commits across batches by content and summarizes each topic',async()=>{
@@ -81,13 +81,13 @@ test('groups related commits across batches by content and summarizes each topic
       assert(!payload.promptConfig.prompt.includes('test-token'));
       return {draft:{taskSuggestions:data.commits.map(c=>({note:c.id,titleDe:c.message.includes('Calendar')?'Kalender':'Anmeldung',titleEn:c.message.includes('Calendar')?'new:calendar':data.existingTopics[0]?.id||'new:login'}))}};
     }
-    return {draft:{taskSuggestions:[{titleDe:'Zusammenfassung '+data.length,titleEn:'Summary',descriptionDe:'Gemeinsame Aenderungen',descriptionEn:'Combined changes'}]}};
+    return {draft:{taskSuggestions:[{titleDe:'Zusammenfassung der thematisch verwandten Änderungen',titleEn:'Summary of related implementation changes',descriptionDe:'Gemeinsame Aenderungen',descriptionEn:'Combined changes'}]}};
   };
   const groups=await h.api.groupCommitTopics(h.project,commits);
   assert.equal(groups.length,2);
   assert.equal(groups[0].commits.length,5);
   assert.equal(groups[1].commits[0].sha,commits[1].sha);
-  assert.equal(groups[0].title,'Zusammenfassung 5');
+  assert.equal(groups[0].title,'Zusammenfassung der thematisch verwandten Änderungen');
 });
 
 test('reconciles early single commits with later related topics and labels the resulting tasks',async()=>{
@@ -108,13 +108,13 @@ test('reconciles early single commits with later related topics and labels the r
       assert(data.availableLabels.includes('CI/CD'));
       return {draft:{taskSuggestions:data.labelTopics.map(topic=>({note:topic.id,titleDe:topic.topic,labels:topic.commits.length===3?['frontend','UX','unknown']:['Database']}))}};
     }
-    return {draft:{taskSuggestions:[{titleDe:'Anmeldung verbessert',titleEn:'Improved login',descriptionDe:'Anmeldung verbessert',descriptionEn:'Improved login'}]}};
+    return {draft:{taskSuggestions:[{titleDe:'Anmeldung mit verbesserter Sitzungsprüfung',titleEn:'Improved login and session handling',descriptionDe:'Anmeldung verbessert',descriptionEn:'Improved login'}]}};
   };
   const groups=await h.api.groupCommitTopics(h.project,commits);
   const login=groups.find(group=>group.commits.some(commit=>commit.sha===commits[0].sha));
   assert.equal(login.commits.length,3);
   assert.equal(login.standalone,false);
-  assert.equal(login.title,'Anmeldung verbessert');
+  assert.equal(login.title,'Anmeldung mit verbesserter Sitzungsprüfung');
   assert.equal(login.labelNames.join(','),'Frontend,UX');
   assert(groups.filter(group=>group!==login).every(group=>group.labelNames.join(',')==='Database'));
   assert.equal(new Set(groups.flatMap(group=>Array.from(group.commits,c=>c.sha))).size,6);
@@ -149,7 +149,7 @@ test('unassigned or ambiguous commits become separate tasks using their existing
     if(data.reconcileTopics||data.labelTopics)return {draft:{taskSuggestions:aiSuggestions(payload)}};
     if(!data.commits){
       summaryCalls++;
-      return {draft:{taskSuggestions:[{titleDe:'Gemeinsames Thema',titleEn:'Shared topic',descriptionDe:'Gemeinsame Arbeit',descriptionEn:'Shared work'}]}};
+      return {draft:{taskSuggestions:[{titleDe:'Gemeinsame Verbesserungen an der Anmeldung',titleEn:'Shared improvements to account access',descriptionDe:'Gemeinsame Arbeit',descriptionEn:'Shared work'}]}};
     }
     assignCalls++;
     if(assignCalls===1)return {draft:{taskSuggestions:[
@@ -186,9 +186,27 @@ test('unassigned or ambiguous commits become separate tasks using their existing
 test('incomplete summaries and failed AI requests are still reported',async()=>{
   const h=makeHarness(),commits=[{sha:'a'.repeat(40),message:'A',title:'A'}];
   h.window.LocalOllama.generate=async(_path,payload)=>({draft:{taskSuggestions:JSON.parse(payload.draftInput).commits?[{note:'commit-1',titleDe:'A',titleEn:'new:a'}]:[{titleDe:'A'}]}});
-  await assert.rejects(h.api.groupCommitTopics(h.project,commits),/Zusammenfassung/);
+  await assert.rejects(h.api.groupCommitTopics(h.project,commits),/Aufgabentitel|Zusammenfassung/);
   h.window.LocalOllama.generate=async()=>{throw new Error('Modell nicht erreichbar');};
   await assert.rejects(h.api.groupCommitTopics(h.project,commits),/Modell nicht erreichbar/);
+});
+
+test('retries short task titles and accepts a descriptive correction',async()=>{
+  const h=makeHarness(),commits=[{sha:'a'.repeat(40),message:'Improve API security',title:'API-Sicherheit verbessert'}];
+  let summaryCalls=0;
+  h.window.LocalOllama.generate=async(_path,payload)=>{
+    const data=JSON.parse(payload.draftInput);
+    if(data.commits)return {draft:{taskSuggestions:data.commits.map(item=>({note:item.id,titleDe:item.title,titleEn:'new:api-security'}))}};
+    if(data.labelTopics)return {draft:{taskSuggestions:data.labelTopics.map(topic=>({note:topic.id,titleDe:topic.topic,labels:['Security']}))}};
+    summaryCalls++;
+    if(summaryCalls===1)return {draft:{taskSuggestions:[{titleDe:'Security',titleEn:'Security',descriptionDe:'API-Zugriffe werden abgesichert.',descriptionEn:'API access is secured.'}]}};
+    assert(payload.promptConfig.prompt.includes('6-12 words'));
+    return {draft:{taskSuggestions:[{titleDe:'Sicherheitsprüfung für API-Zugriffe verbessert',titleEn:'Improved security checks for API access',descriptionDe:'API-Zugriffe werden abgesichert.',descriptionEn:'API access is secured.'}]}};
+  };
+  const groups=await h.api.groupCommitTopics(h.project,commits);
+  assert.equal(summaryCalls,2);
+  assert.equal(groups[0].title,'Sicherheitsprüfung für API-Zugriffe verbessert');
+  assert.equal(groups[0].titleEn,'Improved security checks for API access');
 });
 
 test('cached translations survive a failed grouping and an unknown topic imports as one commit task',async()=>{
@@ -234,7 +252,7 @@ test('supports more than eight distinct topics without dropping commits',async()
     if(data.commits)batchSizes.push(data.commits.length);
     return {draft:{taskSuggestions:data.commits
       ?data.commits.map(c=>({note:c.id,titleDe:c.title,titleEn:'new:'+c.id}))
-      :[{titleDe:'Thema',titleEn:'Topic',descriptionDe:'Arbeit',descriptionEn:'Work'}]}};
+      :[{titleDe:'Thema mit konkreten Änderungen',titleEn:'Topic with specific changes',descriptionDe:'Arbeit',descriptionEn:'Work'}]}};
   };
   const groups=await h.api.groupCommitTopics(h.project,commits);
   assert.equal(groups.length,10);
@@ -253,13 +271,13 @@ for(const hostname of ['127.0.0.1','dashboard.example']){
     h.sandbox.fetch=async()=>{
       const suggestions=calls++===0
         ?[{note:'commit-1',titleDe:'Anmeldung',titleEn:'new:login'}]
-        :[{titleDe:'Anmeldung verbessert',titleEn:'Improved login',descriptionDe:'Anmeldung korrigiert',descriptionEn:'Fixed login'}];
+        :[{titleDe:'Anmeldung mit verbesserter Sitzungsprüfung',titleEn:'Improved login and session handling',descriptionDe:'Anmeldung korrigiert',descriptionEn:'Fixed login'}];
       return {ok:true,json:async()=>hostname==='127.0.0.1'?{response:JSON.stringify({taskSuggestions:suggestions})}:{draft:{taskSuggestions:suggestions}}};
     };
     vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../modules/local-ollama.js'),'utf8'),h.sandbox);
     const groups=await h.api.groupCommitTopics(h.project,[{sha,message:'Login fix',title:'Anmeldung',titleEn:'Login',descriptionDe:'Korrigiert',descriptionEn:'Fixed'}]);
     assert.equal(groups[0].commits[0].sha,sha);
-    assert.equal(groups[0].title,'Anmeldung verbessert');
+    assert.equal(groups[0].title,'Anmeldung mit verbesserter Sitzungsprüfung');
     assert.equal(calls,3);
   });
 }
