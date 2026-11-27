@@ -11,6 +11,7 @@ function harness(provider, tree) {
   const requests = [];
   const dialogs = [];
   const notifications = [];
+  const githubRequests = [];
   let interval;
   const elements = {
     'knowledge-progress-p1':{textContent:''},
@@ -18,6 +19,7 @@ function harness(provider, tree) {
   };
   const window = {
     location:{origin:'http://localhost'},
+    addEventListener(){},
     AuthManager:{getMode:()=> 'admin'},
     DataLayer:{getProjectById:()=>project, updateProject(){}},
     LocalOllama:{
@@ -29,7 +31,7 @@ function harness(provider, tree) {
     },
     testOverrides:{
       render(){}, refreshAiHealthStatus:()=>Promise.resolve(), notify:(message)=>notifications.push(message), openAiKnowledgeTaskDialog(){},
-      buildProjectKnowledgeSnapshot:()=>({project:{title:'Demo'}}),
+      buildProjectKnowledgeSnapshot:()=>({project:{title:'Demo'},github:{recentCommits:project.githubCommits||[]}}),
       fetchRepoMeta:async()=>({default_branch:'main'}),
       fetchGitHubJson:async(url)=>url.includes('/commits/')?{sha:'commit-123',commit:{tree:{sha:'tree-123'}}}:tree,
       postBackendJson:async(url,payload)=>{
@@ -62,9 +64,17 @@ function harness(provider, tree) {
      window.testOpenProjectKnowledgeEditor=openProjectKnowledgeEditor;
      window[NAMESPACE]={`
   );
-  vm.runInNewContext(source,{window,document,URL,Date,console,TextEncoder,AbortController,
-    setInterval:fn=>{interval=fn;return 1;},clearInterval(){}});
-  return {window,project,saved,drafts,requests,elements,dialogs,notifications,tick:()=>interval()};
+  const sandbox={window,document,URL,URLSearchParams,Date,console,TextEncoder,AbortController,
+    fetch:(url,options)=>{
+      if(url.startsWith('/api/project-knowledge/draft'))return Promise.resolve({ok:true,json:async()=>({items:{}})});
+      githubRequests.push({url,options});
+      return window.testOverrides.githubFetch(url,options);
+    },
+    setInterval:fn=>{interval=fn;return 1;},clearInterval(){}};
+  window.testOverrides.githubFetch=async url=>({ok:true,json:async()=>url.startsWith('/api/github/branches')?[{name:'main'}]:[]});
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../modules/ai-conf.js'),'utf8'),sandbox);
+  vm.runInNewContext(source,sandbox);
+  return {window,project,saved,drafts,requests,githubRequests,elements,dialogs,notifications,tick:()=>interval()};
 }
 
 for (const provider of ['ollama','claude','openai']) {
@@ -104,6 +114,60 @@ test('gekuerzter rekursiver Dateibaum wird verzeichnisweise vollstaendig nachgel
   assert.match(h.saved[0].payload.markdown,/src\/index\.js/);
 });
 
+test('Projektwissen laedt und sortiert aktuelle Commits aller Branches statt gespeicherter Commits',async()=>{
+  const h=harness('ollama',{tree:[]});
+  h.project.githubCommits=[{sha:'stale',message:'Veralteter Commit'}];
+  const commit=(id,date)=>({sha:'sha-'+id,commit:{message:'Commit '+id,committer:{date},author:{name:'Dev'}}});
+  h.window.testOverrides.githubFetch=async url=>{
+    const parsed=new URL(url,'http://localhost');
+    if(parsed.pathname==='/api/github/branches')return {ok:true,json:async()=>[{name:'main'},{name:'feature/a+b'}]};
+    const branch=parsed.searchParams.get('sha'),page=parsed.searchParams.get('page');
+    const items=branch==='main'
+      ?(page==='1'?Array.from({length:100},(_,i)=>commit(i,'2026-01-01T00:00:00Z')):[commit('later-page','2026-02-01T00:00:00Z')])
+      :[commit('feature','2026-03-01T00:00:00Z'),commit(0,'2026-01-01T00:00:00Z')];
+    return {ok:true,json:async()=>items};
+  };
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  const records=h.requests.flatMap(request=>JSON.parse(request.payload.knowledgePrompt.split('\n\n').pop()));
+  const commits=records.filter(record=>record.path[0]==='github'&&record.path[1]==='recentCommits');
+  assert.equal(commits.filter(record=>record.path[3]==='sha').length,25);
+  assert.equal(commits.find(record=>record.path[2]==='0'&&record.path[3]==='sha').text,'"sha-feature"');
+  assert.equal(commits.find(record=>record.path[2]==='1'&&record.path[3]==='sha').text,'"sha-later-page"');
+  assert(!JSON.stringify(records).includes('Veralteter Commit'));
+  assert.equal(h.project.githubCommits[0].sha,'stale');
+  assert(h.githubRequests.some(request=>request.url.includes('sha=main')&&request.url.includes('page=2')));
+});
+
+test('fehlgeschlagener Commit-Abruf verhindert die Erzeugung und Speicherung',async()=>{
+  const h=harness('ollama',{tree:[]});
+  h.window.testOverrides.githubFetch=async url=>{
+    const parsed=new URL(url,'http://localhost');
+    if(parsed.pathname==='/api/github/branches')return {ok:true,json:async()=>[{name:'main'}]};
+    if(parsed.searchParams.get('page')==='1')return {ok:true,json:async()=>Array.from({length:100},(_,i)=>({
+      sha:'sha-'+i,commit:{committer:{date:'2026-01-01T00:00:00Z'}}
+    }))};
+    return {ok:false,status:403,json:async()=>({message:'Rate limit'})};
+  };
+  await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/Rate limit/);
+  assert.equal(h.requests.length,0);
+  assert.equal(h.saved.length,0);
+  assert.equal(h.project.aiKnowledge.lastStatus,'error');
+});
+
+test('Projektwissen nutzt beim Commit-Abruf den Token-Fallback von AI Conf',async()=>{
+  const h=harness('ollama',{tree:[]});
+  h.window.AuthManager.getCurrentUser=()=>({github:{privateAccessToken:'invalid'}});
+  h.window.DataLayer.getStoredValue=()=> 'central';
+  h.window.testOverrides.githubFetch=async(url,options)=>{
+    if(options.headers['X-GitHub-Token']==='invalid')return {ok:false,status:401,json:async()=>({message:'Bad credentials'})};
+    return {ok:true,json:async()=>url.startsWith('/api/github/branches')?[{name:'main'}]:[]};
+  };
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  assert.equal(h.githubRequests[0].options.headers['X-GitHub-Token'],'invalid');
+  assert.equal(h.githubRequests[1].options.headers['X-GitHub-Token'],'central');
+  assert.equal(h.saved.length,1);
+});
+
 test('Fortschritt und vorhandene Abschnitte bleiben waehrend langer KI-Anfragen sichtbar',async()=>{
   const h=harness('ollama',{tree:[{path:'app.js',type:'blob'}]});
   let finish;
@@ -139,7 +203,7 @@ test('grosser Kontext mit Unicode wird ohne Datenverlust innerhalb des Kontextbu
 for(const code of ['AI_OUTPUT_TRUNCATED','AI_CONTEXT_LIMIT']){
   test(code+': teilt nur den fehlgeschlagenen Chunk und speichert keine Teilantwort',async()=>{
     const h=harness('openai',{tree:[{path:'app.js',type:'blob'}]});
-    h.window.testOverrides.buildProjectKnowledgeSnapshot=()=>({a:'eins',b:'zwei',c:'drei',d:'vier'});
+    h.window.testOverrides.buildProjectKnowledgeSnapshot=()=>({github:{},a:'eins',b:'zwei',c:'drei',d:'vier'});
     let calls=0;
     h.window.LocalOllama.generate=async()=>{
       if(++calls===1)throw Object.assign(new Error('Limit'),{code});
@@ -156,7 +220,7 @@ for(const code of ['AI_OUTPUT_TRUNCATED','AI_CONTEXT_LIMIT']){
 
 test('wiederholte Kuerzung endet begrenzt mit sichtbarem Fehler ohne Speicherung',async()=>{
   const h=harness('claude',{tree:[]});
-  h.window.testOverrides.buildProjectKnowledgeSnapshot=()=>({description:'x'.repeat(5000)});
+  h.window.testOverrides.buildProjectKnowledgeSnapshot=()=>({github:{},description:'x'.repeat(5000)});
   let calls=0;
   h.window.LocalOllama.generate=async()=>{calls++;throw Object.assign(new Error('abgeschnitten'),{code:'AI_OUTPUT_TRUNCATED'});};
   await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/abgeschnitten/);
