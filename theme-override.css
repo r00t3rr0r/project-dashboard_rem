@@ -8815,22 +8815,56 @@ body.light-mode .resolution-dialog {
 }
 
 .blocker-reason-section {
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  --legend-color: var(--accent-yellow);
+  border: 1px solid color-mix(in srgb, var(--legend-color) 55%, var(--border-color, transparent));
+  border-left-width: 4px;
   border-radius: 0.55rem;
-  padding: 0.5rem 0.7rem;
+  background: color-mix(in srgb, var(--legend-color) 10%, transparent);
+  overflow: hidden;
 }
 
 .blocker-reason-section summary {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.7rem;
   cursor: pointer;
-  font-size: 0.68rem;
-  font-weight: 600;
+  list-style: none;
+  font-size: 0.72rem;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-secondary);
+  color: var(--legend-color);
+}
+
+.blocker-reason-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.blocker-reason-section summary:hover {
+  background: color-mix(in srgb, var(--legend-color) 16%, transparent);
+}
+
+.blocker-reason-section summary .material-symbols-rounded {
+  font-size: 1.1rem;
+}
+
+.blocker-reason-title {
+  flex: 1;
+}
+
+.blocker-reason-chevron {
+  transition: transform 0.2s ease;
+}
+
+.blocker-reason-section[open] .blocker-reason-chevron {
+  transform: rotate(180deg);
 }
 
 .blocker-reason-text {
-  margin: 0.5rem 0 0;
+  margin: 0;
+  padding: 0.6rem 0.7rem 0.7rem;
+  border-top: 1px solid color-mix(in srgb, var(--legend-color) 30%, transparent);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
