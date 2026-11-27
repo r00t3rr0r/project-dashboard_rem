@@ -7243,3 +7243,7 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
 .calendar-gantt.is-week .calendar-gantt-day { font-size: 0.75rem; }
 .calendar-gantt.is-week .calendar-gantt-row { min-height: 3rem; }
 .calendar-gantt.is-week .calendar-gantt-bar { height: 1.9rem; }
+
+.qbm-assignees { display: grid; gap: 0.25rem; max-height: 9rem; overflow-y: auto; }
+.qbm-assignee { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+.kanban-assignment-reply { margin: 0.3rem 0; font-size: 0.78rem; overflow-wrap: anywhere; }

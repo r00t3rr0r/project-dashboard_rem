@@ -904,8 +904,8 @@
       html += '    <div class="blocker-card-dates">Beginn: ' + escapeHtml(formatDateTime(item.from));
       if (!item.active) html += '<br>Ende: ' + escapeHtml(formatDateTime(item.until));
       html += '</div></div>';
+      html += '  <details class="blocker-reason-section"><summary>Grund</summary><p class="blocker-reason-text">' + escapeHtml(item.reason || 'Kein Grund hinterlegt') + '</p></details>';
       html += '  <dl class="blocker-card-details">';
-      html += '    <div class="blocker-detail blocker-detail-reason"><dt>Grund</dt><dd>' + escapeHtml(item.reason || 'Kein Grund hinterlegt') + '</dd></div>';
       if (item.projectTitle && item.targetType === 'task') {
         html += '    <div class="blocker-detail blocker-detail-project"><dt>Projekt</dt><dd>' + escapeHtml(item.projectTitle) + '</dd></div>';
       }
