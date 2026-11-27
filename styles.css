@@ -7042,6 +7042,63 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
   white-space: normal;
 }
 
+.project-branches {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.project-branch-label {
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.project-branch-badge,
+.project-branches-more > summary {
+  text-transform: none;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.project-branches-more {
+  position: relative;
+}
+
+.project-branches-more > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.project-branches-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.project-branches-more-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  max-width: min(36rem, 80vw);
+  padding: 0.5rem;
+  margin-top: 0.35rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.7rem;
+  background: var(--bg-card);
+}
+
+.project-branches-retry {
+  border: 0;
+  padding: 0.15rem 0.25rem;
+  color: var(--accent-blue);
+  background: transparent;
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
 @container project-card (max-width: 66rem) {
   .project-card-head {
     display: grid;

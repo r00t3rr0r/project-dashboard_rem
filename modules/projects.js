@@ -23,6 +23,9 @@ var HOSTING_CHECKS={};
 var HOSTING_CHECKS_ERROR='';
 var HOSTING_SCREENSHOTS={};
 var HOSTING_SCREENSHOT_QUEUE=Promise.resolve();
+var PROJECT_BRANCH_CACHE={};
+var PROJECT_BRANCH_CACHE_TTL=5*60*1000;
+var PROJECT_BRANCH_VISIBLE_LIMIT=3;
 var AI_HEALTH_STATE={
   provider:'',
   backendStatus:'unknown',
@@ -2053,6 +2056,7 @@ function renderProjectStartPlanInline(project,canEdit){
     chips.push('<span class="badge badge-green">'+escapeHtml(formatHoursCompact(runningSummary.trackedHours,'Arbeitszeit'))+'</span>');
     chips.push('<span class="badge badge-green">'+escapeHtml(runningSummary.periodLabel)+'</span>');
   }
+  if(project.github&&project.github.url)chips.push(renderProjectBranches(project));
 
   var actions='';
   if(showStartTemplate){
@@ -2067,6 +2071,141 @@ function renderProjectStartPlanInline(project,canEdit){
       +actions
     +'</div>'
   +'</div>';
+}
+
+function getProjectBranchRepository(project){
+  var github=project&&project.github||{};
+  var parsed=(!github.owner||!github.repo)&&github.url?normalizeRepoUrl(github.url):null;
+  var owner=String(github.owner||parsed&&parsed.owner||'').trim();
+  var repo=String(github.repo||parsed&&parsed.repo||'').trim();
+  return owner&&repo?{owner:owner,repo:repo}:null;
+}
+
+function getProjectBranchKey(project){
+  var repository=getProjectBranchRepository(project);
+  return repository?(repository.owner+'/'+repository.repo).toLowerCase():'';
+}
+
+function renderProjectBranchBadges(branches,defaultBranch){
+  return branches.map(function(branch){
+    var isDefault=branch===defaultBranch;
+    return '<span class="badge '+(isDefault?'badge-green':'badge-purple')+' project-branch-badge" title="'+(isDefault?'Standardbranch · ':'')+escapeHtml(branch)+'"'+(isDefault?' aria-label="'+escapeHtml(branch)+' (Standardbranch)"':'')+'>'+escapeHtml(branch)+'</span>';
+  }).join('');
+}
+
+function renderProjectBranches(project){
+  var key=getProjectBranchKey(project);
+  var state=key?PROJECT_BRANCH_CACHE[key]:null;
+  var branches=state&&Array.isArray(state.branches)?state.branches:[];
+  var defaultBranch=String(project&&project.github&&project.github.defaultBranch||'').trim();
+  var html='<div class="project-branches" data-project-branches="'+escapeHtml(project.id)+'"><span class="project-branch-label">Branches</span>';
+
+  if(branches.length){
+    var visible=branches.slice(0,PROJECT_BRANCH_VISIBLE_LIMIT);
+    html+=renderProjectBranchBadges(visible,defaultBranch);
+    if(branches.length>PROJECT_BRANCH_VISIBLE_LIMIT){
+      var hidden=branches.slice(PROJECT_BRANCH_VISIBLE_LIMIT);
+      html+='<details class="project-branches-more"><summary class="badge badge-blue" aria-label="'+hidden.length+' weitere Branches anzeigen">+'+hidden.length+' weitere</summary>'
+        +'<div class="project-branches-more-list">'+renderProjectBranchBadges(hidden,defaultBranch)+'</div></details>';
+    }
+    if(state&&state.status==='error'){
+      html+='<span class="badge badge-red project-branch-badge" title="'+escapeHtml(state.error)+'">Aktualisierung fehlgeschlagen</span>';
+    }
+  }else if(state&&state.status==='loaded'){
+    html+='<span class="badge badge-blue project-branch-badge">Keine Branches</span>';
+  }else if(state&&state.status==='error'){
+    html+='<span class="badge badge-red project-branch-badge" title="'+escapeHtml(state.error)+'">Branches nicht verfügbar</span>';
+  }else{
+    html+='<span class="badge badge-blue project-branch-badge">Branches werden geladen …</span>';
+  }
+
+  if(state&&state.status==='loading'&&state.checkedAt){
+    html+='<span class="badge badge-yellow project-branch-badge">Aktualisierung …</span>';
+  }else if(state&&state.status==='error'){
+    html+='<button type="button" class="project-branches-retry" data-action="load-project-branches" data-id="'+escapeHtml(project.id)+'">Erneut laden</button>';
+  }
+  return html+'</div>';
+}
+
+function fetchProjectBranches(project){
+  var github=project&&project.github||{};
+  var repository=getProjectBranchRepository(project);
+  if(!repository)return Promise.reject(new Error('GitHub-Repositorydaten sind unvollständig.'));
+  var owner=repository.owner;
+  var repo=repository.repo;
+  var token=getGitHubApiToken();
+  var names=[];
+
+  function fetchPage(page){
+    var url='/api/github/branches?owner='+encodeURIComponent(owner)+'&repo='+encodeURIComponent(repo)+'&page='+page;
+    return fetch(url,{headers:token?{'X-GitHub-Token':token}:{}}).then(function(response){
+      return response.json().catch(function(){return {};}).then(function(body){
+        if(!response.ok){
+          var message=String(body&&(body.error||body.message)||'');
+          if(response.status===409&&page===1&&/git repository is empty/i.test(message))return [];
+          throw new Error(message||'GitHub-Branches konnten nicht geladen werden (HTTP '+response.status+').');
+        }
+        if(!Array.isArray(body))throw new Error('GitHub hat keine gültige Branch-Liste geliefert.');
+        return body;
+      });
+    }).then(function(items){
+      items.forEach(function(item){
+        if(!item||typeof item.name!=='string'||!item.name.trim())throw new Error('GitHub hat einen ungültigen Branch geliefert.');
+        if(names.indexOf(item.name)===-1)names.push(item.name);
+      });
+      return items.length===100?fetchPage(page+1):names;
+    });
+  }
+
+  return fetchPage(1).then(function(branches){
+    var defaultBranch=String(github.defaultBranch||'').trim();
+    return branches.sort(function(a,b){
+      if(a===defaultBranch)return -1;
+      if(b===defaultBranch)return 1;
+      return a.localeCompare(b);
+    });
+  });
+}
+
+function updateProjectBranchDisplays(owner,repo){
+  var list=byId('project-list');
+  if(!list||!list.querySelectorAll)return;
+  Array.prototype.forEach.call(list.querySelectorAll('[data-project-branches]'),function(element){
+    var projectId=element.getAttribute('data-project-branches');
+    var project=window.DataLayer.getProjectById(projectId);
+    var repository=getProjectBranchRepository(project);
+    if(!repository||repository.owner.toLowerCase()!==owner||repository.repo.toLowerCase()!==repo)return;
+    element.outerHTML=renderProjectBranches(project);
+  });
+}
+
+function ensureProjectBranches(project,force){
+  var key=getProjectBranchKey(project);
+  if(!key)return Promise.resolve(null);
+  var state=PROJECT_BRANCH_CACHE[key]||(PROJECT_BRANCH_CACHE[key]={
+    branches:[],status:'idle',error:'',checkedAt:0,promise:null
+  });
+  if(state.status==='loading')return state.promise;
+  if(!force&&state.checkedAt&&Date.now()-state.checkedAt<PROJECT_BRANCH_CACHE_TTL)return Promise.resolve(state);
+
+  state.status='loading';
+  state.error='';
+  state.promise=fetchProjectBranches(project).then(function(branches){
+    state.branches=branches;
+    state.status='loaded';
+    state.checkedAt=Date.now();
+    return state;
+  }).catch(function(error){
+    state.status='error';
+    state.error=error&&error.message?error.message:String(error);
+    state.checkedAt=Date.now();
+    return state;
+  }).then(function(result){
+    state.promise=null;
+    updateProjectBranchDisplays(key.split('/')[0],key.split('/').slice(1).join('/'));
+    return result;
+  });
+  return state.promise;
 }
 
 function renderProjectHeadProgress(project, summary){
@@ -4064,6 +4203,7 @@ function render(){
     getVisibleProjects().forEach(function(project){
       var auth=getAuthManager();
       var canEdit=!auth||typeof auth.canEditProject!=='function'||auth.canEditProject(project);
+      if(project.github&&project.github.url)ensureProjectBranches(project,false);
       ensureHostingScreenshot(project,canEdit,false);
     });
   }
@@ -6423,6 +6563,12 @@ function bindListActions(){
     var action=target.dataset.action;
     var projectId=target.dataset.id;
     if(!action||!projectId)return;
+
+    if(action==='load-project-branches'){
+      var branchProject=window.DataLayer.getProjectById(projectId);
+      if(branchProject)ensureProjectBranches(branchProject,true);
+      return;
+    }
 
     var auth=getAuthManager();
     var project=window.DataLayer.getProjectById(projectId);
