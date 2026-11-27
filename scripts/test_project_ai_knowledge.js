@@ -12,6 +12,8 @@ function harness(provider, tree) {
   const dialogs = [];
   const notifications = [];
   const githubRequests = [];
+  let storedKnowledge = '';
+  let storedDraft = {scope:'',items:{}};
   let interval;
   const elements = {
     'knowledge-progress-p1':{textContent:''},
@@ -24,6 +26,7 @@ function harness(provider, tree) {
     DataLayer:{getProjectById:()=>project, updateProject(){}},
     LocalOllama:{
       getProvider:()=>provider,
+      resolveModels:async()=>[provider+'-model'],
       generate:async(path, payload, options)=>{
         requests.push({path,payload,options});
         return {markdown:'Dokumentierter Abschnitt '+requests.length,model:provider+'-model'};
@@ -34,8 +37,16 @@ function harness(provider, tree) {
       buildProjectKnowledgeSnapshot:()=>({project:{title:'Demo'},github:{recentCommits:project.githubCommits||[]}}),
       fetchRepoMeta:async()=>({default_branch:'main'}),
       fetchGitHubJson:async(url)=>url.includes('/commits/')?{sha:'commit-123',commit:{tree:{sha:'tree-123'}}}:tree,
+      readKnowledge:async()=>({ok:true,text:async()=>storedKnowledge}),
       postBackendJson:async(url,payload)=>{
-        if(url==='/api/project-knowledge/draft'){drafts.push(payload); return {ok:true};}
+        if(url==='/api/project-knowledge/draft'){
+          drafts.push(payload);
+          if(payload.clear)storedDraft={scope:'',items:{}};
+          else storedDraft={scope:payload.scope,items:Object.assign({},
+            !payload.replace&&payload.scope===storedDraft.scope?storedDraft.items:{},payload.items)};
+          return {ok:true};
+        }
+        storedKnowledge=payload.markdown;
         saved.push({url,payload}); return {filePath:'data/project-knowledge/p1.md',bytes:123};}
     }
   };
@@ -66,7 +77,11 @@ function harness(provider, tree) {
   );
   const sandbox={window,document,URL,URLSearchParams,Date,console,TextEncoder,AbortController,
     fetch:(url,options)=>{
-      if(url.startsWith('/api/project-knowledge/draft'))return Promise.resolve({ok:true,json:async()=>({items:{}})});
+      if(url.startsWith('/api/project-knowledge/draft')){
+        const scope=new URL(url,'http://localhost').searchParams.get('scope');
+        return Promise.resolve({ok:true,json:async()=>({items:scope===storedDraft.scope?storedDraft.items:{}})});
+      }
+      if(url.startsWith('/api/ai/project-knowledge?'))return window.testOverrides.readKnowledge();
       githubRequests.push({url,options});
       return window.testOverrides.githubFetch(url,options);
     },
@@ -74,7 +89,8 @@ function harness(provider, tree) {
   window.testOverrides.githubFetch=async url=>({ok:true,json:async()=>url.startsWith('/api/github/branches')?[{name:'main'}]:[]});
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../modules/ai-conf.js'),'utf8'),sandbox);
   vm.runInNewContext(source,sandbox);
-  return {window,project,saved,drafts,requests,githubRequests,elements,dialogs,notifications,tick:()=>interval()};
+  return {window,project,saved,drafts,requests,githubRequests,elements,dialogs,notifications,
+    setKnowledge:value=>{storedKnowledge=value;},tick:()=>interval()};
 }
 
 for (const provider of ['ollama','claude','openai']) {
@@ -100,6 +116,83 @@ test('ein unvollstaendiger GitHub-Dateibaum wird nicht als vollstaendig gespeich
   await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/unvollstaendigen Repository-Dateibaum/);
   assert.equal(h.saved.length,0);
   assert.equal(h.project.aiKnowledge.lastStatus,'error');
+});
+
+test('vorhandenes Wissen bleibt erhalten und der automatische Bereich wird bei erneuter Aktualisierung ersetzt',async()=>{
+  const h=harness('ollama',{tree:[{path:'app.js',type:'blob'}]});
+  h.project.aiKnowledge={filePath:'data/project-knowledge/p1.md'};
+  h.setKnowledge('# Bisheriges Wissen\n\n## Manuell\n\nWichtige Entscheidung 🧑‍💻\n');
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  const first=h.saved[0].payload.markdown;
+  assert(first.startsWith('# Bisheriges Wissen\n\n## Manuell\n\nWichtige Entscheidung 🧑‍💻'));
+  assert.match(first,/projektwissen-automatisch:/);
+  const firstCalls=h.requests.length;
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  const second=h.saved[1].payload.markdown;
+  assert(second.startsWith('# Bisheriges Wissen\n\n## Manuell\n\nWichtige Entscheidung 🧑‍💻'));
+  assert.equal((second.match(/<!-- projektwissen-automatisch:/g)||[]).length,1);
+  assert.equal((second.match(/Vollstaendiger Repository-Dateibaum/g)||[]).length,1);
+  assert.equal(h.requests.length,firstCalls);
+  assert.equal(h.drafts.at(-1).replace,true);
+});
+
+test('nur geaenderte Abschnitte werden nach einem neuen Commit erneut verarbeitet',async()=>{
+  const h=harness('ollama',{tree:[{path:'app.js',type:'blob'}]});
+  let title='Erster Stand',sha='one';
+  h.window.testOverrides.buildProjectKnowledgeSnapshot=()=>({project:{title},github:{}});
+  h.window.testOverrides.fetchGitHubJson=async url=>url.includes('/commits/')
+    ?{sha,commit:{tree:{sha:'tree-123'}}}:{tree:[{path:'app.js',type:'blob'}]};
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  const firstCalls=h.requests.length;
+  assert.equal(firstCalls,2);
+  title='Neuer Stand';
+  sha='two';
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  assert.equal(h.requests.length,firstCalls+1);
+  assert.match(h.saved[1].payload.markdown,/Dokumentierter Abschnitt 3/);
+  assert.match(h.saved[1].payload.markdown,/Dokumentierter Abschnitt 2/);
+  assert.equal(Object.keys(h.drafts.at(-1).items).length,2);
+});
+
+test('ein anderes Cloud-Modell verwendet keine Abschnitte des vorherigen Modells',async()=>{
+  const h=harness('openai',{tree:[]});
+  let model='modell-eins';
+  h.window.LocalOllama.resolveModels=async()=>[model];
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  const count=h.requests.length;
+  model='modell-zwei';
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  assert.equal(h.requests.length,count*2);
+});
+
+test('manuelle Bearbeitung im automatischen Bereich bleibt bei der Aktualisierung erhalten',async()=>{
+  const h=harness('ollama',{tree:[]});
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  h.setKnowledge(h.saved[0].payload.markdown.replace('Dokumentierter Abschnitt 1','Manuell ergaenzte Entscheidung'));
+  await h.window.ProjectsModule.generateAiKnowledgeForProject('p1');
+  const markdown=h.saved[1].payload.markdown;
+  assert.match(markdown,/Manuell ergaenzte Entscheidung/);
+  assert.equal((markdown.match(/<!-- projektwissen-automatisch:/g)||[]).length,1);
+});
+
+test('Lese- und zwischenzeitliche Bearbeitungsfehler verhindern das Ueberschreiben',async()=>{
+  const h=harness('ollama',{tree:[]});
+  h.project.aiKnowledge={filePath:'data/project-knowledge/p1.md'};
+  h.window.testOverrides.readKnowledge=async()=>({ok:false,status:500});
+  await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/konnte nicht geladen werden/);
+  assert.equal(h.saved.length,0);
+  let reads=0;
+  h.window.testOverrides.readKnowledge=async()=>({ok:true,text:async()=>++reads===1?'Original':'Zwischenzeitlich bearbeitet'});
+  await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/zwischenzeitlich geaendert/);
+  assert.equal(h.saved.length,0);
+});
+
+test('beschaedigte Markierungen verhindern das Ueberschreiben',async()=>{
+  const h=harness('ollama',{tree:[]});
+  h.project.aiKnowledge={filePath:'data/project-knowledge/p1.md'};
+  h.setKnowledge('# Wissen\n<!-- projektwissen-automatisch:kaputt -->\nManuelle Inhalte');
+  await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/Markierungen/);
+  assert.equal(h.saved.length,0);
 });
 
 test('gekuerzter rekursiver Dateibaum wird verzeichnisweise vollstaendig nachgeladen',async()=>{
@@ -283,7 +376,7 @@ test('fertige Abschnitte werden bei KI-Ausfall auf dem Server zwischengespeicher
   };
   await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/KI nicht erreichbar/);
   assert.equal(h.drafts.length,2);
-  assert.equal(h.drafts[0].scope,'ollama|'+h.project.aiKnowledge.preferredModel+'|commit-123');
+  assert.equal(h.drafts[0].scope,'ollama|'+JSON.stringify([h.project.aiKnowledge.preferredModel])+'|https://github.com/acme/demo');
   assert.equal(h.saved.length,0);
   assert.equal(h.project.aiKnowledge.lastStatus,'error');
 });

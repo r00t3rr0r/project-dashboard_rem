@@ -600,6 +600,7 @@ window.LocalOllama={
   request:request,
   generate:function(path,payload,options){return generate(path,payload||{},options||{});},
   health:health,
+  resolveModels:resolveModels,
   getProvider:getProvider,
   setProvider:setProvider,
   providers:function(){return Object.keys(PROVIDERS).map(function(key){return {id:key,label:PROVIDERS[key].label};});},

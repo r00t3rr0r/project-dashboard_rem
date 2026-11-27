@@ -193,6 +193,23 @@ class StorageConcurrencyTest(unittest.TestCase):
                 })
             self.assertEqual(caught.exception.code, 400)
 
+    def test_project_knowledge_draft_replace_discards_obsolete_chunks(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(storage, 'KNOWLEDGE_DRAFT_DIR', directory):
+            base = {'projectId': 'p1', 'scope': 'provider|model|repo'}
+            self.request_json('POST', '/api/project-knowledge/draft', {
+                **base, 'items': {'old': {'text': 'old'}, 'kept': {'text': 'kept'}}
+            })
+            self.request_json('POST', '/api/project-knowledge/draft', {
+                **base, 'items': {'new': {'text': 'new'}}
+            })
+            _, before = self.request_json('GET', '/api/project-knowledge/draft?projectId=p1&scope=provider%7Cmodel%7Crepo')
+            self.assertEqual(set(before['items']), {'old', 'kept', 'new'})
+            self.request_json('POST', '/api/project-knowledge/draft', {
+                **base, 'items': {'kept': {'text': 'kept'}, 'new': {'text': 'new'}}, 'replace': True
+            })
+            _, after = self.request_json('GET', '/api/project-knowledge/draft?projectId=p1&scope=provider%7Cmodel%7Crepo')
+            self.assertEqual(set(after['items']), {'kept', 'new'})
+
     def test_project_knowledge_analysis_only_returns_markdown_without_writing(self):
         with mock.patch.object(storage.StorageHandler, '_call_ollama', return_value=('# Analyse', ['# Analyse'])) as call:
             status, result = self.request_json('POST', '/api/ai/project-knowledge', {

@@ -3523,7 +3523,7 @@ function renderInfoHub(project,flow){
     +(isProjectKnowledgeAdmin()?'<section class="infohub-card infohub-ai-card">'
     +'<h4>KI - Projektwissen</h4>'
     +(hasGithubLink
-      ?'<p class="text-muted">Projektkontext, die 25 neuesten GitHub-Commits aus main und der Repository-Dateibaum werden an die gewaehlte KI gesendet. Claude und ChatGPT sind externe Dienste; Notizen, Links, Commit-Nachrichten und Dateinamen koennen sensible Daten enthalten. Dateiinhalte werden bei der Erzeugung nicht analysiert; fuer KI-Ergaenzungen wird ein Auszug der Wissensdatei uebertragen.</p>'
+      ?'<p class="text-muted">Projektkontext, die 25 neuesten GitHub-Commits aus main und der Repository-Dateibaum werden an die gewaehlte KI gesendet. Vorhandenes Wissen bleibt erhalten; der automatisch erzeugte Bereich wird aktualisiert. Claude und ChatGPT sind externe Dienste; Notizen, Links, Commit-Nachrichten und Dateinamen koennen sensible Daten enthalten. Dateiinhalte werden bei der Erzeugung nicht analysiert; fuer KI-Ergaenzungen wird ein Auszug der Wissensdatei uebertragen.</p>'
       :'<p class="text-muted">Fuer KI-Aufbereitung bitte zuerst GitHub-Repository am Projekt hinterlegen.</p>')
     +(window.LocalOllama&&window.LocalOllama.providerSelectHtml?window.LocalOllama.providerSelectHtml('ai-provider-'+project.id):'')
     +'<div class="ai-health-grid">'
@@ -5639,6 +5639,46 @@ function openKnowledgeProgressDialog(project,run){
 
 function knowledgeBytes(text){return new TextEncoder().encode(text).length;}
 
+var KNOWLEDGE_BLOCK_START='<!-- projektwissen-automatisch:';
+var KNOWLEDGE_BLOCK_END='<!-- /projektwissen-automatisch -->';
+
+function knowledgeChecksum(text){
+  var a=2166136261,b=2246822507;
+  for(var i=0;i<text.length;i++){
+    a=Math.imul(a^text.charCodeAt(i),16777619);
+    b=Math.imul(b^text.charCodeAt(i),3266489909);
+  }
+  return (a>>>0).toString(16).padStart(8,'0')+(b>>>0).toString(16).padStart(8,'0');
+}
+
+function mergeKnowledgeDocument(existing,generated){
+  if(generated.indexOf(KNOWLEDGE_BLOCK_START)!==-1||generated.indexOf(KNOWLEDGE_BLOCK_END)!==-1){
+    throw new Error('Die KI-Antwort enthaelt reservierte Markierungen fuer das Projektwissen.');
+  }
+  var block=KNOWLEDGE_BLOCK_START+knowledgeChecksum(generated)+' -->\n'+generated+KNOWLEDGE_BLOCK_END;
+  var start=existing.indexOf(KNOWLEDGE_BLOCK_START);
+  var end=existing.indexOf(KNOWLEDGE_BLOCK_END);
+  if(start===-1&&end===-1)return existing?existing.replace(/\s*$/,'')+'\n\n'+block+'\n':block+'\n';
+  var match=start===-1?null:existing.slice(start).match(/^<!-- projektwissen-automatisch:([a-f0-9]{16}) -->\n/);
+  if(!match||end<start+match[0].length||existing.indexOf(KNOWLEDGE_BLOCK_START,start+1)!==-1||existing.indexOf(KNOWLEDGE_BLOCK_END,end+1)!==-1){
+    throw new Error('Die Markierungen des automatisch erzeugten Projektwissens sind ungueltig. Bitte die Wissensdatei pruefen.');
+  }
+  var body=existing.slice(start+match[0].length,end);
+  if(knowledgeChecksum(body)!==match[1]){
+    var preserved=existing.slice(0,start)+body+existing.slice(end+KNOWLEDGE_BLOCK_END.length);
+    return preserved.replace(/\s*$/,'')+'\n\n'+block+'\n';
+  }
+  return existing.slice(0,start)+block+existing.slice(end+KNOWLEDGE_BLOCK_END.length);
+}
+
+function readKnowledgeForUpdate(projectId,hasFile){
+  if(!hasFile)return Promise.resolve('');
+  return fetch('/api/ai/project-knowledge?projectId='+encodeURIComponent(projectId),{method:'GET',cache:'no-store'}).then(function(response){
+    if(!response.ok)throw new Error('Vorhandenes Projektwissen konnte nicht geladen werden (HTTP '+response.status+').');
+    return response.text();
+  });
+}
+
 function splitKnowledgeText(text,maxBytes){
   var parts=[],part='',size=0;
   Array.from(text).forEach(function(character){
@@ -5718,8 +5758,8 @@ function saveKnowledgeCacheItem(projectId,cache,prompt,item){
   return postBackendJson('/api/project-knowledge/draft',{projectId:projectId,scope:cache.scope,items:items}).catch(function(){});
 }
 
-function clearKnowledgeCache(projectId){
-  return postBackendJson('/api/project-knowledge/draft',{projectId:projectId,clear:true}).catch(function(){});
+function compactKnowledgeCache(projectId,cache,items){
+  return postBackendJson('/api/project-knowledge/draft',{projectId:projectId,scope:cache.scope,items:items,replace:true});
 }
 
 function checkKnowledgeAbort(run){
@@ -5807,9 +5847,16 @@ function generateAiKnowledgeForProject(projectId){
   var snapshot;
   var sourceCommit='';
   var actualModel='';
+  var existingKnowledge='';
+  var existingPath=aiState.filePath;
   return Promise.resolve().then(function(){
     openKnowledgeProgressDialog(project,run);
     updateKnowledgeProgress(projectId,'Start · Anbieter: '+provider+' · Kontext: 8192 Tokens · Antwortbudget: 4096 Tokens · Reserve: 1024 Tokens');
+    return readKnowledgeForUpdate(projectId,!!existingPath);
+  }).then(function(markdown){
+    checkKnowledgeAbort(run);
+    existingKnowledge=markdown;
+    if(existingPath)updateKnowledgeProgress(projectId,'Vorhandenes Projektwissen geladen und wird erhalten.');
     return fetchKnowledgeTree(project.github,function(message){updateKnowledgeProgress(projectId,message);});
   }).then(function(tree){
     sourceCommit=tree.commit;
@@ -5821,6 +5868,7 @@ function generateAiKnowledgeForProject(projectId){
     return window.AIConfModule.fetchRecentCommits({github:{owner:repo.owner,repo:repo.repo}},'','','main').then(function(commits){
       checkKnowledgeAbort(run);
       snapshot=buildProjectKnowledgeSnapshot(project);
+      delete snapshot.generatedAt;
       snapshot.github.recentCommits=commits.sort(function(a,b){return Date.parse(b.date)-Date.parse(a.date);}).slice(0,25);
       updateKnowledgeProgress(projectId,commits.length+' GitHub-Commits geladen; die 25 neuesten werden beruecksichtigt.');
       return tree;
@@ -5831,15 +5879,25 @@ function generateAiKnowledgeForProject(projectId){
     updateKnowledgeProgress(projectId,sections.length+' kleine Chunks vorbereitet; '+tree.entries.length+' Repository-Eintraege.');
     var parts=[];
     var cache;
+    var usedCache={};
+    function formattedParts(){
+      var label='';
+      return parts.map(function(part){
+        var heading=part.label===label?'':'## '+part.label+'\n\n';
+        label=part.label;
+        return heading+part.text;
+      }).join('\n\n');
+    }
     function processSection(section){
         checkKnowledgeAbort(run);
         var prompt=knowledgePrompt(section);
         var cached=cache.items[prompt];
         if(cached&&cached.text){
+          usedCache[prompt]=cached;
           actualModel=cached.model||actualModel;
-          parts.push('## '+section.label+'\n\n'+cached.text);
+          parts.push({label:section.label,text:cached.text});
           run.completed++;
-          updateKnowledgeProgress(projectId,'Abschnitt '+run.completed+' von '+run.total+' aus dem Server-Zwischenstand uebernommen.',parts.join('\n\n'));
+          updateKnowledgeProgress(projectId,'Abschnitt '+run.completed+' von '+run.total+' aus dem Server-Zwischenstand uebernommen.',formattedParts());
           return Promise.resolve();
         }
         var inputBound=knowledgeBytes(prompt);
@@ -5855,10 +5913,11 @@ function generateAiKnowledgeForProject(projectId){
           var text=String(result.markdown||'').trim();
           if(!text)throw new Error('Die KI hat einen leeren Abschnitt geliefert: '+section.label);
           actualModel=result.model||actualModel;
-          parts.push('## '+section.label+'\n\n'+text);
+          usedCache[prompt]={text:text,model:actualModel};
+          parts.push({label:section.label,text:text});
           run.completed++;
-          updateKnowledgeProgress(projectId,'Abschnitt '+run.completed+' von '+run.total+' fertig · Modell: '+actualModel,parts.join('\n\n'));
-          return saveKnowledgeCacheItem(projectId,cache,prompt,{text:text,model:actualModel});
+          updateKnowledgeProgress(projectId,'Abschnitt '+run.completed+' von '+run.total+' fertig · Modell: '+actualModel,formattedParts());
+          return saveKnowledgeCacheItem(projectId,cache,prompt,usedCache[prompt]);
         }).catch(function(error){
           checkKnowledgeAbort(run);
           var canSplit=error.code==='AI_OUTPUT_TRUNCATED'||error.code==='AI_CONTEXT_LIMIT'
@@ -5882,7 +5941,11 @@ function generateAiKnowledgeForProject(projectId){
           });
         });
     }
-    return loadKnowledgeCache(projectId,provider+'|'+model+'|'+tree.commit).then(function(loaded){
+    var cacheModels=provider==='ollama'?Promise.resolve([model]):window.LocalOllama.resolveModels(provider);
+    return cacheModels.then(function(models){
+      checkKnowledgeAbort(run);
+      return loadKnowledgeCache(projectId,provider+'|'+JSON.stringify(models)+'|'+project.github.url.toLowerCase());
+    }).then(function(loaded){
       cache=loaded;
       var resumed=Object.keys(cache.items).length;
       if(resumed)updateKnowledgeProgress(projectId,'Gespeicherter Zwischenstand auf dem Server gefunden: '+resumed+' Abschnitte werden wiederverwendet.');
@@ -5899,16 +5962,25 @@ function generateAiKnowledgeForProject(projectId){
         +'- Repository: '+project.github.url+'\n- Branch: '+tree.branch+'\n- Commit: '+tree.commit
         +'\n- Generiert: '+new Date().toISOString()+'\n- Anbieter: '+provider+'\n- Modell: '+actualModel
         +'\n\n> Grundlage: Dashboard-Projektkontext und GitHub-Dateibaum. Dateiinhalte, Abhaengigkeiten und Implementierungsdetails wurden nicht gelesen; Aussagen dazu sind zu verifizieren.\n\n'
-        +parts.join('\n\n')+'\n\n## Vollstaendiger Repository-Dateibaum\n\n'
+        +formattedParts()+'\n\n## Vollstaendiger Repository-Dateibaum\n\n'
         +tree.entries.map(function(entry){return '- '+JSON.stringify(entry.path)+' ('+entry.type+')';}).join('\n')+'\n';
-      return postBackendJson('/api/project-knowledge',{projectId:project.id,projectTitle:getProjectTitle(project),markdown:markdown})
+      markdown=mergeKnowledgeDocument(existingKnowledge,markdown);
+      return readKnowledgeForUpdate(projectId,!!existingPath).then(function(current){
+        var latestProject=window.DataLayer.getProjectById(projectId);
+        var latestPath=latestProject&&latestProject.aiKnowledge&&latestProject.aiKnowledge.filePath||'';
+        if(latestPath!==existingPath||current!==existingKnowledge)throw new Error('Das Projektwissen wurde zwischenzeitlich geaendert. Bitte die Aktualisierung erneut starten.');
+        return postBackendJson('/api/project-knowledge',{projectId:project.id,projectTitle:getProjectTitle(project),markdown:markdown});
+      })
         .then(function(saved){
           if(!saved||!/^data\/project-knowledge\/[A-Za-z0-9._-]+\.md$/.test(saved.filePath||'')||!saved.bytes)throw new Error('Der Server hat die Wissensdatei nicht bestaetigt.');
-          return Object.assign(saved,{model:actualModel,generatedAt:new Date().toISOString(),markdown:markdown});
+          return compactKnowledgeCache(projectId,cache,usedCache).catch(function(error){
+            notify('Projektwissen gespeichert, aber der KI-Zwischenstand konnte nicht aktualisiert werden: '+(error.message||String(error)),'error');
+          }).then(function(){
+            return Object.assign(saved,{model:actualModel,generatedAt:new Date().toISOString(),markdown:markdown});
+          });
         });
     });
   }).then(function(body){
-    clearKnowledgeCache(projectId);
     run.finished=true;run.saved=true;
     updateKnowledgeProgress(projectId,'Wissensdatei erfolgreich gespeichert.',body.markdown);
     clearInterval(timer);
@@ -5936,7 +6008,7 @@ function generateAiKnowledgeForProject(projectId){
     }
 
     refreshAiHealthStatus(true).catch(function(){});
-    notify('Projektwissen KI erfolgreich erstellt.','info');
+    notify('Projektwissen KI erfolgreich aktualisiert.','info');
     render();
     return body;
   }).catch(function(err){

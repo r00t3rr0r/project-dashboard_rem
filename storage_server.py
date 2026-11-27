@@ -1222,13 +1222,14 @@ class StorageHandler(BaseHTTPRequestHandler):
                     self._send_json({'error': 'scope and items are required.'}, status=400)
                     return
                 merged = {}
-                try:
-                    with open(path, 'r', encoding='utf-8') as handle:
-                        stored = json.load(handle)
-                    if isinstance(stored, dict) and stored.get('scope') == scope and isinstance(stored.get('items'), dict):
-                        merged = stored['items']
-                except (OSError, ValueError):
-                    pass
+                if payload.get('replace') is not True:
+                    try:
+                        with open(path, 'r', encoding='utf-8') as handle:
+                            stored = json.load(handle)
+                        if isinstance(stored, dict) and stored.get('scope') == scope and isinstance(stored.get('items'), dict):
+                            merged = stored['items']
+                    except (OSError, ValueError):
+                        pass
                 for key, item in items.items():
                     if isinstance(key, str) and isinstance(item, dict) and isinstance(item.get('text'), str) and item['text'].strip():
                         merged[key] = {'text': item['text'], 'model': str(item.get('model') or '')}
