@@ -698,6 +698,19 @@
     return null;
   }
 
+  function getBlockerResponsibleNames(blockerTask) {
+    if (!blockerTask) return [];
+    var ids = (Array.isArray(blockerTask.assigneeIds) ? blockerTask.assigneeIds : []).concat(blockerTask.assigneeId ? [blockerTask.assigneeId] : []);
+    var employees = (typeof window.DataLayer.getEmployees === 'function' ? window.DataLayer.getEmployees() : []) || [];
+    var names = [];
+    ids.forEach(function(id) {
+      var employee = employees.find(function(item) { return String(item && item.id) === String(id); });
+      var name = employee && employee.name ? employee.name : '';
+      if (name && names.indexOf(name) === -1) names.push(name);
+    });
+    return names;
+  }
+
   function getBlockerRows() {
     var tasks = window.DataLayer.getTasks() || [];
     var projects = window.DataLayer.getProjects() || [];
@@ -734,6 +747,7 @@
         active: !historyEntry || !historyEntry.until,
         blockerTaskId: blockerTaskId,
         blockerTaskTitle: (blockerTask && blockerTask.title) || (historyEntry && historyEntry.blockerTitle) || '',
+        responsibleNames: getBlockerResponsibleNames(blockerTask),
         projectId: projectRef ? String(projectRef.id || '') : '',
         projectTitle: projectRef ? (projectRef.title || projectRef.name || 'Projekt') : ''
       });
@@ -911,6 +925,9 @@
       }
       if (item.blockerTaskTitle) {
         html += '    <div class="blocker-detail blocker-detail-blocker"><dt>Blocker</dt><dd>' + escapeHtml(item.blockerTaskTitle) + '</dd></div>';
+      }
+      if (item.responsibleNames && item.responsibleNames.length) {
+        html += '    <div class="blocker-detail blocker-detail-responsible"><dt>Verantwortlich</dt><dd>' + escapeHtml(item.responsibleNames.join(', ')) + '</dd></div>';
       }
       if (!item.active && item.resolution) {
         html += '    <div class="blocker-detail blocker-detail-resolution"><dt>Auflösung</dt><dd>' + escapeHtml(item.resolution) + '</dd></div>';

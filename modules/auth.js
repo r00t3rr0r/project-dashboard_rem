@@ -775,7 +775,9 @@
       if (getTaskProjectIds(next).some(function (projectId) { return !canViewProject(getProjectById(projectId)); })) {
         throw new Error('Dieses Projekt ist fuer den aktuellen Mitarbeiter nicht freigegeben.');
       }
-      next.assigneeId = user.id;
+      var hasBlockerAssignees = next.isBlocker && Array.isArray(next.assigneeIds) && next.assigneeIds.length;
+      if (!hasBlockerAssignees) next.assigneeId = user.id;
+      else next.assigneeId = next.assigneeIds[0];
       if (!next.createdByEmployeeId) next.createdByEmployeeId = user.id;
     }
     return next;
