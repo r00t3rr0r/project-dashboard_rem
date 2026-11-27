@@ -339,6 +339,28 @@ test('team load groups all completed tasks under one project heading',()=>{
   assert.match(html,/team-load-done-project-list"><li class="team-load-done-item is-progress">[\s\S]*Erste Aufgabe[\s\S]*<li class="team-load-done-item is-progress">[\s\S]*Zweite Aufgabe/);
 });
 
+test('team load displays task labels with their colors and a legend-color fallback',()=>{
+  const data = makeDataLayer();
+  data.getEmployees = ()=>[{id:'employee',name:'Alex'}];
+  data.getLabels = ()=>[
+    {id:'bug',name:'Fehler & Fix',color:'#ef4444'},
+    {id:'feature',name:'Feature'}
+  ];
+  const task = data.createTask({
+    id:'labeled',title:'Beschriftete Aufgabe',status:'in-progress',assigneeId:'employee',
+    labels:['bug','feature']
+  });
+  task.status = 'done';
+  data.updateTask(task);
+
+  const {dashboard,teamLoadContainer} = makeDashboard(data);
+  dashboard.renderTeamLoad();
+
+  assert.match(teamLoadContainer.innerHTML,/class="team-load-done-labels" aria-label="Aufgabenlabels"/);
+  assert.match(teamLoadContainer.innerHTML,/style="--task-label-color:#ef4444" title="Fehler &amp; Fix">Fehler &amp; Fix<\/span>/);
+  assert.match(teamLoadContainer.innerHTML,/style="--task-label-color:var\(--accent-red\)" title="Feature">Feature<\/span>/);
+});
+
 test('team load documents today\'s GitHub commits as development steps, including undocumented ones',()=>{
   const data = makeDataLayer();
   data.getEmployees = ()=>[{id:'employee',name:'Alex',github:{username:'alex',aliases:['Alex Beispiel']}}];

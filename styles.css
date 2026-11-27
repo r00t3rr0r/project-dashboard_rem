@@ -4446,6 +4446,27 @@ body.light-mode .team-load-done-section button.team-load-done-open:hover {
   min-width: 0;
 }
 
+.team-load-done-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.18rem;
+  margin-top: 0.12rem;
+}
+
+.team-load-done-label {
+  max-width: 100%;
+  padding: 0.04rem 0.3rem;
+  border: 1px solid color-mix(in srgb, var(--task-label-color, var(--accent-blue)) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--task-label-color, var(--accent-blue)) 16%, transparent);
+  color: var(--task-label-color, var(--text-secondary));
+  font-size: 0.58rem;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .team-load-done-project {
   display: inline-flex;
   align-items: center;

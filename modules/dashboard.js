@@ -2374,7 +2374,33 @@
     return html + '</li>';
   }
 
-  function buildTeamLoadDoneGroupHtml(group, employeeKey, expandedDoneKeys) {
+  function buildTeamLoadDoneLabelsHtml(task, labelsById) {
+    var labels = Array.isArray(task && task.labels) ? task.labels : [];
+    if (!labels.length) return '';
+
+    var legendColors = [
+      'var(--accent-blue)',
+      'var(--accent-red)',
+      'var(--accent-green)',
+      'var(--accent-purple)',
+      'var(--accent-yellow)',
+      'var(--accent-cyan, #22b8cf)'
+    ];
+    var html = '<span class="team-load-done-labels" aria-label="Aufgabenlabels">';
+    labels.forEach(function(value, index) {
+      var id = String(value || '');
+      var label = labelsById[id];
+      var name = String(label && label.name || id).trim();
+      if (!name) return;
+      var color = label && /^#[0-9a-f]{6}$/i.test(label.color || '')
+        ? label.color
+        : legendColors[index % legendColors.length];
+      html += '<span class="team-load-done-label" style="--task-label-color:' + color + '" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>';
+    });
+    return html + '</span>';
+  }
+
+  function buildTeamLoadDoneGroupHtml(group, employeeKey, expandedDoneKeys, labelsById) {
     var icon = group.kind === 'task' ? 'check_circle' : (group.kind === 'commits' ? 'commit' : 'checklist');
     var title;
     var groupKey;
@@ -2392,6 +2418,7 @@
     } else {
       html += '<button type="button" class="team-load-done-title team-load-done-open"' + buildTeamLoadDoneOpenAttrs(group) + ' title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</button>';
     }
+    if (group.task) html += buildTeamLoadDoneLabelsHtml(group.task, labelsById);
     if (group.kind === 'progress') html += '<span class="team-load-done-progress">Teilaufgaben ' + group.subtaskDone + '/' + group.subtaskTotal + '</span>';
     if (group.steps.length) {
       html += '<ul class="team-load-done-steps" aria-label="Entwicklungsschritte">';
@@ -2436,12 +2463,12 @@
     return projects;
   }
 
-  function buildTeamLoadDoneProjectHtml(projectGroup, employeeKey, expandedDoneKeys) {
+  function buildTeamLoadDoneProjectHtml(projectGroup, employeeKey, expandedDoneKeys, labelsById) {
     var html = '<li class="team-load-done-project-group">';
     html += '<span class="team-load-done-project" title="' + escapeHtml(projectGroup.label) + '"><span>' + escapeHtml(projectGroup.label) + '</span></span>';
     html += '<ul class="team-load-done-project-list">';
     projectGroup.groups.forEach(function(group) {
-      html += buildTeamLoadDoneGroupHtml(group, employeeKey, expandedDoneKeys);
+      html += buildTeamLoadDoneGroupHtml(group, employeeKey, expandedDoneKeys, labelsById);
     });
     return html + '</ul></li>';
   }
@@ -2533,6 +2560,12 @@
     var container = document.getElementById('chart-team-load');
     if (!container) return;
 
+    var labelsById = Object.create(null);
+    var taskLabels = window.DataLayer.getLabels ? window.DataLayer.getLabels() || [] : [];
+    if (!Array.isArray(taskLabels)) taskLabels = [];
+    taskLabels.forEach(function(label) {
+      if (label && label.id) labelsById[String(label.id)] = label;
+    });
     var expandedSubtaskTaskIds = getExpandedDashboardSubtaskTaskIds(container);
     var expandedDoneKeys = getExpandedTeamLoadDoneKeys(container);
 
@@ -2704,7 +2737,7 @@
         html += '<div class="team-load-done-summary">' + escapeHtml(summaryParts.join(' · ')) + '</div>';
         html += '<ul class="team-load-done-list">';
         doneProjectGroups.slice(0, 3).forEach(function(projectGroup) {
-          html += buildTeamLoadDoneProjectHtml(projectGroup, employeeKey, expandedDoneKeys);
+          html += buildTeamLoadDoneProjectHtml(projectGroup, employeeKey, expandedDoneKeys, labelsById);
         });
         html += '</ul>';
         if (doneProjectGroups.length > 3) {
@@ -2712,7 +2745,7 @@
           html += '<details class="team-load-done-more" data-expand-key="' + escapeHtml(moreKey) + '"' + (expandedDoneKeys[moreKey] ? ' open' : '') + '>';
           html += '<summary>+' + (doneProjectGroups.length - 3) + ' weitere Projekte anzeigen</summary><ul class="team-load-done-list">';
           doneProjectGroups.slice(3).forEach(function(projectGroup) {
-            html += buildTeamLoadDoneProjectHtml(projectGroup, employeeKey, expandedDoneKeys);
+            html += buildTeamLoadDoneProjectHtml(projectGroup, employeeKey, expandedDoneKeys, labelsById);
           });
           html += '</ul></details>';
         }
