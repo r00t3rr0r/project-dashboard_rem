@@ -3523,7 +3523,7 @@ function renderInfoHub(project,flow){
     +(isProjectKnowledgeAdmin()?'<section class="infohub-card infohub-ai-card">'
     +'<h4>KI - Projektwissen</h4>'
     +(hasGithubLink
-      ?'<p class="text-muted">Projektkontext, die 25 neuesten GitHub-Commits und der Repository-Dateibaum werden an die gewaehlte KI gesendet. Claude und ChatGPT sind externe Dienste; Notizen, Links, Commit-Nachrichten und Dateinamen koennen sensible Daten enthalten. Dateiinhalte werden bei der Erzeugung nicht analysiert; fuer KI-Ergaenzungen wird ein Auszug der Wissensdatei uebertragen.</p>'
+      ?'<p class="text-muted">Projektkontext, die 25 neuesten GitHub-Commits aus main und der Repository-Dateibaum werden an die gewaehlte KI gesendet. Claude und ChatGPT sind externe Dienste; Notizen, Links, Commit-Nachrichten und Dateinamen koennen sensible Daten enthalten. Dateiinhalte werden bei der Erzeugung nicht analysiert; fuer KI-Ergaenzungen wird ein Auszug der Wissensdatei uebertragen.</p>'
       :'<p class="text-muted">Fuer KI-Aufbereitung bitte zuerst GitHub-Repository am Projekt hinterlegen.</p>')
     +(window.LocalOllama&&window.LocalOllama.providerSelectHtml?window.LocalOllama.providerSelectHtml('ai-provider-'+project.id):'')
     +'<div class="ai-health-grid">'
@@ -5817,8 +5817,8 @@ function generateAiKnowledgeForProject(projectId){
     var repo=normalizeRepoUrl(project.github.url);
     if(!repo)throw new Error('Ungueltige GitHub-Repository-URL.');
     if(!window.AIConfModule||typeof window.AIConfModule.fetchRecentCommits!=='function')throw new Error('GitHub-Commit-Abruf ist nicht verfuegbar.');
-    updateKnowledgeProgress(projectId,'GitHub-Commits aller Branches werden geladen.');
-    return window.AIConfModule.fetchRecentCommits({github:{owner:repo.owner,repo:repo.repo}},'','').then(function(commits){
+    updateKnowledgeProgress(projectId,'GitHub-Commits von main werden geladen.');
+    return window.AIConfModule.fetchRecentCommits({github:{owner:repo.owner,repo:repo.repo}},'','','main').then(function(commits){
       checkKnowledgeAbort(run);
       snapshot=buildProjectKnowledgeSnapshot(project);
       snapshot.github.recentCommits=commits.sort(function(a,b){return Date.parse(b.date)-Date.parse(a.date);}).slice(0,25);

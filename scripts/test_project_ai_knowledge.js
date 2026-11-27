@@ -114,7 +114,7 @@ test('gekuerzter rekursiver Dateibaum wird verzeichnisweise vollstaendig nachgel
   assert.match(h.saved[0].payload.markdown,/src\/index\.js/);
 });
 
-test('Projektwissen laedt und sortiert aktuelle Commits aller Branches statt gespeicherter Commits',async()=>{
+test('Projektwissen laedt nur aktuelle main-Commits ueber alle Seiten statt gespeicherter Commits',async()=>{
   const h=harness('ollama',{tree:[]});
   h.project.githubCommits=[{sha:'stale',message:'Veralteter Commit'}];
   const commit=(id,date)=>({sha:'sha-'+id,commit:{message:'Commit '+id,committer:{date},author:{name:'Dev'}}});
@@ -131,11 +131,25 @@ test('Projektwissen laedt und sortiert aktuelle Commits aller Branches statt ges
   const records=h.requests.flatMap(request=>JSON.parse(request.payload.knowledgePrompt.split('\n\n').pop()));
   const commits=records.filter(record=>record.path[0]==='github'&&record.path[1]==='recentCommits');
   assert.equal(commits.filter(record=>record.path[3]==='sha').length,25);
-  assert.equal(commits.find(record=>record.path[2]==='0'&&record.path[3]==='sha').text,'"sha-feature"');
-  assert.equal(commits.find(record=>record.path[2]==='1'&&record.path[3]==='sha').text,'"sha-later-page"');
+  assert.equal(commits.find(record=>record.path[2]==='0'&&record.path[3]==='sha').text,'"sha-later-page"');
+  assert(!JSON.stringify(records).includes('sha-feature'));
   assert(!JSON.stringify(records).includes('Veralteter Commit'));
   assert.equal(h.project.githubCommits[0].sha,'stale');
   assert(h.githubRequests.some(request=>request.url.includes('sha=main')&&request.url.includes('page=2')));
+  assert(h.githubRequests.every(request=>{
+    const parsed=new URL(request.url,'http://localhost');
+    return parsed.pathname==='/api/github/commits'&&parsed.searchParams.get('sha')==='main';
+  }));
+});
+
+test('fehlender main-Branch bricht die Erstellung ohne Fallback ab',async()=>{
+  const h=harness('ollama',{tree:[]});
+  h.window.testOverrides.githubFetch=async()=>({ok:false,status:404,json:async()=>({message:'Not Found'})});
+  await assert.rejects(h.window.ProjectsModule.generateAiKnowledgeForProject('p1'),/404/);
+  assert.equal(h.githubRequests.length,1);
+  assert.equal(new URL(h.githubRequests[0].url,'http://localhost').searchParams.get('sha'),'main');
+  assert.equal(h.requests.length,0);
+  assert.equal(h.saved.length,0);
 });
 
 test('fehlgeschlagener Commit-Abruf verhindert die Erzeugung und Speicherung',async()=>{

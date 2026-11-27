@@ -345,7 +345,7 @@ function fetchGitHubDefaultBranch(project){
     return repo.default_branch;
   });
 }
-function fetchRecentCommits(project,since,until){
+function fetchRecentCommits(project,since,until,branch){
   var request;
   try{request=createGitHubReader(project);}catch(error){return Promise.reject(error);}
   var github=project.github;
@@ -387,7 +387,7 @@ function fetchRecentCommits(project,since,until){
       if(items.length===100)return page(branch,number+1);
     });
   }
-  return fetchBranchNames().then(function(names){
+  return (branch?Promise.resolve([branch]):fetchBranchNames()).then(function(names){
     return names.reduce(function(chain,name){return chain.then(function(){return page(name,1);});},Promise.resolve());
   }).then(function(){return commits;});
 }
