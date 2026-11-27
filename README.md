@@ -269,6 +269,8 @@ Beim Start werden automatisch vorbereitet:
 
 Aufgaben-Dateianhaenge werden separat unter `data/task-attachments/` gespeichert. Dieses Verzeichnis muss zusammen mit der Datenbank extern gesichert und bei einer Migration wiederhergestellt werden; SQLite-/JSON-Backups und der JSON-Export enthalten nur die Verweise auf diese Dateien. Bereits eingebettete Alt-Anhaenge bleiben im JSON enthalten. Die mitgelieferte Nginx-Konfiguration erlaubt fuer den Upload-Endpunkt unbegrenzte Anfragegroessen; andere Proxys muessen entsprechend konfiguriert werden. Verfuegbarer Speicherplatz und Infrastruktur setzen weiterhin praktische Grenzen.
 
+Beim Erstellen oder Bearbeiten einer Aufgabe kann eine verpflichtende Antwort als Text, Auswahl, Datei oder Termin vorgegeben werden. Eine Antwort pro Aufgabe ist vor dem Abschluss erforderlich und wird in der Aufgaben-Detailansicht abgegeben. Eine Terminantwort erstellt ein Meeting im Teamkalender und lädt die zugewiesenen Mitarbeitenden ein; dafür ist die Berechtigung zum Anlegen von Kalenderterminen erforderlich. Dateiantworten werden wie Aufgabenanhänge separat gesichert. Nach einer Antwort bleibt die Vorgabe unveränderlich, die Antwort kann aktualisiert werden.
+
 ### Alternative: separater Static-Server
 
 ```bash

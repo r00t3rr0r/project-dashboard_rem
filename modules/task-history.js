@@ -766,6 +766,10 @@
     if (!window.DataLayer || !window.DataLayer.getTaskById || !window.DataLayer.updateTask) return;
     var task = window.DataLayer.getTaskById(taskId);
     if (!task || task.status !== 'review') return;
+    if (!window.TaskResponse.hasValidAnswer(task)) {
+      alert('Bitte zuerst die erforderliche Antwort in der Aufgabe abgeben.');
+      return;
+    }
 
     var next = JSON.parse(JSON.stringify(task));
     next.status = 'done';

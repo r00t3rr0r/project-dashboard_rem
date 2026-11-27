@@ -510,6 +510,10 @@
 
   function applyTaskStatusTransition(task, nextStatus, options) {
     if (!task || !nextStatus) return false;
+    if (nextStatus === 'done' && !window.TaskResponse.hasValidAnswer(task)) {
+      alert('Bitte zuerst die erforderliche Antwort in der Aufgabe abgeben.');
+      return false;
+    }
     var settings = options || {};
     var nowIso = settings.at || getNowIsoString();
     var tracking = getTaskTimeTracking(task);
@@ -1647,6 +1651,7 @@
       html += '<div class="kanban-card-title-row">';
       html += '<div class="kanban-card-title kanban-card-title-compact">' + escapeHtml(task.title || 'Ohne Titel') + '</div>';
       html += '</div>';
+      if (task.responseRequirement) html += '<div class="task-response-card">' + (window.TaskResponse.hasValidAnswer(task) ? 'Antwort eingegangen' : 'Antwort erforderlich') + '</div>';
       html += '</div>';
       return html;
     }
@@ -1665,6 +1670,9 @@
 
     if (description) {
       html += '<div class="kanban-card-desc">' + escapeHtml(description).substring(0, 180) + '</div>';
+    }
+    if (task.responseRequirement) {
+      html += '<div class="task-response-card">' + (window.TaskResponse.hasValidAnswer(task) ? 'Antwort eingegangen' : 'Antwort erforderlich') + '</div>';
     }
 
     html += '<div class="kanban-card-signals">';
@@ -2107,7 +2115,7 @@
         alert(message);
         return;
       }
-      applyTaskStatusTransition(task, nextStatus, { at: getNowIsoString() });
+      if (!applyTaskStatusTransition(task, nextStatus, { at: getNowIsoString() })) return;
       window.DataLayer.updateTask(task);
     });
   }
@@ -2231,7 +2239,7 @@
       if (task && task.status !== status) {
         var auth = getAuthManager();
         if (auth && typeof auth.canMoveTask === 'function' && !auth.canMoveTask(task)) return;
-        applyTaskStatusTransition(task, status, { at: getNowIsoString() });
+        if (!applyTaskStatusTransition(task, status, { at: getNowIsoString() })) return;
         window.DataLayer.updateTask(task);
         renderAllColumns();
       }
@@ -2416,6 +2424,8 @@
     var subtasks = Array.isArray(task.subtasks) ? task.subtasks : [];
     var notes = Array.isArray(task.notes) ? task.notes : [];
     var attachments = Array.isArray(task.attachments) ? task.attachments : [];
+    var auth = getAuthManager();
+    var canAnswer = !auth || typeof auth.canEditTask !== 'function' || auth.canEditTask(task);
     var dependencies = Array.isArray(task.dependencyTaskIds) ? task.dependencyTaskIds : [];
     var description = String(task.description || '').trim();
     var progress = normalizeTaskProgress(task.progress, 0);
@@ -2482,6 +2492,7 @@
       buildTaskDetailValue('Zuletzt geändert', escapeHtml(formatDateTimeShort(task.updatedAt))) +
       '</dl>' +
       '<section class="kanban-task-detail-section"><h3>Beschreibung</h3><div class="kanban-task-detail-copy">' + (description ? escapeHtml(description) : '<span class="text-muted">Keine Beschreibung hinterlegt.</span>') + '</div></section>' +
+      window.TaskResponse.detailHtml(task, canAnswer) +
       '<section class="kanban-task-detail-section kanban-task-detail-section--full"><h3>Teilaufgaben <span>' + subtasks.filter(function (item) { return item.completed; }).length + '/' + subtasks.length + '</span></h3>' + buildTaskDetailList(subtaskItems, 'Keine Teilaufgaben vorhanden.').replace('kanban-task-detail-list', 'kanban-task-detail-list kanban-task-detail-list--subtasks') + '</section>' +
       (commitItems.length ? '<section class="kanban-task-detail-section kanban-task-detail-section--full"><h3>GitHub-Commits <span>' + commitItems.length + '</span></h3>' + buildTaskDetailList(commitItems) + '</section>' : '') +
       '<div class="kanban-task-detail-columns"><section class="kanban-task-detail-section"><h3>Notizen / Hinweise</h3>' + buildTaskDetailList(noteItems, 'Keine Hinweise vorhanden.') + '</section><section class="kanban-task-detail-section"><h3>Dateien / Links</h3>' + buildTaskDetailList(attachmentItems, 'Keine Dateien oder Links hinterlegt.') + '</section><section class="kanban-task-detail-section"><h3>Abhängigkeiten</h3>' + buildTaskDetailList(dependencyItems, 'Keine Abhängigkeiten hinterlegt.') + '</section></div>' +
@@ -2495,6 +2506,13 @@
     document.getElementById('kanban-task-detail-edit').addEventListener('click', function () {
       closeTaskControlModal();
       openTaskControlModal(task.id);
+    });
+    window.TaskResponse.bindDetail(taskId, function (files) {
+      var draft = { attachments: [] };
+      return addFilesToTaskDraft(draft, files).then(function () { return draft.attachments[0]; });
+    }, function () {
+      renderAllColumns();
+      openTaskDetailModal(taskId);
     });
     content.querySelectorAll('[data-detail-subtask-toggle]').forEach(function (button) {
       button.addEventListener('click', function () {
@@ -3083,6 +3101,8 @@
       '<div class="form-group"><label for="task-cockpit-schedule-mode">Terminlogik</label><select id="task-cockpit-schedule-mode"><option value="none">Kein Termin</option><option value="deadline">Deadline</option><option value="fixed">Fester Termin</option><option value="range">Zeitraum</option><option value="asap">Umgehend</option></select></div>' +
       '</div>' +
       '<div id="task-cockpit-schedule-fields"></div>' +
+      window.TaskResponse.editorHtml('task-cockpit', currentTaskDraft.responseRequirement, !!(currentTaskDraft.responseRequirement && currentTaskDraft.response && window.TaskResponse.hasValidAnswer(currentTaskDraft)) || !window.TaskResponse.canConfigure(currentTaskDraft)) +
+      (currentTaskDraft.responseRequirement ? '<button type="button" class="btn btn-secondary" id="task-cockpit-answer">Antwort ansehen / abgeben</button>' : '') +
       '</section>' +
       '<section class="task-cockpit-section">' +
       '<h3>Teilaufgaben</h3>' +
@@ -3125,6 +3145,11 @@
       '</div>';
 
     overlay.classList.remove('hidden');
+    window.TaskResponse.bindEditor('task-cockpit');
+    var answerButton = document.getElementById('task-cockpit-answer');
+    if (answerButton) answerButton.addEventListener('click', function () {
+      openTaskDetailModal(taskId);
+    });
 
     var descriptionInput = document.getElementById('task-cockpit-description');
     function resizeTaskDescription() {
@@ -3411,6 +3436,14 @@
           alert('Titel ist erforderlich.');
           return;
         }
+        try {
+          var newRequirement = window.TaskResponse.readEditor('task-cockpit');
+          if (JSON.stringify(currentTaskDraft.responseRequirement || null) !== JSON.stringify(newRequirement)) delete currentTaskDraft.response;
+          currentTaskDraft.responseRequirement = newRequirement;
+        } catch (error) {
+          alert(error.message);
+          return;
+        }
 
         currentTaskDraft.title = titleInput.value.trim();
         currentTaskDraft.description = (document.getElementById('task-cockpit-description').value || '').trim();
@@ -3459,6 +3492,10 @@
           currentTaskDraft.schedule.rangeEnd = endInput ? endInput.value : '';
         }
 
+        if (nextStatus === 'done' && !window.TaskResponse.hasValidAnswer(currentTaskDraft)) {
+          alert('Bitte zuerst die erforderliche Antwort in der Aufgabe abgeben.');
+          return;
+        }
         applyTaskStatusTransition(currentTaskDraft, nextStatus, { at: getNowIsoString() });
 
         saveTaskChainDraft(currentTaskDraft);

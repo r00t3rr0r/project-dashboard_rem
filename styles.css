@@ -6977,6 +6977,22 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
 
 .commit-selection { display: grid; gap: .6rem; min-width: 0; border: 0; padding: 0; margin: 0; }
 .commit-selection legend { font-weight: 600; }
+
+.task-response-editor, .task-response-panel {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, var(--response-color, var(--accent-blue)) 45%, var(--border-color));
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--response-color, var(--accent-blue)) 9%, var(--bg-card));
+}
+.task-response-panel h3 { display: flex; align-items: center; gap: 0.4rem; color: var(--response-color); }
+.task-response-panel label { display: block; margin-top: 0.6rem; }
+.task-response-panel textarea, .task-response-panel select, .task-response-panel input { display: block; max-width: 100%; }
+.task-response-panel textarea, .task-response-panel select { width: 100%; }
+.task-response-panel button { margin-top: 0.75rem; }
+.task-response-prompt { white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-response-status, .task-response-card { color: var(--accent-blue); font-weight: 600; font-size: 0.85rem; }
+.task-response-date-fields { display: flex; flex-wrap: wrap; gap: 0.75rem; }
 .commit-selection-filters { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; }
 .commit-selection-filters label { display: grid; gap: .2rem; }
 .commit-selection-filters input[type="number"] { width: 7rem; }

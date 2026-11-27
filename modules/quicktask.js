@@ -472,6 +472,7 @@ function openQuickTaskModal(prefill){
       '<div class="form-group"><label for="qtm-note">Hinweis / Notiz</label><textarea id="qtm-note" rows="2" placeholder="z. B. Kunde priorisiert dieses Thema"></textarea></div>' +
       '<div class="form-group"><label>Dateien</label><button type="button" class="btn btn-secondary" id="qtm-upload"><span class="material-symbols-rounded" aria-hidden="true">attach_file</span> Dateien auswählen</button><input type="file" id="qtm-files" class="sr-only" multiple><div id="qtm-file-list" class="qtm-file-list"></div><p id="qtm-upload-status" class="text-muted" role="status" aria-live="polite"></p></div>' +
       '<div class="form-group"><label for="qtm-attachments">Links (eine pro Zeile, optional Name|URL)</label><textarea id="qtm-attachments" rows="2" placeholder="Spezifikation|https://...&#10;https://..."></textarea></div>' +
+      window.TaskResponse.editorHtml('qtm', null, false) +
       aiToolsHtml +
       '</section></div>' +
       '<div id="qtm-github-daily-drafts" class="hidden"></div>' +
@@ -479,6 +480,7 @@ function openQuickTaskModal(prefill){
       '<button class="btn btn-secondary" id="qt-cancel">Abbrechen</button>' +
       '<button class="btn btn-primary" id="qt-submit">'+escapeHtml(prefill.submitLabel||'Erstellen')+'</button></div>';
 
+    window.TaskResponse.bindEditor('qtm');
     var initialTask=prefill.task&&typeof prefill.task==='object'?prefill.task:{};
     document.getElementById('qtm-title').value=String(initialTask.title||'');
     document.getElementById('qtm-desc').value=String(initialTask.description||'');
@@ -1195,6 +1197,13 @@ function openQuickTaskModal(prefill){
       }
       var title=document.getElementById('qtm-title').value.trim();
       if(!title){alert('Titel erforderlich!');return;}
+      var responseRequirement;
+      try{responseRequirement=window.TaskResponse.readEditor('qtm');}
+      catch(error){alert(error.message);return;}
+      if(responseRequirement&&(initialTask.status==='done'||githubDraftGroups.length)){
+        alert('Bereits abgeschlossene Aufgaben können keine offene Antwort verlangen.');
+        return;
+      }
       
       // Get selected labels
       var selLabels=[];
@@ -1225,6 +1234,7 @@ function openQuickTaskModal(prefill){
       if(initialTask.status==='done')payload.progress=100;
       if(prefill.completedSubtasks)payload.subtasks.forEach(function(subtask){subtask.completed=true;});
       if(prefill.taskMetadata&&typeof prefill.taskMetadata==='object')Object.assign(payload,prefill.taskMetadata);
+      if(responseRequirement)payload.responseRequirement=responseRequirement;
       var payloads=[payload];
       if(githubDraftGroups.length){
         if(String(payload.projectId||'')!==githubDraftProjectId){

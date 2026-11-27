@@ -2358,6 +2358,15 @@
     return String(blockerTask.createdByEmployeeId || '') === String(context.user.id || '');
   }
 
+  function canCompleteBlocker(blockerTaskId) {
+    var blocker = blockerTaskId && getTaskById(String(blockerTaskId));
+    if (blocker && window.TaskResponse && !window.TaskResponse.hasValidAnswer(blocker)) {
+      alert('Bitte zuerst die erforderliche Antwort in der Blocker-Aufgabe abgeben.');
+      return false;
+    }
+    return true;
+  }
+
   function resolveTaskBlock(taskId, details) {
     var task = getTaskById(taskId);
     if (!task) return null;
@@ -2368,6 +2377,7 @@
     if (!canResolveBlocker({ targetType: 'task', targetId: taskId, blockerTaskId: blockerTaskId })) {
       return null;
     }
+    if (!canCompleteBlocker(blockerTaskId)) return null;
     var next = Object.assign({}, task);
 
     next.blocked = false;
@@ -2393,6 +2403,7 @@
     if (!canResolveBlocker({ targetType: 'project', targetId: projectId, blockerTaskId: blockerTaskId })) {
       return null;
     }
+    if (!canCompleteBlocker(blockerTaskId)) return null;
     var next = Object.assign({}, project);
 
     next.blocked = false;
@@ -2845,6 +2856,14 @@
       return true;
     }
     return false;
+  }
+
+  function updateTaskResponse(taskId, response) {
+    var task = getTaskById(taskId);
+    if (!task || !task.responseRequirement || !window.TaskResponse) return false;
+    var next = Object.assign({}, task, { response: response });
+    if (!window.TaskResponse.hasValidAnswer(next)) return false;
+    return updateTask(next);
   }
 
   /** @param {string} id */
@@ -3318,6 +3337,7 @@
     waitForTaskAndCalendarSave: waitForTaskAndCalendarSave,
     getTaskById:        getTaskById,
     updateTask:         updateTask,
+    updateTaskResponse: updateTaskResponse,
     deleteTask:         deleteTask,
     markTaskBlocked:    markTaskBlocked,
     resolveTaskBlock:   resolveTaskBlock,

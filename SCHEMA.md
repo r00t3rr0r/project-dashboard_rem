@@ -97,6 +97,8 @@ Alle folgenden Schlüssel speichern **JSON-encoded Arrays** (`[]`). Der Default-
 | `id`          | `string`   | UUID                                          |
 | `title`       | `string`   | Aufgaben-Titel                                |
 | `description` | `string`   | Beschreibung/Aufgabentext                     |
+| `responseRequirement` | `object\|null` | Verpflichtende Antwortvorgabe: `type` (`file`, `choice`, `text`, `appointment`), `prompt` und `options` (bei Auswahl) |
+| `response` | `object` | Abgegebene Antwort mit `type`, `submittedAt`, `employeeId` und `value`, `attachment` oder Terminangaben inkl. `calendarEventId` |
 | `priority`    | `string`   | `"low"` \| `"medium"` \| `"high"` \| `"blocker"` |
 | `status`      | `string`   | `"todo"` \| `"in-progress"` \| `"review"` \| `"done"` \| `"backlog"` |
 | `projectId`   | `string\|null` | Primaere Projekt-ID (Kompatibilitaetsalias fuer `projectIds`; `null` ohne Projekt) |

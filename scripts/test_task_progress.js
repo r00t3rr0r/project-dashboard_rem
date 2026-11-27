@@ -14,6 +14,7 @@ function makeDataLayer() {
     key:index=>Array.from(storage.keys())[index]??null
   };
   const window = {localStorage};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../modules/task-response.js'),'utf8'),{window});
   let source = fs.readFileSync(path.join(__dirname,'../data.js'),'utf8');
   source = source.replace('window.DataLayer.ready = runStartupHydration();',
     'window.DataLayer.rehydrate = hydrateCollections; window.DataLayer.ready = Promise.resolve();');
@@ -23,6 +24,22 @@ function makeDataLayer() {
   vm.runInNewContext(source,{window,console,URL,Promise});
   return window.DataLayer;
 }
+
+test('task answers persist without changing the existing assignments',()=>{
+  const data = makeDataLayer();
+  const task = data.createTask({
+    id:'response-task',title:'Antwort',assigneeId:'one',assigneeIds:['one','two'],
+    responseRequirement:{type:'choice',prompt:'Wählen',options:['Ja','Nein']}
+  });
+  assert.equal(data.updateTaskResponse(task.id,{type:'choice',value:'Vielleicht'}),false);
+  assert.equal(data.updateTaskResponse(task.id,{type:'choice',value:'Ja',employeeId:'two'}),true);
+  data.rehydrate();
+  const saved=data.getTaskById(task.id);
+  assert.equal(saved.response.value,'Ja');
+  assert.equal(saved.response.employeeId,'two');
+  assert.equal(saved.assigneeId,'one');
+  assert.equal(saved.assigneeIds.join(','),'one,two');
+});
 
 function makeDashboard(data, DateCtor) {
   const container = {

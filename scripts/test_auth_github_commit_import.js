@@ -5,9 +5,11 @@ const vm = require('node:vm');
 const {test} = require('node:test');
 
 function harness(mode, allowed=true, projects=[], tasks=[]) {
-  const alerts=[], batches=[];
+  const alerts=[], batches=[], responses=[];
   const data={
     createTasks:tasks=>{batches.push(tasks);return tasks;},
+    getTaskById:id=>tasks.find(task=>task.id===id)||null,
+    updateTaskResponse:(id,response)=>{responses.push({id,response});return true;},
     getProjectById:id=>id==='p1'?{id:'p1'}:null,
     getProjects:()=>projects,
     getTasks:()=>tasks
@@ -23,8 +25,19 @@ function harness(mode, allowed=true, projects=[], tasks=[]) {
   );
   vm.runInNewContext(source,{window,document:{readyState:'loading',addEventListener(){}},console});
   window.testWrapDataLayer();
-  return {data,alerts,batches,manager:window.AuthManager};
+  return {data,alerts,batches,responses,manager:window.AuthManager};
 }
+
+test('answering preserves task assignments and records the authenticated author',()=>{
+  const tasks=[{id:'one',assigneeId:'bob',assigneeIds:['bob','alice']}];
+  const h=harness('employee',true,[],tasks);
+  assert.equal(h.data.updateTaskResponse('one',{type:'text',value:'Antwort',employeeId:'bob'}),true);
+  assert.equal(h.responses[0].response.employeeId,'alice');
+  assert.equal(tasks[0].assigneeId,'bob');
+  const guest=harness('guest',true,[],tasks);
+  assert.equal(guest.data.updateTaskResponse('one',{type:'text',value:'Antwort'}),false);
+  assert.equal(guest.responses.length,0);
+});
 
 function task(employeeId='alice') {
   return {projectId:'p1',assigneeIds:['alice','bob'],

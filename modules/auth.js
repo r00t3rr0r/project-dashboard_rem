@@ -856,6 +856,7 @@
       'createTask',
       'createTasks',
       'updateTask',
+      'updateTaskResponse',
       'deleteTask',
       'createCalendarEvent',
       'updateCalendarEvent',
@@ -950,6 +951,14 @@
       } catch (err) {
         return deny(err && err.message ? err.message : 'Aufgabe konnte nicht gespeichert werden.');
       }
+    };
+
+    window.DataLayer.updateTaskResponse = function (taskId, response) {
+      var task = window.DataLayer.getTaskById(taskId);
+      if (!canEditTask(task)) return deny('Diese Aufgabe darf nicht bearbeitet werden.');
+      var user = getCurrentUser();
+      var answer = Object.assign({}, response, { employeeId: user && user.id ? String(user.id) : '' });
+      return originalMethods.updateTaskResponse(taskId, answer);
     };
 
     window.DataLayer.deleteTask = function (taskId) {

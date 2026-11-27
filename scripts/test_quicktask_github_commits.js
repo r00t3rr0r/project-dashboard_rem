@@ -19,6 +19,7 @@ function harness() {
   };
   const document={addEventListener(){}};
   const sandbox={window,document,console,URLSearchParams,Set};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../modules/task-response.js'),'utf8'),sandbox);
   const aiSource=fs.readFileSync(path.join(__dirname,'../modules/ai-conf.js'),'utf8');
   vm.runInNewContext(aiSource,sandbox);
   const quickSource=fs.readFileSync(path.join(__dirname,'../modules/quicktask.js'),'utf8').replace(
@@ -214,6 +215,21 @@ function modalHarness() {
   };
   return {h,element,created,labels};
 }
+
+test('new tasks save the selected answer requirement',async()=>{
+  const {h,element,created}=modalHarness();
+  h.window.QuickTaskModule.open({});
+  element('qtm-title').value='Entscheidung';
+  element('qtm-response-type').value='choice';
+  element('qtm-response-prompt').value='Welche Variante?';
+  element('qtm-response-options').value='A\nB';
+  element('qt-submit').click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(created.length,1);
+  assert.equal(created[0].responseRequirement.type,'choice');
+  assert.equal(created[0].responseRequirement.prompt,'Welche Variante?');
+  assert.equal(created[0].responseRequirement.options.join(','),'A,B');
+});
 
 test('AI Conf topics create separate completed tasks with their own summaries, commits and assignees',async()=>{
   const {h,element,created}=modalHarness();
