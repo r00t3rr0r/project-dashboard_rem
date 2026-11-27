@@ -47,7 +47,7 @@ test('blocker cards distinguish fields, escape content and preserve multiline re
   ], [{id: 'p', name: 'Projekt A'}]);
   h.api.renderDashboardBlockers();
   assert.match(h.host.innerHTML, /&lt;Aufgabe&gt;/);
-  assert.match(h.host.innerHTML, /blocker-detail-reason"><dt>Grund<\/dt><dd>Erste Zeile\nZweite Zeile/);
+  assert.match(h.host.innerHTML, /blocker-reason-text">Erste Zeile\nZweite Zeile/);
   assert.match(h.host.innerHTML, /blocker-detail-project"><dt>Projekt<\/dt><dd>Projekt A/);
   assert.match(h.host.innerHTML, /blocker-detail-blocker"><dt>Blocker<\/dt><dd>Freigabe/);
   assert.match(h.host.innerHTML, /data-blocker-start="2026-11-25T10:00:00Z">1 Tag 02:00:00/);

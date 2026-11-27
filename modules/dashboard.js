@@ -698,6 +698,57 @@
     return null;
   }
 
+  function getBlockerResponsibleNames(blockerTask) {
+    if (!blockerTask) return [];
+    var ids = (Array.isArray(blockerTask.assigneeIds) ? blockerTask.assigneeIds : []).concat(blockerTask.assigneeId ? [blockerTask.assigneeId] : []);
+    var employees = (typeof window.DataLayer.getEmployees === 'function' ? window.DataLayer.getEmployees() : []) || [];
+    var names = [];
+    ids.forEach(function(id) {
+      var employee = employees.find(function(item) { return String(item && item.id) === String(id); });
+      var name = employee && employee.name ? employee.name : '';
+      if (name && names.indexOf(name) === -1) names.push(name);
+    });
+    return names;
+  }
+
+  function canAnswerBlockerTask(taskId) {
+    var task = window.DataLayer.getTaskById(taskId);
+    var auth = window.AuthManager;
+    if (!task || !task.responseRequirement || !window.TaskResponse) return false;
+    return !auth || typeof auth.canEditTask !== 'function' || auth.canEditTask(task);
+  }
+
+  function uploadBlockerAnswerFile(files) {
+    var file = files[0];
+    return fetch('/api/task-attachments', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream' }, body: file }).then(function(response) {
+      if (!response.ok) throw new Error('Upload fehlgeschlagen (HTTP ' + response.status + ').');
+      return response.json();
+    }).then(function(result) {
+      if (!result.url || !/^\/api\/task-attachments\/[0-9a-f]{32}$/.test(result.url)) throw new Error('Ungueltige Upload-Antwort.');
+      return { id: window.DataLayer.generateId(), name: file.name, url: result.url, type: file.type || 'application/octet-stream', size: file.size, addedAt: new Date().toISOString() };
+    });
+  }
+
+  function openBlockerAnswerModal(taskId) {
+    var overlay = document.getElementById('modal-overlay');
+    var content = document.getElementById('modal-content');
+    var task = window.DataLayer.getTaskById(taskId);
+    if (!overlay || !content || !task || !canAnswerBlockerTask(taskId)) return;
+    content.innerHTML = '<h2>' + escapeHtml(task.title || 'Blocker') + '</h2>' +
+      window.TaskResponse.detailHtml(task, true) +
+      '<div class="modal-actions"><button type="button" class="btn btn-secondary" id="blocker-answer-close">Schließen</button></div>';
+    overlay.classList.remove('hidden');
+    function close() {
+      overlay.classList.add('hidden');
+      content.innerHTML = '';
+    }
+    document.getElementById('blocker-answer-close').addEventListener('click', close);
+    window.TaskResponse.bindDetail(taskId, uploadBlockerAnswerFile, function() {
+      close();
+      renderDashboardBlockers();
+    });
+  }
+
   function getBlockerRows() {
     var tasks = window.DataLayer.getTasks() || [];
     var projects = window.DataLayer.getProjects() || [];
@@ -734,6 +785,9 @@
         active: !historyEntry || !historyEntry.until,
         blockerTaskId: blockerTaskId,
         blockerTaskTitle: (blockerTask && blockerTask.title) || (historyEntry && historyEntry.blockerTitle) || '',
+        responsibleNames: getBlockerResponsibleNames(blockerTask),
+        answerRequired: !!(blockerTask && blockerTask.responseRequirement),
+        answered: !!(blockerTask && window.TaskResponse && window.TaskResponse.hasValidAnswer(blockerTask)),
         projectId: projectRef ? String(projectRef.id || '') : '',
         projectTitle: projectRef ? (projectRef.title || projectRef.name || 'Projekt') : ''
       });
@@ -912,11 +966,20 @@
       if (item.blockerTaskTitle) {
         html += '    <div class="blocker-detail blocker-detail-blocker"><dt>Blocker</dt><dd>' + escapeHtml(item.blockerTaskTitle) + '</dd></div>';
       }
+      if (item.responsibleNames && item.responsibleNames.length) {
+        html += '    <div class="blocker-detail blocker-detail-responsible"><dt>Verantwortlich</dt><dd>' + escapeHtml(item.responsibleNames.join(', ')) + '</dd></div>';
+      }
+      if (item.answerRequired) {
+        html += '    <div class="blocker-detail blocker-detail-answer"><dt>Antwort</dt><dd>' + (item.answered ? 'Antwort eingegangen' : 'Antwort erforderlich') + '</dd></div>';
+      }
       if (!item.active && item.resolution) {
         html += '    <div class="blocker-detail blocker-detail-resolution"><dt>Auflösung</dt><dd>' + escapeHtml(item.resolution) + '</dd></div>';
       }
       html += '  </dl>';
       html += '  <div class="dashboard-notice-actions">';
+      if (item.active && item.answerRequired && canAnswerBlockerTask(item.blockerTaskId)) {
+        html += '    <button class="btn btn-primary" type="button" data-answer-blocker="' + escapeHtml(item.blockerTaskId) + '">' + (item.answered ? 'Antwort ändern' : 'Antworten') + '</button>';
+      }
       if (item.active) {
         html += '    <button class="btn btn-secondary" type="button" data-resolve-blocker="' + escapeHtml(item.targetType + '::' + item.targetId) + '" ' + (canResolve ? '' : 'disabled') + '>Blocker entfernen</button>';
       }
@@ -3011,6 +3074,13 @@
         if (btn) {
           event.preventDefault();
           dismissDepartmentNotice(btn.getAttribute('data-dismiss-notice') || '');
+          return;
+        }
+
+        var answerBtn = event.target && event.target.closest ? event.target.closest('[data-answer-blocker]') : null;
+        if (answerBtn) {
+          event.preventDefault();
+          openBlockerAnswerModal(answerBtn.getAttribute('data-answer-blocker') || '');
           return;
         }
 
