@@ -1071,14 +1071,16 @@
     if (!value) return '';
     var parsed = new Date(value);
     if (!isFinite(parsed.getTime())) return '';
-    return parsed.toISOString().slice(0, 10);
+    return String(parsed.getFullYear()).padStart(4, '0') + '-' +
+      String(parsed.getMonth() + 1).padStart(2, '0') + '-' +
+      String(parsed.getDate()).padStart(2, '0');
   }
 
   // --- Projekt-Fortschrittsbalken rendern ---
   function renderProjectProgress() {
     var projects = getDashboardProjects();
     var allTasks = window.DataLayer && typeof window.DataLayer.getTasks === 'function' ? window.DataLayer.getTasks() : [];
-    var todayKey = new Date().toISOString().slice(0, 10);
+    var todayKey = getProjectProgressDateKey(new Date());
     var container = document.getElementById('chart-progress-bar');
     if (!container) return;
     var expandedSubtaskTaskIds = getExpandedDashboardSubtaskTaskIds(container);

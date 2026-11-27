@@ -24,7 +24,7 @@ function makeDataLayer() {
   return window.DataLayer;
 }
 
-function makeDashboard(data) {
+function makeDashboard(data, DateCtor) {
   const container = {
     dataset:{},
     innerHTML:'',
@@ -52,7 +52,7 @@ function makeDashboard(data) {
   };
   const window = {DataLayer:data};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../modules/dashboard.js'),'utf8'),
-    {window,document,console,Date,encodeURIComponent});
+    {window,document,console,Date:DateCtor||Date,encodeURIComponent});
   return {dashboard:window.DashboardManager,container,teamLoadContainer};
 }
 
@@ -239,6 +239,30 @@ test('project progress groups cross-project tasks once and identifies their proj
   assert.doesNotMatch(container.innerHTML,/project-progress-cross-project|Projektübergreifende Aufgaben/);
   assert.match(container.innerHTML,/Gemeinsame Arbeit/);
   assert.doesNotMatch(container.innerHTML,/Weitere gemeinsame Arbeit/);
+});
+
+test('project progress reads tracked minutes using the local calendar date',()=>{
+  const previousTimezone = process.env.TZ;
+  process.env.TZ = 'Europe/Berlin';
+  try {
+    class FixedDate extends Date {
+      constructor(...args) {
+        super(...(args.length ? args : ['2026-03-29T23:30:00Z']));
+      }
+    }
+
+    const data = makeDataLayer();
+    data.createTask({
+      id:'local-day',title:'Lokaler Tag',status:'in-progress',
+      timeTracking:{minutesByDate:{'2026-03-30':423}}
+    });
+    const {dashboard,container} = makeDashboard(data,FixedDate);
+    dashboard.renderProjectProgress();
+    assert.match(container.innerHTML,/In Arbeit · 423 min heute/);
+  } finally {
+    if (previousTimezone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTimezone;
+  }
 });
 
 test('team load shows the current and next subtask and lets users expand the remaining list',()=>{

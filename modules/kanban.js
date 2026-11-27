@@ -83,13 +83,19 @@
 
   function toDateOnly(value) {
     if (!value) return '';
-    if (value instanceof Date) return value.toISOString().slice(0, 10);
+    if (value instanceof Date) return getLocalDateKey(value);
     if (typeof value === 'string') return value.slice(0, 10);
     return '';
   }
 
+  function getLocalDateKey(date) {
+    return String(date.getFullYear()).padStart(4, '0') + '-' +
+      String(date.getMonth() + 1).padStart(2, '0') + '-' +
+      String(date.getDate()).padStart(2, '0');
+  }
+
   function getTodayDateKey() {
-    return new Date().toISOString().slice(0, 10);
+    return getLocalDateKey(new Date());
   }
 
   function normalizeComparableId(value) {
@@ -227,10 +233,10 @@
     var cursor = new Date(start.getTime());
     while (cursor < end) {
       var dayEnd = new Date(cursor.getTime());
-      dayEnd.setUTCHours(24, 0, 0, 0);
+      dayEnd.setHours(24, 0, 0, 0);
       var sliceEnd = dayEnd < end ? dayEnd : end;
       distribution.push({
-        date: cursor.toISOString().slice(0, 10),
+        date: getLocalDateKey(cursor),
         minutes: (sliceEnd.getTime() - cursor.getTime()) / 60000
       });
       cursor = new Date(sliceEnd.getTime());
@@ -289,7 +295,7 @@
       var started = new Date(tracking.activeStartedAt);
       if (!isNaN(now.getTime()) && !isNaN(started.getTime()) && now > started) {
         var todayStart = new Date(now.getTime());
-        todayStart.setUTCHours(0, 0, 0, 0);
+        todayStart.setHours(0, 0, 0, 0);
         var effectiveStart = started > todayStart ? started : todayStart;
         if (now > effectiveStart) {
           liveMinutes = Math.floor((now.getTime() - effectiveStart.getTime()) / 60000);
