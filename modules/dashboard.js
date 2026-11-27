@@ -2455,7 +2455,7 @@
       var projectInfo = getTeamLoadDoneProjectInfo(group, projectsById);
       var key = projectInfo.key;
       if (!projectsByKey[key]) {
-        projectsByKey[key] = { label: projectInfo.label, groups: [] };
+        projectsByKey[key] = { key: key, label: projectInfo.label, groups: [] };
         projects.push(projectsByKey[key]);
       }
       projectsByKey[key].groups.push(group);
@@ -2467,10 +2467,21 @@
     var html = '<li class="team-load-done-project-group">';
     html += '<span class="team-load-done-project" title="' + escapeHtml(projectGroup.label) + '"><span>' + escapeHtml(projectGroup.label) + '</span></span>';
     html += '<ul class="team-load-done-project-list">';
-    projectGroup.groups.forEach(function(group) {
+    var limit = 3;
+    projectGroup.groups.slice(0, limit).forEach(function(group) {
       html += buildTeamLoadDoneGroupHtml(group, employeeKey, expandedDoneKeys, labelsById);
     });
-    return html + '</ul></li>';
+    html += '</ul>';
+    if (projectGroup.groups.length > limit) {
+      var tasksKey = 'tasks:' + employeeKey + ':' + projectGroup.key;
+      html += '<details class="team-load-done-more" data-expand-key="' + escapeHtml(tasksKey) + '"' + (expandedDoneKeys[tasksKey] ? ' open' : '') + '>';
+      html += '<summary>+' + (projectGroup.groups.length - limit) + ' weitere Aufgaben anzeigen</summary><ul class="team-load-done-project-list">';
+      projectGroup.groups.slice(limit).forEach(function(group) {
+        html += buildTeamLoadDoneGroupHtml(group, employeeKey, expandedDoneKeys, labelsById);
+      });
+      html += '</ul></details>';
+    }
+    return html + '</li>';
   }
 
   function getExpandedDashboardSubtaskTaskIds(container) {
