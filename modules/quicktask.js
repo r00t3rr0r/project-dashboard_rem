@@ -1467,6 +1467,11 @@ function openBlockerModal(){
       +'</div>'
       +'<div class="form-group" id="qbm-task-wrap"><label>Ziel-Aufgabe *</label><select id="qbm-target-task">'+(taskOptions||'<option value="">Keine Aufgabe verfuegbar</option>')+'</select></div>'
       +'<div class="form-group hidden" id="qbm-project-wrap"><label>Ziel-Projekt *</label><select id="qbm-target-project">'+buildProjectOptions(projects,'-- Projekt waehlen --')+'</select></div>'
+      +'<div class="form-group"><label>Verantwortliche Mitarbeiter</label><div id="qbm-assignees" class="qbm-assignees">'+(getAssignableEmployees().map(function(employee){
+        var id=String(employee&&employee.id||'').trim();
+        if(!id)return '';
+        return '<label class="qbm-assignee"><input type="checkbox" name="qbm-assignee" value="'+escapeAttr(id)+'"> '+escapeHtml((employee.name||'Mitarbeiter')+(employee.role?' ('+employee.role+')':''))+'</label>';
+      }).join('')||'<p class="text-muted" style="margin:0;">Keine Mitarbeiter verfuegbar.</p>')+'</div><small class="text-muted">Verantwortliche koennen den Blocker annehmen, ablehnen oder Rueckfragen stellen.</small></div>'
       +'<div class="form-group"><label>Blocker-Titel</label><input type="text" id="qbm-title" placeholder="z. B. Externe Freigabe fehlt"></div>'
       +'<div class="form-group"><label>Grund *</label><textarea id="qbm-reason" rows="4" placeholder="Warum blockiert dieses Thema? Was fehlt zur Aufloesung?"></textarea></div>'
       +'<div class="form-group"><label>Zusatzdetails</label><textarea id="qbm-details" rows="2" placeholder="Optional: Kontext, Ansprechpartner, naechster Schritt"></textarea></div>'
@@ -1539,6 +1544,7 @@ function openBlockerModal(){
           projectId=targetProject.id||'';
         }
 
+        var assigneeIds=Array.prototype.map.call(document.querySelectorAll('input[name="qbm-assignee"]:checked'),function(input){return input.value;});
         var blockerTitle=title||('Blocker fuer '+(targetType==='task'?'Aufgabe':'Projekt')+': '+targetLabel);
         var blockerDescription='Grund: '+reason+(details?'\n\nDetails: '+details:'');
         var nowIso=new Date().toISOString();
@@ -1548,7 +1554,7 @@ function openBlockerModal(){
           priority:'blocker',
           urgency:'critical',
           projectId:projectId,
-          assigneeId:null,
+          assigneeIds:assigneeIds,
           labels:[],
           effortHours:'0',
           scheduleMode:'none',

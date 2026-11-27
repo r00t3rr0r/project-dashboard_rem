@@ -778,13 +778,40 @@
     return true;
   }
 
+  function canAnswerAssignmentQuestion(task) {
+    var auth = getAuthManager();
+    if (!task || !auth || typeof auth.getCurrentUser !== 'function') return false;
+    var mode = typeof auth.getMode === 'function' ? auth.getMode() : '';
+    if (mode === 'setup' || mode === 'admin') return true;
+    var user = auth.getCurrentUser();
+    return !!(user && task.createdByEmployeeId && normalizeComparableId(user.id) === normalizeComparableId(task.createdByEmployeeId));
+  }
+
+  function replyToAssignmentQuestion(taskId, employeeId, text) {
+    var task = window.DataLayer.getTaskById(taskId);
+    var response = task && getAssignmentResponse(task, employeeId);
+    if (!task || !response || response.status !== 'question' || !canAnswerAssignmentQuestion(task)) return false;
+    task.assignmentResponses[normalizeComparableId(employeeId)] = Object.assign({}, response, {
+      status: 'pending',
+      question: response.text || '',
+      reply: String(text || '').trim(),
+      repliedAt: getNowIsoString(),
+      text: ''
+    });
+    window.DataLayer.updateTask(task);
+    return true;
+  }
+
   function renderAssignmentResponse(task, isPending) {
     var currentEmployeeId = getCurrentLoggedInEmployeeId();
     var currentResponse = getAssignmentResponse(task, currentEmployeeId);
     var responses = task && task.assignmentResponses && typeof task.assignmentResponses === 'object' ? task.assignmentResponses : {};
 
     if (isEmployeeMode() && isPending && currentResponse && currentResponse.status === 'pending') {
-      return '<div class="kanban-assignment-actions"><strong>Neue Zuweisung</strong><div>' +
+      var replyInfo = currentResponse.reply
+        ? '<p class="kanban-assignment-reply"><strong>Antwort auf deine Rückfrage:</strong> ' + escapeHtml(currentResponse.reply) + '</p>'
+        : '';
+      return '<div class="kanban-assignment-actions"><strong>Neue Zuweisung</strong>' + replyInfo + '<div>' +
         '<button type="button" class="btn btn-primary" data-assignment-accept="' + escapeHtml(task.id) + '">Annehmen</button>' +
         '<button type="button" class="btn btn-secondary" data-assignment-work="' + escapeHtml(task.id) + '">Bearbeiten</button>' +
         '<button type="button" class="btn btn-secondary" data-assignment-question="' + escapeHtml(task.id) + '">Rückfrage</button>' +
@@ -803,6 +830,9 @@
       if (!label) return;
       var detail = (employee && employee.name ? escapeHtml(employee.name) + ': ' : '') + escapeHtml(label);
       if (response.text) detail += ' · ' + escapeHtml(response.text);
+      if (response.status === 'question' && canAnswerAssignmentQuestion(task)) {
+        detail += ' <button type="button" class="btn btn-secondary" data-assignment-reply="' + escapeHtml(task.id) + '" data-assignment-employee="' + escapeHtml(employeeId) + '">Antworten</button>';
+      }
       summary += '<span class="kanban-assignment-response">' + detail + '</span>';
     });
     return summary ? '<div class="kanban-assignment-response-list">' + summary + '</div>' : '';
@@ -3557,6 +3587,20 @@
           return;
         }
         respondToAssignment(questionAssignmentBtn.getAttribute('data-assignment-question'), 'question', questionText.trim());
+        return;
+      }
+
+      var replyAssignmentBtn = e.target.closest('[data-assignment-reply]');
+      if (replyAssignmentBtn) {
+        var replyText = window.prompt('Deine Antwort auf die Rückfrage:');
+        if (replyText === null) return;
+        if (!replyText.trim()) {
+          alert('Bitte gib eine Antwort ein.');
+          return;
+        }
+        if (!replyToAssignmentQuestion(replyAssignmentBtn.getAttribute('data-assignment-reply'), replyAssignmentBtn.getAttribute('data-assignment-employee'), replyText)) {
+          alert('Die Antwort konnte nicht gespeichert werden.');
+        }
         return;
       }
 
