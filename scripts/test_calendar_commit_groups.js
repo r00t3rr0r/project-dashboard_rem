@@ -153,7 +153,12 @@ test('group counts follow the employee filter and keep missing projects separate
   assert.equal(api.createCommitGroup(api.groupCommitEvents(events).find(group=>group.commitGroup&&!group.projectId),true).children[0].children[0].children[1].textContent,'Ohne Projekt');
 });
 
-test('workflow groups commits per project and day without hiding other activity or employee filtering',()=>{
+function graphRows(list) {
+  const wrap=list.children.find(child=>child.className==='calendar-gitgraph-wrap');
+  return wrap?wrap.children[1].children.map(row=>row.children[1]).filter(body=>body.innerHTML.includes('calendar-gitgraph-badge')):[];
+}
+
+test('workflow graph shows every commit as a node without hiding other activity or employee filtering',()=>{
   const {events,tasks}=fixtures();
   Object.assign(tasks[0],{title:'Tagesaufgabe',projectId:'p1',assigneeId:'alice',assigneeIds:['alice','bob'],
     status:'done',progress:100,history:[{type:'updated',at:'2020-01-02T11:00:00Z',progress:100}],
@@ -163,21 +168,17 @@ test('workflow groups commits per project and day without hiding other activity 
   const {api,list,grid,window}=harness(events,tasks);
   window.CalendarModule.setMode('activity');
   api.renderCalendar(new Date(2020,0,1));
-  const groups=list.children.filter(child=>child.className==='calendar-commit-group');
-  assert.equal(groups.length,2);
-  const atlas=groups.find(group=>group.children[0].children[0].children[1].textContent==='Projekt: Atlas');
-  assert.equal(atlas.children[0].children[1].textContent,'5 Commits');
-  assert.equal(atlas.children[4].children[0].textContent,'2 weitere Commits anzeigen');
-  assert(list.children.some(child=>child.className==='calendar-event-card calendar-activity-card'));
+  const rows=graphRows(list);
+  assert.equal(rows.filter(r=>/>Commit</.test(r.innerHTML)).length,6);
+  assert(rows.some(r=>/Tagesaufgabe/.test(r.innerHTML)&&!/>Commit</.test(r.innerHTML)));
   const dayCells=grid.children.filter(child=>child.children.some(item=>item.className==='calendar-event-list'));
   const day2=dayCells[1].children.find(child=>child.className==='calendar-event-list');
   assert(day2.children.some(child=>child.className==='calendar-commit-group calendar-commit-group--compact'));
   api.setEmployee('bob');
   api.renderCalendar(new Date(2020,0,1));
-  const filtered=list.children.filter(child=>child.className==='calendar-commit-group');
-  assert.equal(filtered.length,1);
-  assert.equal(filtered[0].children[0].children[1].textContent,'2 Commits');
-  assert.equal(filtered[0].children[1].children[1].textContent.includes('Bob'),true);
+  const filtered=graphRows(list).filter(r=>/>Commit</.test(r.innerHTML));
+  assert.equal(filtered.length,2);
+  assert(filtered.every(r=>r.innerHTML.includes('Bob')));
 });
 
 test('calendar applies employee and event type filters before grouping',()=>{
@@ -193,6 +194,5 @@ test('calendar applies employee and event type filters before grouping',()=>{
   workflow.api.setEmployee('alice');
   workflow.api.hideTaskType();
   workflow.api.renderCalendar(new Date(2020,0,1));
-  const group=workflow.list.children.find(child=>child.className==='calendar-commit-group');
-  assert.equal(group.children[0].children[1].textContent,'3 Commits');
+  assert.equal(graphRows(workflow.list).filter(r=>/>Commit</.test(r.innerHTML)).length,3);
 });
