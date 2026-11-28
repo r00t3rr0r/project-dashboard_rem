@@ -22,18 +22,18 @@ function harness(events, tasks) {
     addEventListener(){},createElement:element,body:{appendChild(){},removeChild(){}},
     getElementById:id=>id==='calendar-grid'?grid:id==='calendar-events-list'?list:id==='calendar-type-legend'?legend:null
   };
-  const window={opened:[],DataLayer:{
+  const window={opened:[],openedTasks:[],openedFlows:[],alerts:[],DataLayer:{
     getCalendarEvents:()=>events,getTasks:()=>tasks,
     getEmployees:()=>[{id:'alice',name:'Alice'},{id:'bob',name:'Bob'}],
     getProjects:()=>[{id:'p1',name:'Atlas'},{id:'p2',name:'Beta'}]
-  }};
+  },KanbanBoard:{openTaskDetail:(id,options)=>window.openedTasks.push({id,sha:options&&options.sha})}};
   const source=fs.readFileSync(path.join(__dirname,'../modules/calendar.js'),'utf8').replace(
     'window.CalendarModule = {',
-    'openEventDetailsModal=function(id){window.opened.push(id);}; window.testCalendar={groupCommitEvents,createCommitGroup,renderEventList,renderCalendar,eventMatchesEmployeeFilter,buildTaskActivityEntries,buildWorkflowDays,computeTaskSpans,setEmployee:function(id){selectedEmployeeId=id;},hideTaskType:function(){disabledTypeSet.add("task");}}; window.CalendarModule = {'
+    'openEventDetailsModal=function(id){window.opened.push(id);}; openTaskFlowModal=function(id,date){window.openedFlows.push({id,date});}; window.testCalendar={groupCommitEvents,createCommitGroup,renderEventList,renderCalendar,eventMatchesEmployeeFilter,buildTaskActivityEntries,buildWorkflowDays,computeTaskSpans,setEmployee:function(id){selectedEmployeeId=id;},hideTaskType:function(){disabledTypeSet.add("task");}}; window.CalendarModule = {'
   );
   const URL={createObjectURL:blob=>{downloads.push(blob.content);return 'blob:test';},revokeObjectURL(){}};
   const Blob=class {constructor(parts){this.content=parts.join('');}};
-  vm.runInNewContext(source,{window,document,console,URL,Blob,alert(){},requestAnimationFrame(){}});
+  vm.runInNewContext(source,{window,document,console,URL,Blob,alert(message){window.alerts.push(message);},requestAnimationFrame(){}});
   return {api:window.testCalendar,grid,list,legend,window,downloads};
 }
 
@@ -179,7 +179,12 @@ test('workflow graph shows every commit as a node without hiding other activity 
   assert.equal(commit.children[1].className,'calendar-gitgraph-rail');
   assert.doesNotMatch(commit.children[2].innerHTML,/calendar-gitgraph-(meta|lane-chip)/);
   commit.handlers.click();
-  assert(events.some(event=>event.id===window.opened[0]));
+  assert.equal(window.openedTasks[0].id,'t1');
+  assert(tasks[0].githubCommitImport.commits.some(item=>item.sha===window.openedTasks[0].sha));
+  const activity=rows.find(r=>/Tagesaufgabe/.test(r.children[2].innerHTML)&&!/>Commit</.test(r.children[2].innerHTML));
+  assert.equal(activity.type,'button');
+  activity.handlers.click();
+  assert.deepEqual(window.openedTasks[1],{id:'t1',sha:undefined});
   const dayCells=grid.children.filter(child=>child.children.some(item=>item.className==='calendar-event-list'));
   const day2=dayCells[1].children.find(child=>child.className==='calendar-event-list');
   assert(day2.children.some(child=>child.className==='calendar-commit-group calendar-commit-group--compact'));
@@ -188,6 +193,29 @@ test('workflow graph shows every commit as a node without hiding other activity 
   const filtered=graphRows(list).filter(r=>/>Commit</.test(r.children[2].innerHTML));
   assert.equal(filtered.length,2);
   assert(filtered.every(r=>r.children[0].innerHTML.includes('Bob')));
+});
+
+test('graph opens retroactive commit activity as a task and reports missing task links',()=>{
+  const commit={sha:'a'.repeat(40),date:'2020-01-02T10:00:00Z',calendarDate:'2020-01-02',calendarTime:'10:00'};
+  const task={id:'t1',title:'Importierte Aufgabe',projectId:'p1',status:'done',
+    githubCommitImport:{dailyTaskDate:'2020-01-02',commits:[commit]}};
+  const orphan={id:'orphan',source:'github-commit',type:'task',date:'2020-01-02',title:'GitHub-Commit: Verwaist'};
+  const {api,list,window}=harness([orphan],[task]);
+  window.CalendarModule.setMode('activity');
+  api.renderCalendar(new Date(2020,0,1));
+  const rows=graphRows(list);
+  const activity=rows.find(row=>row.children[2].innerHTML.includes('Importierte Aufgabe'));
+  assert.equal(activity.type,'button');
+  activity.handlers.click();
+  assert.deepEqual(window.openedTasks[0],{id:'t1',sha:undefined});
+  delete window.KanbanBoard;
+  activity.handlers.click();
+  assert.equal(window.openedFlows[0].id,'t1');
+  assert.equal(window.openedFlows[0].date,'2020-01-02');
+  const orphanRow=rows.find(row=>row.children[2].innerHTML.includes('Verwaist'));
+  orphanRow.handlers.click();
+  assert.match(window.alerts[0],/Aufgabe.*nicht mehr verfuegbar/);
+  assert.equal(window.opened[0],'orphan');
 });
 
 test('calendar applies employee and event type filters before grouping',()=>{

@@ -2128,6 +2128,20 @@
   var GRAPH_MAX_LANES = 6;
   var GRAPH_LANE_COLORS = ['var(--accent-blue)', 'var(--accent-green)', 'var(--accent-purple)', 'var(--accent-yellow)', 'var(--accent-cyan, #22b8cf)', 'var(--accent-red)'];
 
+  function openWorkflowGraphRow(row) {
+    var task = row.taskId && getTasks().find(function (item) { return String(item.id) === String(row.taskId); });
+    if (task) {
+      if (window.KanbanBoard && typeof window.KanbanBoard.openTaskDetail === 'function') {
+        window.KanbanBoard.openTaskDetail(task.id, row.sha ? { sha: row.sha } : undefined);
+      } else {
+        openTaskFlowModal(task.id, row.date);
+      }
+      return;
+    }
+    alert('Die zu diesem Eintrag gehoerende Aufgabe ist nicht mehr verfuegbar.');
+    if (row.eventId) openEventDetailsModal(row.eventId);
+  }
+
   function renderWorkflowGraph(listEl, monthDates, workflowDays) {
     var rows = [];
     var laneIndex = Object.create(null);
@@ -2163,11 +2177,14 @@
         if (item.commitGroup) {
           item.events.forEach(function (event) {
             var employee = event.commitEmployeeId ? getEmployeeName(event.commitEmployeeId) : 'Nicht zugewiesen';
+            var commitPrefix = 'task-' + String(event.taskId || '') + '-github-commit-';
+            var eventId = String(event.id || '');
+            var sha = event.taskId && eventId.indexOf(commitPrefix) === 0 ? eventId.slice(commitPrefix.length) : '';
             rows.push({
               lane: laneFor(event.taskId, item.projectId), color: getActivityTypeMeta('github-commit').color, commit: true,
               title: String(event.title || 'GitHub-Commit').replace(/^GitHub-Commit:\s*/, ''),
               badge: 'Commit', meta: [event.startTime, employee, getProjectLabel(item.projectId, '')].filter(Boolean).join(' · '),
-              eventId: event.id
+              taskId: event.taskId, eventId: event.id, sha: sha, date: dateKey
             });
           });
           return;
@@ -2180,6 +2197,7 @@
           title: item.taskTitle || 'Aufgabe', badge: typeMeta.label,
           meta: [item.calendarTime || getDisplayTime(item.updatedAt), ids.length ? ids.map(getEmployeeName).join(', ') : 'Nicht zugewiesen',
             getProjectLabel(item.projectId, ''), getTaskStatusLabel(item.status)].filter(Boolean).join(' · '),
+          taskId: item.taskId, date: dateKey,
           progress: item.type === 'github-commit' ? null : total, gain: Math.max(0, total - clampProgress(item.dayStartProgress))
         });
       });
@@ -2219,11 +2237,12 @@
     graph.style.setProperty('--graph-lanes', slotCount);
 
     rows.forEach(function (row, i) {
-      var el = document.createElement(row.eventId ? 'button' : 'div');
+      var el = document.createElement(row.head ? 'div' : 'button');
       el.className = 'calendar-gitgraph-row' + (row.head ? ' calendar-gitgraph-day' : '');
-      if (row.eventId) {
+      if (!row.head) {
         el.type = 'button';
-        el.addEventListener('click', function () { openEventDetailsModal(row.eventId); });
+        el.title = row.commit ? 'Aufgabe und Commit anzeigen' : 'Aufgabe anzeigen';
+        el.addEventListener('click', function () { openWorkflowGraphRow(row); });
       }
       var details = document.createElement('span');
       details.className = 'calendar-gitgraph-details';
