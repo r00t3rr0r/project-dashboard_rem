@@ -2132,11 +2132,15 @@
     var laneIndex = Object.create(null);
     var lanes = [];
 
-    function laneFor(taskId, projectId) {
+    function laneFor(taskId, projectId, title) {
       var key = String(taskId || 'p-' + (projectId || 'none'));
       if (laneIndex[key] === undefined) {
+        var task = taskId ? getTasks().find(function (t) { return String(t.id) === String(taskId); }) : null;
         laneIndex[key] = lanes.length;
-        lanes.push({ first: Infinity, last: -1, color: GRAPH_LANE_COLORS[lanes.length % GRAPH_LANE_COLORS.length] });
+        lanes.push({
+          first: Infinity, last: -1, color: GRAPH_LANE_COLORS[lanes.length % GRAPH_LANE_COLORS.length],
+          title: (task && task.title) || title || getProjectLabel(projectId, '') || 'Ohne Aufgabe'
+        });
       }
       return laneIndex[key];
     }
@@ -2171,7 +2175,7 @@
         var ids = Array.isArray(item.assigneeIds) && item.assigneeIds.length ? item.assigneeIds : (item.assigneeId ? [item.assigneeId] : []);
         var total = clampProgress(item.progress);
         rows.push({
-          lane: laneFor(item.taskId, item.projectId), color: typeMeta.color,
+          lane: laneFor(item.taskId, item.projectId, item.taskTitle), color: typeMeta.color,
           title: item.taskTitle || 'Aufgabe', badge: typeMeta.label,
           meta: [item.calendarTime || getDisplayTime(item.updatedAt), ids.length ? ids.map(getEmployeeName).join(', ') : 'Nicht zugewiesen',
             getProjectLabel(item.projectId, ''), getTaskStatusLabel(item.status)].filter(Boolean).join(' · '),
@@ -2187,6 +2191,15 @@
       l.last = Math.max(l.last, i);
     });
 
+    var signature = JSON.stringify([rows, lanes.map(function (l) { return [l.color, l.title, l.first, l.last]; })]);
+    if (workflowGraphCache && workflowGraphCache.signature === signature) {
+      listEl.appendChild(workflowGraphCache.node);
+      return;
+    }
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'calendar-gitgraph-wrap';
+    wrapper.appendChild(buildGraphLegend(lanes));
     var graph = document.createElement('div');
     graph.className = 'calendar-gitgraph';
     graph.setAttribute('role', 'list');
@@ -2227,8 +2240,10 @@
           body.addEventListener('click', function () { openEventDetailsModal(row.eventId); });
         }
         body.style.setProperty('--node-color', row.color);
+        body.style.setProperty('--lane-color', lanes[row.lane].color);
         body.innerHTML = '<span class="calendar-gitgraph-badge">' + escapeHtml(row.badge) + '</span>' +
           '<span class="calendar-gitgraph-title">' + escapeHtml(row.title) + '</span>' +
+          (lanes.length > 1 && lanes[row.lane].title !== row.title ? '<span class="calendar-gitgraph-lane-chip" title="' + escapeHtml(lanes[row.lane].title) + '">' + escapeHtml(lanes[row.lane].title) + '</span>' : '') +
           '<span class="calendar-gitgraph-meta">' + escapeHtml(row.meta) + '</span>' +
           (row.progress !== undefined && row.progress !== null
             ? '<span class="calendar-gitgraph-progress" title="Gesamt ' + row.progress + '% | Plus +' + row.gain + '%"><span style="width:' + row.progress + '%"></span></span>' : '');
@@ -2236,7 +2251,23 @@
       el.appendChild(body);
       graph.appendChild(el);
     });
-    listEl.appendChild(graph);
+    wrapper.appendChild(graph);
+    workflowGraphCache = { signature: signature, node: wrapper };
+    listEl.appendChild(wrapper);
+  }
+
+  var workflowGraphCache = null;
+
+  function buildGraphLegend(lanes) {
+    var legend = document.createElement('div');
+    legend.className = 'calendar-gitgraph-legend';
+    legend.innerHTML = '<span class="calendar-gitgraph-key"><i class="calendar-gitgraph-node-demo"></i> Aktivitaet</span>' +
+      '<span class="calendar-gitgraph-key"><i class="calendar-gitgraph-node-demo is-commit"></i> Commit</span>' +
+      '<span class="calendar-gitgraph-key">Neueste oben &middot; eine Spur je Aufgabe</span>' +
+      lanes.map(function (lane) {
+        return '<span class="calendar-gitgraph-lane-chip" style="--lane-color:' + lane.color + '" title="' + escapeHtml(lane.title) + '">' + escapeHtml(lane.title) + '</span>';
+      }).join('');
+    return legend;
   }
 
   window.openCalendarEventEditor = function (eventId) {

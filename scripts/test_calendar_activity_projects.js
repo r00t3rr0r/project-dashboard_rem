@@ -7,7 +7,7 @@ const {test} = require('node:test');
 function harness() {
   function element() {
     return {
-      children:[],dataset:{},style:{},innerHTML:'',textContent:'',
+      children:[],dataset:{},style:{setProperty(){}},innerHTML:'',textContent:'',
       appendChild(child){this.children.push(child);},
       setAttribute(){},addEventListener(){},classList:{add(){},toggle(){}},
       insertAdjacentHTML(position,html){this.innerHTML+=html;}
@@ -43,15 +43,18 @@ test('calendar activity chips show the project and distinguish missing assignmen
   assert.equal(badge('deleted').children[1].textContent,'Projekt: Unbekanntes Projekt');
 });
 
-test('activity cards display the project independently and escape project names',()=>{
+function graphBodies(list) {
+  const wrap=list.children.find(child=>child.className==='calendar-gitgraph-wrap');
+  return wrap.children[1].children.map(row=>row.children[1]).filter(body=>body.innerHTML.includes('calendar-gitgraph-badge'));
+}
+
+test('graph rows display the project independently and escape project names',()=>{
   const {api,list}=harness();
   api.renderActivityList(new Date(2020,0,1),[activity('p1'),activity(null)]);
-  const cards=list.children.filter(child=>child.className==='calendar-event-card calendar-activity-card');
-  assert.equal(cards.length,2);
-  assert.match(cards[0].innerHTML,/class="calendar-activity-project"/);
-  assert.match(cards[0].innerHTML,/Projekt: Projekt &lt;Atlas&gt;/);
-  assert.doesNotMatch(cards[0].innerHTML,/Projekt <Atlas>/);
-  assert.match(cards[1].innerHTML,/Ohne Projekt/);
+  const bodies=graphBodies(list);
+  assert.equal(bodies.length,2);
+  assert.match(bodies[0].innerHTML,/Projekt &lt;Atlas&gt;/);
+  assert.doesNotMatch(bodies[0].innerHTML,/Projekt <Atlas>/);
 });
 
 test('commit activity displays every assigned employee',()=>{
@@ -59,6 +62,18 @@ test('commit activity displays every assigned employee',()=>{
   const entry={...activity('p1'),type:'github-commit',assigneeId:'alice',assigneeIds:['alice','bob']};
   assert.match(api.createDayActivityChip(entry).children[2].textContent,/Alice, Bob/);
   api.renderActivityList(new Date(2020,0,1),[entry]);
-  const card=list.children.find(child=>child.className==='calendar-event-card calendar-activity-card');
-  assert.match(card.innerHTML,/Alice, Bob/);
+  assert.match(graphBodies(list)[0].innerHTML,/Alice, Bob/);
+});
+
+test('unchanged workflow data reuses the cached graph node',()=>{
+  const {api,list}=harness();
+  const entries=[activity('p1')];
+  api.renderActivityList(new Date(2020,0,1),entries);
+  const first=list.children.find(child=>child.className==='calendar-gitgraph-wrap');
+  list.children=[];
+  api.renderActivityList(new Date(2020,0,1),entries);
+  assert.equal(list.children.find(child=>child.className==='calendar-gitgraph-wrap'),first);
+  list.children=[];
+  api.renderActivityList(new Date(2020,0,1),[activity('p2')]);
+  assert.notEqual(list.children.find(child=>child.className==='calendar-gitgraph-wrap'),first);
 });
