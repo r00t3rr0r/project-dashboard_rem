@@ -5072,16 +5072,29 @@ function knowledgeUtf8Slice(text,maxBytes,fromEnd){
   return selected.join('');
 }
 
-function buildKnowledgeContinuationPrompt(project,areaLabel,areaInstruction,guidance,markdown){
+function projectFactLines(project){
+  var lines=[];
+  var description=String(project.description||'').trim();
+  var github=project.github&&project.github.owner&&project.github.repo?project.github.owner+'/'+project.github.repo:'';
+  if(description)lines.push('Projektbeschreibung: '+knowledgeUtf8Slice(description,400,false)+'\n');
+  if(github)lines.push('GitHub-Repository: '+github+'\n');
+  return lines.join('');
+}
+
+function buildKnowledgeContinuationPrompt(project,areaLabel,areaInstruction,guidance,markdown,standalone){
   var maxPromptBytes=8192-2048-1024;
   var instructions=knowledgeUtf8Slice(guidance,1000,false);
-  var prefix='Du bist der technische Projektassistent. Erstelle einen neuen, konkreten Markdown-Abschnitt fuer die Wissensdatei. '
+  var prefix='Du bist der technische Projektassistent. '+(standalone?'Erstelle ein vollstaendiges, sauber strukturiertes Markdown-Dokument aus dem Projektwissen. ':'Erstelle einen neuen, konkreten Markdown-Abschnitt fuer die Wissensdatei. ')
     +'Arbeitsbereich: '+areaLabel+'. '+areaInstruction+'\n'
     +'Projekt: '+getProjectTitle(project)+'\n'
+    +projectFactLines(project)
     +'Admin-Hinweis: '+(instructions||'Kein zusaetzlicher Hinweis.')+'\n'
     +'Bestehendes Projektwissen (bei langen Dateien ein gekuerzter Auszug):\n';
-  var suffix='\n\nGib ausschliesslich den neuen Abschnitt als Markdown aus. Wiederhole oder ersetze nicht die bestehende Datei. '
-    +'Erfinde keine Implementierungsdetails. Trenne verifizierte Fakten, Annahmen und offene Fragen klar.';
+  var suffix=(standalone
+    ?'\n\nGib ausschliesslich das fertige Dokument als Markdown aus. Uebernimm nur reine Fakten aus dem Projektwissen, fasse Doppelungen zusammen (keine doppelten Eintraege) und nenne keine Quellen oder Herkunftsangaben. '
+      +'Erfinde keine Implementierungsdetails.'
+    :'\n\nGib ausschliesslich den neuen Abschnitt als Markdown aus. Wiederhole oder ersetze nicht die bestehende Datei. '
+      +'Erfinde keine Implementierungsdetails. Trenne verifizierte Fakten, Annahmen und offene Fragen klar.');
   var existing=String(markdown||'').trim()||'[Noch keine Wissensdatei vorhanden.]';
   var available=maxPromptBytes-knowledgeBytes(prefix)-knowledgeBytes(suffix);
   if(available<=0)throw new Error('Projektname und Eingaben ueberschreiten das KI-Kontextbudget.');
@@ -5110,33 +5123,52 @@ function openProjectKnowledgeEditor(projectId){
   }
   var aiState=ensureProjectAiKnowledge(project);
   var workAreas=[
-    {value:'programming',label:'Weiterprogrammierung',instruction:'Leite konkrete technische Folgeschritte, Voraussetzungen und einen passenden Testplan ab.'},
-    {value:'tasks',label:'Aufgaben und Planung',instruction:'Erstelle priorisierte naechste Aufgaben mit Abhaengigkeiten und pruefbaren Ergebnissen.'},
-    {value:'logic',label:'Systemlogik',instruction:'Beschreibe wichtige Ablaeufe, Regeln, Zustaende, Randfaelle und offene Fragen.'},
-    {value:'errors',label:'Fehleranalyse',instruction:'Strukturiere bekannte Fehler, Reproduktionsschritte, moegliche Ursachen als Hypothesen und Verifikationsschritte.'},
-    {value:'other',label:'Sonstiges',instruction:'Ergaenze das Wissen passend zum Admin-Hinweis und benenne Unsicherheiten.'}
+    {value:'programming',tone:'blue',icon:'code',label:'Weiterprogrammierung',instruction:'Leite konkrete technische Folgeschritte, Voraussetzungen und einen passenden Testplan ab.'},
+    {value:'tasks',tone:'yellow',icon:'task_alt',label:'Aufgaben und Planung',instruction:'Erstelle priorisierte naechste Aufgaben mit Abhaengigkeiten und pruefbaren Ergebnissen.'},
+    {value:'logic',tone:'purple',icon:'account_tree',label:'Systemlogik',instruction:'Beschreibe wichtige Ablaeufe, Regeln, Zustaende, Randfaelle und offene Fragen.'},
+    {value:'errors',tone:'red',icon:'bug_report',label:'Fehleranalyse',instruction:'Strukturiere bekannte Fehler, Reproduktionsschritte, moegliche Ursachen als Hypothesen und Verifikationsschritte.'},
+    {value:'routine-structure',tone:'green',icon:'schema',label:'Routine: Strukturierter Projektaufbau',standalone:true,instruction:'Erstelle ein Projektaufbau-Dokument mit den Kapiteln Ueberblick, Architektur, Verzeichnis- und Dateistruktur, Module und Dateien mit ihren Funktionen, Datenmodell, Schnittstellen, Ablaeufe, Konfiguration und Tests. Jede Information nur einmal.'},
+    {value:'routine-gaps',tone:'yellow',icon:'quiz',label:'Routine: Wissensluecken schliessen',instruction:'Pruefe das Projektwissen gegen diese Checkliste: Zweck, Architektur, Verzeichnis- und Dateistruktur, Funktionen, Datenmodell, Schnittstellen, Abhaengigkeiten, Konfiguration, Deployment, Tests, Verantwortlichkeiten. Schliesse jede Luecke mit einem Fakt, wenn er sich eindeutig aus dem Projektwissen oder den Projektdaten ableiten laesst. Alle uebrigen Luecken fuehrst du unter "Offene Fragen" mit einer konkreten, beantwortbaren Frage auf. Raten ist verboten.'},
+    {value:'routine-consolidate',tone:'cyan',icon:'auto_fix_high',label:'Routine: Wissen bereinigen und konsolidieren',standalone:true,instruction:'Fuehre das gesamte Projektwissen zu einem einzigen, sauber gegliederten Dokument zusammen. Entferne doppelte Eintraege und alle Quellenangaben, behalte nur die reinen Fakten.'},
+    {value:'other',tone:'muted',icon:'event_note',label:'Sonstiges',instruction:'Ergaenze das Wissen passend zum Admin-Hinweis und benenne Unsicherheiten.'}
   ];
-  var options=workAreas.map(function(area){
-    return '<option value="'+area.value+'">'+area.label+'</option>';
-  }).join('');
+  var tones={blue:'var(--accent-blue)',yellow:'var(--accent-yellow)',purple:'var(--accent-purple)',red:'var(--accent-red)',green:'var(--accent-green)',cyan:'var(--accent-cyan, #22b8cf)',muted:'var(--text-muted)'};
+  function chipHtml(area){
+    return '<button type="button" class="kw-chip'+(area.value==='programming'?' active':'')+'" style="--kw-color:'+tones[area.tone]+'" data-knowledge-editor-action="select-area" data-area="'+area.value+'" aria-pressed="'+(area.value==='programming')+'">'
+      +'<span class="material-symbols-rounded" aria-hidden="true">'+area.icon+'</span>'+area.label.replace(/^Routine: /,'')+'</button>';
+  }
+  var areaChips=workAreas.filter(function(a){return a.value.indexOf('routine-')!==0;}).map(chipHtml).join('');
+  var routineChips=workAreas.filter(function(a){return a.value.indexOf('routine-')===0;}).map(chipHtml).join('');
   var dialog=document.createElement('dialog');
   var state={controller:null,busy:false};
   dialog.className='project-knowledge-dialog knowledge-generation-dialog knowledge-editor-dialog';
   dialog.setAttribute('aria-labelledby','project-knowledge-editor-title');
-  dialog.innerHTML='<header class="project-knowledge-header"><div><p class="section-kicker">KI-Projektwissen · Admin</p>'
+  dialog.innerHTML='<header class="project-knowledge-header kw-header"><div><p class="section-kicker">KI-Projektwissen · Admin</p>'
     +'<h2 id="project-knowledge-editor-title">'+escapeHtml(getProjectTitle(project))+'</h2>'
-    +'<p>Pruefe Aenderungen, bevor du sie dauerhaft speicherst.</p></div>'
+    +'<p>Entwuerfe pruefen, bevor du sie dauerhaft speicherst.</p></div>'
     +'<button type="button" class="toolbar-icon-btn" data-knowledge-editor-action="close" aria-label="Dialog schliessen" title="Dialog schliessen"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></header>'
-    +'<div class="knowledge-editor-body">'
-    +'<label class="form-group"><span>Wissensbereich fuer die KI-Ergaenzung</span><select data-knowledge-area>'+options+'</select></label>'
-    +'<label class="form-group"><span>Hinweis an die KI (optional)</span><textarea rows="2" maxlength="1000" data-knowledge-guidance placeholder="z. B. Fokus auf den Login-Ablauf oder Fehler seit dem letzten Release"></textarea></label>'
-    +'<p class="text-muted">Die ausgewaehlte KI erhaelt einen Auszug der Wissensdatei und deinen Hinweis. KI-Ergaenzungen werden nur als Entwurf eingefuegt und nicht automatisch gespeichert.</p>'
-    +'<label class="form-group"><span>Wissensdatei (Markdown)</span><textarea data-knowledge-markdown rows="20" spellcheck="true" placeholder="# Projektwissen&#10;&#10;Halte hier bestaetigte Fakten, Ablaufe und offene Fragen fest."></textarea></label>'
-    +'<p class="text-muted" data-knowledge-editor-status role="status" aria-live="polite">Wissensdatei wird geladen ...</p>'
-    +'</div><footer class="knowledge-editor-footer">'
+    +'<div class="knowledge-editor-body kw-layout">'
+    +'<aside class="kw-side">'
+    +'<section class="kw-panel"><h3><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span>KI-Ergaenzung</h3>'
+    +'<input type="hidden" data-knowledge-area value="programming">'
+    +'<div class="kw-chips" role="group" aria-label="Wissensbereich">'+areaChips+'</div>'
+    +'<label class="kw-field"><span>Hinweis an die KI (optional)</span><textarea rows="2" maxlength="1000" data-knowledge-guidance placeholder="z. B. Fokus auf den Login-Ablauf"></textarea></label>'
+    +'<button type="button" class="btn btn-primary kw-wide" data-knowledge-editor-action="generate"><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span>Ergaenzung entwerfen</button></section>'
+    +'<section class="kw-panel"><h3><span class="material-symbols-rounded" aria-hidden="true">playlist_add_check</span>Routinen</h3>'
+    +'<p class="text-muted">Strukturieren und Konsolidieren ersetzen den Editorinhalt, Wissensluecken werden als Abschnitt angehaengt.</p>'
+    +'<div class="kw-chips">'+routineChips+'</div></section>'
+    +'<section class="kw-panel"><h3><span class="material-symbols-rounded" aria-hidden="true">folder_open</span>Dokumente</h3>'
+    +'<ul class="kw-docs" data-knowledge-documents></ul></section>'
+    +'</aside>'
+    +'<section class="kw-main">'
+    +'<div class="kw-toolbar"><label class="kw-field kw-grow"><span>Dokumentname</span><input type="text" maxlength="80" data-knowledge-doc-name placeholder="z. B. Projektaufbau"></label></div>'
+    +'<label class="kw-field kw-grow"><span>Wissensdatei (Markdown)</span><textarea data-knowledge-markdown rows="20" spellcheck="true" placeholder="# Projektwissen&#10;&#10;Halte hier bestaetigte Fakten, Ablaeufe und offene Fragen fest."></textarea></label>'
+    +'<p class="kw-status text-muted" data-knowledge-editor-status role="status" aria-live="polite">Wissensdatei wird geladen ...</p>'
+    +'</section></div>'
+    +'<footer class="knowledge-editor-footer">'
     +'<button type="button" class="btn btn-secondary" data-knowledge-editor-action="close">Schliessen</button>'
-    +'<button type="button" class="btn btn-secondary" data-knowledge-editor-action="generate">KI-Ergaenzung entwerfen</button>'
-    +'<button type="button" class="btn btn-primary" data-knowledge-editor-action="save">Aenderungen speichern</button>'
+    +'<button type="button" class="btn btn-secondary" data-knowledge-editor-action="save-document"><span class="material-symbols-rounded" aria-hidden="true">attach_file</span>Als Dokument speichern</button>'
+    +'<button type="button" class="btn btn-primary" data-knowledge-editor-action="save"><span class="material-symbols-rounded" aria-hidden="true">save</span>Wissensdatei speichern</button>'
     +'</footer>';
   document.body.appendChild(dialog);
 
@@ -5149,11 +5181,57 @@ function openProjectKnowledgeEditor(projectId){
     statusField.textContent=message;
     statusField.className=isError?'ai-status-error':'text-muted';
   }
+  var docList=dialog.querySelector('[data-knowledge-documents]');
+  var docNameField=dialog.querySelector('[data-knowledge-doc-name]');
+  var docSaveButton=dialog.querySelector('[data-knowledge-editor-action="save-document"]');
+  state.documentId='';
   function setBusy(busy){
     state.busy=busy;
     generateButton.disabled=busy;
     saveButton.disabled=busy;
+    docSaveButton.disabled=busy;
   }
+  function getDocuments(){
+    var current=window.DataLayer.getProjectById(projectId);
+    return current?ensureProjectInfoHub(current).attachments.filter(function(item){return item.kind==='ki-dokument';}):[];
+  }
+  function renderDocuments(){
+    var docs=getDocuments();
+    docList.innerHTML=docs.length?docs.map(function(item){
+      return '<li class="'+(item.id===state.documentId?'active':'')+'"><span class="kw-doc-name"><strong>'+escapeHtml(item.name)+'</strong><small>'+formatBytes(item.size)+(item.id===state.documentId?' · in Bearbeitung':'')+'</small></span>'
+        +'<button type="button" class="btn btn-secondary" data-knowledge-editor-action="load-document" data-document-id="'+escapeHtml(item.id)+'">Bearbeiten</button></li>';
+    }).join(''):'<li class="text-muted kw-empty">Noch keine Dokumente gespeichert.</li>';
+  }
+  function decodeDocument(item){
+    var url=String(item.dataUrl||'');
+    var comma=url.indexOf(',');
+    if(comma<0)return '';
+    try{return decodeURIComponent(url.slice(comma+1));}catch(e){return '';}
+  }
+  function saveDocument(markdown){
+    var current=window.DataLayer.getProjectById(projectId);
+    if(!current)throw new Error('Projekt nicht gefunden.');
+    var hub=ensureProjectInfoHub(current);
+    var size=knowledgeBytes(markdown);
+    var existing=state.documentId?hub.attachments.find(function(item){return item.id===state.documentId;}):null;
+    var total=getAttachmentTotalSize(hub.attachments)-(existing?existing.size||0:0);
+    if(size>MAX_ATTACHMENT_SIZE||total+size>MAX_TOTAL_ATTACHMENT_SIZE)throw new Error('Anhang-Limit pro Projekt erreicht.');
+    var dataUrl='data:text/markdown;charset=utf-8,'+encodeURIComponent(markdown);
+    if(existing){
+      existing.size=size;
+      existing.dataUrl=dataUrl;
+      existing.uploadedAt=new Date().toISOString();
+    }else{
+      var name=String(docNameField.value||'').trim().replace(/[\\/:*?"<>|]+/g,'-')||'Projektdokument-'+new Date().toISOString().slice(0,10);
+      existing={id:window.DataLayer.generateId(),kind:'ki-dokument',name:name+(/\.md$/i.test(name)?'':'.md'),
+        type:'text/markdown',size:size,uploadedAt:new Date().toISOString(),dataUrl:dataUrl};
+      hub.attachments.push(existing);
+    }
+    state.documentId=existing.id;
+    docNameField.value=existing.name.replace(/\.md$/i,'');
+    window.DataLayer.updateProject(current);
+  }
+  renderDocuments();
   function closeEditor(){
     if(state.controller)state.controller.abort();
     dialog.close();
@@ -5170,6 +5248,43 @@ function openProjectKnowledgeEditor(projectId){
       closeEditor();
       return;
     }
+    if(action==='select-area'){
+      dialog.querySelector('[data-knowledge-area]').value=button.getAttribute('data-area');
+      dialog.querySelectorAll('.kw-chip').forEach(function(chip){
+        var on=chip===button;
+        chip.classList.toggle('active',on);
+        chip.setAttribute('aria-pressed',String(on));
+      });
+      var picked=workAreas.find(function(item){return item.value===button.getAttribute('data-area');});
+      setStatus(picked&&picked.standalone?'Routine gewaehlt: "Ergaenzung entwerfen" erzeugt ein neues Dokument.':'Bereich gewaehlt: '+(picked?picked.label:'')+'.');
+      return;
+    }
+    if(action==='load-document'){
+      if(state.busy)return;
+      var doc=getDocuments().find(function(item){return item.id===button.getAttribute('data-document-id');});
+      if(!doc){setStatus('Dokument nicht gefunden.',true);return;}
+      state.documentId=doc.id;
+      markdownField.value=decodeDocument(doc);
+      docNameField.value=doc.name.replace(/\.md$/i,'');
+      renderDocuments();
+      setStatus('Dokument "'+doc.name+'" geladen. Mit der KI ergaenzen oder manuell aendern und erneut speichern.');
+      return;
+    }
+    if(action==='save-document'){
+      if(state.busy)return;
+      var docMarkdown=String(markdownField.value||'').trim();
+      if(!docMarkdown){setStatus('Das Dokument darf nicht leer sein.',true);return;}
+      try{
+        var wasUpdate=!!state.documentId;
+        saveDocument(docMarkdown);
+        renderDocuments();
+        setStatus(wasUpdate?'Dokument aktualisiert.':'Dokument gespeichert und dem Projekt angehaengt.');
+        render();
+      }catch(error){
+        setStatus('Speichern fehlgeschlagen: '+String(error&&error.message||error),true);
+      }
+      return;
+    }
     if(action==='generate'){
       if(state.busy)return;
       if(!window.LocalOllama||typeof window.LocalOllama.generate!=='function'){
@@ -5181,7 +5296,7 @@ function openProjectKnowledgeEditor(projectId){
       var prompt;
       try{
         prompt=buildKnowledgeContinuationPrompt(project,area.label,area.instruction,
-          dialog.querySelector('[data-knowledge-guidance]').value,markdownField.value);
+          dialog.querySelector('[data-knowledge-guidance]').value,markdownField.value,!!area.standalone);
       }catch(error){
         setStatus(error.message||String(error),true);
         return;
@@ -5216,6 +5331,13 @@ function openProjectKnowledgeEditor(projectId){
       Promise.resolve(generation).then(function(result){
         var addition=String(result&&result.markdown||'').trim();
         if(!addition)throw new Error('Die KI hat keinen Abschnitt geliefert.');
+        if(area.standalone){
+          markdownField.value=addition+'\n';
+          state.documentId='';
+          renderDocuments();
+          setStatus('Dokument entworfen. Bitte pruefen und als Dokument speichern.');
+          return;
+        }
         var current=String(markdownField.value||'').trim();
         var heading='## KI-Ergaenzung: '+area.label+' ('+new Date().toISOString()+')';
         markdownField.value=(current?current+'\n\n':'')+heading+'\n\n'+addition+'\n';
