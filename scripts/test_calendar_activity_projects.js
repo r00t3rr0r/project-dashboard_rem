@@ -45,16 +45,18 @@ test('calendar activity chips show the project and distinguish missing assignmen
 
 function graphBodies(list) {
   const wrap=list.children.find(child=>child.className==='calendar-gitgraph-wrap');
-  return wrap.children[1].children.map(row=>row.children[1]).filter(body=>body.innerHTML.includes('calendar-gitgraph-badge'));
+  return wrap.children[1].children.filter(row=>row.children[2].innerHTML.includes('calendar-gitgraph-badge'));
 }
 
 test('graph rows display the project independently and escape project names',()=>{
   const {api,list}=harness();
   api.renderActivityList(new Date(2020,0,1),[activity('p1'),activity(null)]);
-  const bodies=graphBodies(list);
-  assert.equal(bodies.length,2);
-  assert.match(bodies[0].innerHTML,/Projekt &lt;Atlas&gt;/);
-  assert.doesNotMatch(bodies[0].innerHTML,/Projekt <Atlas>/);
+  const rows=graphBodies(list);
+  assert.equal(rows.length,2);
+  assert.equal(rows[0].children[0].className,'calendar-gitgraph-details');
+  assert.equal(rows[0].children[1].className,'calendar-gitgraph-rail');
+  assert.match(rows[0].children[0].innerHTML,/Projekt &lt;Atlas&gt;/);
+  assert.doesNotMatch(rows[0].children[0].innerHTML,/Projekt <Atlas>/);
 });
 
 test('commit activity displays every assigned employee',()=>{
@@ -62,7 +64,7 @@ test('commit activity displays every assigned employee',()=>{
   const entry={...activity('p1'),type:'github-commit',assigneeId:'alice',assigneeIds:['alice','bob']};
   assert.match(api.createDayActivityChip(entry).children[2].textContent,/Alice, Bob/);
   api.renderActivityList(new Date(2020,0,1),[entry]);
-  assert.match(graphBodies(list)[0].innerHTML,/Alice, Bob/);
+  assert.match(graphBodies(list)[0].children[0].innerHTML,/Alice, Bob/);
 });
 
 test('unchanged workflow data reuses the cached graph node',()=>{

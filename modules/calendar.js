@@ -2219,9 +2219,21 @@
     graph.style.setProperty('--graph-lanes', slotCount);
 
     rows.forEach(function (row, i) {
-      var el = document.createElement('div');
+      var el = document.createElement(row.eventId ? 'button' : 'div');
       el.className = 'calendar-gitgraph-row' + (row.head ? ' calendar-gitgraph-day' : '');
-      var rail = document.createElement('div');
+      if (row.eventId) {
+        el.type = 'button';
+        el.addEventListener('click', function () { openEventDetailsModal(row.eventId); });
+      }
+      var details = document.createElement('span');
+      details.className = 'calendar-gitgraph-details';
+      if (!row.head) {
+        details.style.setProperty('--lane-color', lanes[row.lane].color);
+        details.innerHTML = '<span class="calendar-gitgraph-meta">' + escapeHtml(row.meta) + '</span>' +
+          (lanes.length > 1 && lanes[row.lane].title !== row.title ? '<span class="calendar-gitgraph-lane-chip" title="' + escapeHtml(lanes[row.lane].title) + '">' + escapeHtml(lanes[row.lane].title) + '</span>' : '');
+      }
+      el.appendChild(details);
+      var rail = document.createElement('span');
       rail.className = 'calendar-gitgraph-rail';
       rail.setAttribute('aria-hidden', 'true');
       var rowLane = row.lane === undefined ? null : lanes[row.lane];
@@ -2245,21 +2257,14 @@
       }
       el.appendChild(rail);
 
-      var body = document.createElement(row.eventId ? 'button' : 'div');
+      var body = document.createElement('span');
       body.className = 'calendar-gitgraph-body';
       if (row.head) {
         body.innerHTML = row.html;
       } else {
-        if (row.eventId) {
-          body.type = 'button';
-          body.addEventListener('click', function () { openEventDetailsModal(row.eventId); });
-        }
         body.style.setProperty('--node-color', row.color);
-        body.style.setProperty('--lane-color', lanes[row.lane].color);
         body.innerHTML = '<span class="calendar-gitgraph-badge">' + escapeHtml(row.badge) + '</span>' +
           '<span class="calendar-gitgraph-title">' + escapeHtml(row.title) + '</span>' +
-          (lanes.length > 1 && lanes[row.lane].title !== row.title ? '<span class="calendar-gitgraph-lane-chip" title="' + escapeHtml(lanes[row.lane].title) + '">' + escapeHtml(lanes[row.lane].title) + '</span>' : '') +
-          '<span class="calendar-gitgraph-meta">' + escapeHtml(row.meta) + '</span>' +
           (row.progress !== undefined && row.progress !== null
             ? '<span class="calendar-gitgraph-progress" title="Gesamt ' + row.progress + '% | Plus +' + row.gain + '%"><span style="width:' + row.progress + '%"></span></span>' : '');
       }
