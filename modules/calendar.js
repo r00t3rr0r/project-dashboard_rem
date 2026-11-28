@@ -2125,6 +2125,7 @@
     renderWorkflowGraph(listEl, monthDates, workflowDays);
   }
 
+  var GRAPH_MAX_LANES = 6;
   var GRAPH_LANE_COLORS = ['var(--accent-blue)', 'var(--accent-green)', 'var(--accent-purple)', 'var(--accent-yellow)', 'var(--accent-cyan, #22b8cf)', 'var(--accent-red)'];
 
   function renderWorkflowGraph(listEl, monthDates, workflowDays) {
@@ -2138,7 +2139,7 @@
         var task = taskId ? getTasks().find(function (t) { return String(t.id) === String(taskId); }) : null;
         laneIndex[key] = lanes.length;
         lanes.push({
-          first: Infinity, last: -1, color: GRAPH_LANE_COLORS[lanes.length % GRAPH_LANE_COLORS.length],
+          first: Infinity, last: -1, slot: 0, color: GRAPH_LANE_COLORS[0],
           title: (task && task.title) || title || getProjectLabel(projectId, '') || 'Ohne Aufgabe'
         });
       }
@@ -2191,7 +2192,19 @@
       l.last = Math.max(l.last, i);
     });
 
-    var signature = JSON.stringify([rows, lanes.map(function (l) { return [l.color, l.title, l.first, l.last]; })]);
+    // Spuren wiederverwenden, sobald eine Aufgabe abgeschlossen ist (wie bei git log --graph), damit der Graph schmal bleibt
+    var slotEnds = [];
+    lanes.slice().sort(function (a, b) { return a.first - b.first; }).forEach(function (lane) {
+      var slot = slotEnds.findIndex(function (end) { return end < lane.first; });
+      if (slot < 0 && slotEnds.length < GRAPH_MAX_LANES) slot = slotEnds.length;
+      if (slot < 0) slot = slotEnds.indexOf(Math.min.apply(null, slotEnds));
+      slotEnds[slot] = Math.max(slotEnds[slot] === undefined ? -1 : slotEnds[slot], lane.last);
+      lane.slot = slot;
+      lane.color = GRAPH_LANE_COLORS[slot % GRAPH_LANE_COLORS.length];
+    });
+    var slotCount = Math.max(1, slotEnds.length);
+
+    var signature = JSON.stringify([rows, lanes.map(function (l) { return [l.slot, l.title, l.first, l.last]; })]);
     if (workflowGraphCache && workflowGraphCache.signature === signature) {
       listEl.appendChild(workflowGraphCache.node);
       return;
@@ -2199,11 +2212,11 @@
 
     var wrapper = document.createElement('div');
     wrapper.className = 'calendar-gitgraph-wrap';
-    wrapper.appendChild(buildGraphLegend(lanes));
+    wrapper.appendChild(buildGraphLegend());
     var graph = document.createElement('div');
     graph.className = 'calendar-gitgraph';
     graph.setAttribute('role', 'list');
-    graph.style.setProperty('--graph-lanes', lanes.length);
+    graph.style.setProperty('--graph-lanes', slotCount);
 
     rows.forEach(function (row, i) {
       var el = document.createElement('div');
@@ -2211,23 +2224,25 @@
       var rail = document.createElement('div');
       rail.className = 'calendar-gitgraph-rail';
       rail.setAttribute('aria-hidden', 'true');
-      lanes.forEach(function (lane, li) {
+      var rowLane = row.lane === undefined ? null : lanes[row.lane];
+      for (var si = 0; si < slotCount; si++) {
         var cell = document.createElement('span');
         cell.className = 'calendar-gitgraph-lane';
-        cell.style.setProperty('--lane-color', lane.color);
-        if (i >= lane.first && i <= lane.last) {
+        var covering = lanes.find(function (lane, idx) { return lane.slot === this && i >= lane.first && i <= lane.last; }, si);
+        cell.style.setProperty('--lane-color', GRAPH_LANE_COLORS[si % GRAPH_LANE_COLORS.length]);
+        if (covering) {
           cell.classList.add('is-open');
-          if (i === lane.first) cell.classList.add('is-last-row');
-          if (i === lane.last) cell.classList.add('is-first-row');
+          if (i === covering.first) cell.classList.add('is-last-row');
+          if (i === covering.last) cell.classList.add('is-first-row');
         }
-        if (li === row.lane) {
+        if (rowLane && rowLane.slot === si) {
           var node = document.createElement('i');
           node.className = 'calendar-gitgraph-node' + (row.commit ? ' is-commit' : '');
           node.style.setProperty('--node-color', row.color);
           cell.appendChild(node);
         }
         rail.appendChild(cell);
-      });
+      }
       el.appendChild(rail);
 
       var body = document.createElement(row.eventId ? 'button' : 'div');
@@ -2258,15 +2273,12 @@
 
   var workflowGraphCache = null;
 
-  function buildGraphLegend(lanes) {
+  function buildGraphLegend() {
     var legend = document.createElement('div');
     legend.className = 'calendar-gitgraph-legend';
     legend.innerHTML = '<span class="calendar-gitgraph-key"><i class="calendar-gitgraph-node-demo"></i> Aktivitaet</span>' +
       '<span class="calendar-gitgraph-key"><i class="calendar-gitgraph-node-demo is-commit"></i> Commit</span>' +
-      '<span class="calendar-gitgraph-key">Neueste oben &middot; eine Spur je Aufgabe</span>' +
-      lanes.map(function (lane) {
-        return '<span class="calendar-gitgraph-lane-chip" style="--lane-color:' + lane.color + '" title="' + escapeHtml(lane.title) + '">' + escapeHtml(lane.title) + '</span>';
-      }).join('');
+      '<span class="calendar-gitgraph-key">Neueste oben &middot; Spur = laufende Aufgabe</span>';
     return legend;
   }
 
