@@ -7323,3 +7323,26 @@ nav#sidebar[role="navigation"] a[aria-current="page"] {
 .qbm-assignees { display: grid; gap: 0.25rem; max-height: 9rem; overflow-y: auto; }
 .qbm-assignee { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
 .kanban-assignment-reply { margin: 0.3rem 0; font-size: 0.78rem; overflow-wrap: anywhere; }
+
+/* Arbeitsfluss: Git-Graph */
+.calendar-gitgraph { display: flex; flex-direction: column; overflow-x: auto; padding: 0.25rem 0; }
+.calendar-gitgraph-row { display: flex; align-items: stretch; min-height: 2.4rem; }
+.calendar-gitgraph-rail { display: flex; flex: 0 0 auto; width: calc(var(--graph-lanes, 1) * 1.1rem); }
+.calendar-gitgraph-lane { position: relative; flex: 0 0 1.1rem; }
+.calendar-gitgraph-lane.is-open::before { content: ""; position: absolute; left: calc(50% - 1px); width: 2px; top: 0; bottom: 0; background: var(--lane-color); opacity: 0.55; }
+.calendar-gitgraph-lane.is-open.is-last-row::before { top: 50%; }
+.calendar-gitgraph-lane.is-open.is-first-row::before { bottom: 50%; }
+.calendar-gitgraph-lane.is-open.is-last-row.is-first-row::before { display: none; }
+.calendar-gitgraph-node { position: absolute; top: 50%; left: 50%; width: 0.8rem; height: 0.8rem; transform: translate(-50%, -50%); border-radius: 50%; background: var(--bg-primary, #111); border: 3px solid var(--node-color); box-sizing: border-box; z-index: 1; }
+.calendar-gitgraph-node.is-commit { width: 0.6rem; height: 0.6rem; background: var(--node-color); border-width: 2px; }
+.calendar-gitgraph-body { flex: 1 1 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 0.1rem 0.6rem; min-width: 14rem; margin: 0.15rem 0 0.15rem 0.5rem; padding: 0.3rem 0.6rem; border: 0; border-left: 3px solid var(--node-color, transparent); border-radius: 0.4rem; background: var(--bg-secondary, transparent); color: var(--text-primary); font: inherit; font-size: 0.82rem; text-align: left; }
+button.calendar-gitgraph-body { cursor: pointer; }
+button.calendar-gitgraph-body:hover { background: var(--bg-hover, var(--bg-secondary)); }
+button.calendar-gitgraph-body:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+.calendar-gitgraph-day .calendar-gitgraph-body { background: transparent; border-left: 0; padding-left: 0; gap: 0.6rem; color: var(--text-muted); font-size: 0.75rem; }
+.calendar-gitgraph-day .calendar-gitgraph-body strong { color: var(--text-primary); font-size: 0.9rem; }
+.calendar-gitgraph-badge { padding: 0 0.45rem; border: 1px solid var(--node-color); border-radius: 999px; color: var(--node-color); font-size: 0.68rem; white-space: nowrap; }
+.calendar-gitgraph-title { flex: 1 1 8rem; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.calendar-gitgraph-meta { color: var(--text-muted); font-size: 0.72rem; }
+.calendar-gitgraph-progress { flex: 0 0 5rem; height: 0.35rem; border-radius: 999px; background: var(--border-color); overflow: hidden; }
+.calendar-gitgraph-progress > span { display: block; height: 100%; background: var(--node-color); }

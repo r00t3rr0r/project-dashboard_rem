@@ -2122,67 +2122,121 @@
 
     listEl.insertAdjacentHTML('beforeend', buildActivitySummaryHtml(monthActivities));
 
+    renderWorkflowGraph(listEl, monthDates, workflowDays);
+  }
+
+  var GRAPH_LANE_COLORS = ['var(--accent-blue)', 'var(--accent-green)', 'var(--accent-purple)', 'var(--accent-yellow)', 'var(--accent-cyan, #22b8cf)', 'var(--accent-red)'];
+
+  function renderWorkflowGraph(listEl, monthDates, workflowDays) {
+    var rows = [];
+    var laneIndex = Object.create(null);
+    var lanes = [];
+
+    function laneFor(taskId, projectId) {
+      var key = String(taskId || 'p-' + (projectId || 'none'));
+      if (laneIndex[key] === undefined) {
+        laneIndex[key] = lanes.length;
+        lanes.push({ first: Infinity, last: -1, color: GRAPH_LANE_COLORS[lanes.length % GRAPH_LANE_COLORS.length] });
+      }
+      return laneIndex[key];
+    }
+
     monthDates.forEach(function (dateKey) {
-      var dailyActivities = workflowDays[dateKey].activities;
-      var uniqueEmployees = Object.create(null);
-      var completedToday = 0;
-
-      dailyActivities.forEach(function (activity) {
-        (activity.assigneeIds || (activity.assigneeId ? [activity.assigneeId] : [])).forEach(function (id) { uniqueEmployees[id] = true; });
-        if (activity.type === 'completed') completedToday += 1;
+      var day = workflowDays[dateKey];
+      var employees = Object.create(null);
+      var completed = 0;
+      day.activities.forEach(function (a) {
+        (a.assigneeIds || (a.assigneeId ? [a.assigneeId] : [])).forEach(function (id) { employees[id] = true; });
+        if (a.type === 'completed') completed += 1;
       });
+      rows.push({ head: true, html: '<strong>' + escapeHtml(getDisplayDate(dateKey)) + '</strong>' +
+        '<span>' + day.activities.length + ' Aktivitaeten</span>' +
+        (day.commits.length ? '<span>' + day.commits.length + ' Commits</span>' : '') +
+        '<span>' + Object.keys(employees).length + ' Mitarbeiter</span><span>' + completed + ' erledigt</span>' });
 
-      var dayHeading = document.createElement('div');
-      dayHeading.className = 'calendar-activity-day-heading';
-      dayHeading.innerHTML = '' +
-        '<strong>' + escapeHtml(getDisplayDate(dateKey)) + '</strong>' +
-        '<span>' + dailyActivities.length + ' Aktivitaeten</span>' +
-        (workflowDays[dateKey].commits.length ? '<span>' + workflowDays[dateKey].commits.length + ' Commits</span>' : '') +
-        '<span>' + Object.keys(uniqueEmployees).length + ' Mitarbeiter</span>' +
-        '<span>' + completedToday + ' erledigt</span>';
-      listEl.appendChild(dayHeading);
-
-      workflowDays[dateKey].items.forEach(function (activity) {
-        if (activity.commitGroup) {
-          listEl.appendChild(createCommitGroup(activity, false, true));
+      day.items.forEach(function (item) {
+        if (item.commitGroup) {
+          item.events.forEach(function (event) {
+            var employee = event.commitEmployeeId ? getEmployeeName(event.commitEmployeeId) : 'Nicht zugewiesen';
+            rows.push({
+              lane: laneFor(event.taskId, item.projectId), color: getActivityTypeMeta('github-commit').color, commit: true,
+              title: String(event.title || 'GitHub-Commit').replace(/^GitHub-Commit:\s*/, ''),
+              badge: 'Commit', meta: [event.startTime, employee, getProjectLabel(item.projectId, '')].filter(Boolean).join(' · '),
+              eventId: event.id
+            });
+          });
           return;
         }
-        var card = document.createElement('article');
-        var typeMeta = getActivityTypeMeta(activity.type);
-        var assigneeIds = Array.isArray(activity.assigneeIds) && activity.assigneeIds.length ? activity.assigneeIds : (activity.assigneeId ? [activity.assigneeId] : []);
-        var assigneeName = assigneeIds.length ? assigneeIds.map(getEmployeeName).join(', ') : 'Nicht zugewiesen';
-        var workplace = assigneeIds.length === 1 ? getEmployeeWorkplace(assigneeIds[0]) : '';
-        var projectLabel = getProjectLabel(activity.projectId, 'Unbekanntes Projekt') || 'Ohne Projekt';
-        var displayTime = activity.calendarTime || getDisplayTime(activity.updatedAt);
-        var totalProgress = clampProgress(activity.progress);
-        var dayStart = clampProgress(activity.dayStartProgress);
-        var dayGain = Math.max(0, totalProgress - dayStart);
-
-        card.className = 'calendar-event-card calendar-activity-card';
-        card.innerHTML = '' +
-          '<div class="calendar-event-card-head">' +
-          '<span class="calendar-event-tag" style="border-color:' + typeMeta.color + ';color:' + typeMeta.color + '">' + escapeHtml(typeMeta.label) + '</span>' +
-          '<span class="calendar-event-date">' + escapeHtml(getTaskStatusLabel(activity.status)) + '</span>' +
-          '</div>' +
-          '<div class="calendar-activity-project" title="' + escapeHtml(activity.projectId ? 'Projekt: ' + projectLabel : projectLabel) + '"><span class="material-symbols-rounded" aria-hidden="true">folder</span><span>' + escapeHtml(activity.projectId ? 'Projekt: ' + projectLabel : projectLabel) + '</span></div>' +
-          '<h3>' + escapeHtml(activity.taskTitle || 'Aufgabe') + '</h3>' +
-          '<div class="calendar-event-meta">' + escapeHtml(assigneeName) + '</div>' +
-          (workplace ? '<div class="calendar-activity-workplace"><span class="material-symbols-rounded" aria-hidden="true">location_on</span><span>' + escapeHtml(workplace) + '</span></div>' : '') +
-          '<div class="calendar-activity-progress-row"><span>Gesamtfortschritt</span><strong>' + escapeHtml(String(totalProgress)) + '%</strong></div>' +
-          '<div class="calendar-activity-growth-bar" aria-hidden="true">' +
-          '<span class="calendar-activity-growth-total" style="width:' + totalProgress + '%"></span>' +
-          '</div>' +
-          (activity.type === 'github-commit'
-            ? '<div class="calendar-activity-progress-row calendar-activity-progress-row-sub">Rueckwirkende Dokumentation; keine Arbeitsdauer erfasst.</div>'
-            : '<div class="calendar-activity-progress-row calendar-activity-progress-row-sub"><span>Plus</span><strong class="calendar-progress-today">+' + escapeHtml(String(dayGain)) + '%</strong></div>') +
-          '<div class="calendar-event-details">' +
-          '<div><strong>Status:</strong> ' + escapeHtml(getTaskStatusLabel(activity.status)) + '</div>' +
-          '<div><strong>Aktivitaet:</strong> ' + escapeHtml(typeMeta.label) + '</div>' +
-          '<div><strong>Zeitpunkt:</strong> ' + escapeHtml(displayTime || 'Nicht angegeben') + '</div>' +
-          '</div>';
-        listEl.appendChild(card);
+        var typeMeta = getActivityTypeMeta(item.type);
+        var ids = Array.isArray(item.assigneeIds) && item.assigneeIds.length ? item.assigneeIds : (item.assigneeId ? [item.assigneeId] : []);
+        var total = clampProgress(item.progress);
+        rows.push({
+          lane: laneFor(item.taskId, item.projectId), color: typeMeta.color,
+          title: item.taskTitle || 'Aufgabe', badge: typeMeta.label,
+          meta: [item.calendarTime || getDisplayTime(item.updatedAt), ids.length ? ids.map(getEmployeeName).join(', ') : 'Nicht zugewiesen',
+            getProjectLabel(item.projectId, ''), getTaskStatusLabel(item.status)].filter(Boolean).join(' · '),
+          progress: item.type === 'github-commit' ? null : total, gain: Math.max(0, total - clampProgress(item.dayStartProgress))
+        });
       });
     });
+
+    rows.forEach(function (row, i) {
+      if (row.lane === undefined) return;
+      var l = lanes[row.lane];
+      l.first = Math.min(l.first, i);
+      l.last = Math.max(l.last, i);
+    });
+
+    var graph = document.createElement('div');
+    graph.className = 'calendar-gitgraph';
+    graph.setAttribute('role', 'list');
+    graph.style.setProperty('--graph-lanes', lanes.length);
+
+    rows.forEach(function (row, i) {
+      var el = document.createElement('div');
+      el.className = 'calendar-gitgraph-row' + (row.head ? ' calendar-gitgraph-day' : '');
+      var rail = document.createElement('div');
+      rail.className = 'calendar-gitgraph-rail';
+      rail.setAttribute('aria-hidden', 'true');
+      lanes.forEach(function (lane, li) {
+        var cell = document.createElement('span');
+        cell.className = 'calendar-gitgraph-lane';
+        cell.style.setProperty('--lane-color', lane.color);
+        if (i >= lane.first && i <= lane.last) {
+          cell.classList.add('is-open');
+          if (i === lane.first) cell.classList.add('is-last-row');
+          if (i === lane.last) cell.classList.add('is-first-row');
+        }
+        if (li === row.lane) {
+          var node = document.createElement('i');
+          node.className = 'calendar-gitgraph-node' + (row.commit ? ' is-commit' : '');
+          node.style.setProperty('--node-color', row.color);
+          cell.appendChild(node);
+        }
+        rail.appendChild(cell);
+      });
+      el.appendChild(rail);
+
+      var body = document.createElement(row.eventId ? 'button' : 'div');
+      body.className = 'calendar-gitgraph-body';
+      if (row.head) {
+        body.innerHTML = row.html;
+      } else {
+        if (row.eventId) {
+          body.type = 'button';
+          body.addEventListener('click', function () { openEventDetailsModal(row.eventId); });
+        }
+        body.style.setProperty('--node-color', row.color);
+        body.innerHTML = '<span class="calendar-gitgraph-badge">' + escapeHtml(row.badge) + '</span>' +
+          '<span class="calendar-gitgraph-title">' + escapeHtml(row.title) + '</span>' +
+          '<span class="calendar-gitgraph-meta">' + escapeHtml(row.meta) + '</span>' +
+          (row.progress !== undefined && row.progress !== null
+            ? '<span class="calendar-gitgraph-progress" title="Gesamt ' + row.progress + '% | Plus +' + row.gain + '%"><span style="width:' + row.progress + '%"></span></span>' : '');
+      }
+      el.appendChild(body);
+      graph.appendChild(el);
+    });
+    listEl.appendChild(graph);
   }
 
   window.openCalendarEventEditor = function (eventId) {
